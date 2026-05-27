@@ -3,12 +3,14 @@ import net from "node:net";
 import { CrucibleError } from "./errors.js";
 
 export const DEFAULT_QMP_TIMEOUT_MS = 5000;
+export const DEFAULT_QMP_MAX_BUFFER_BYTES = 1024 * 1024;
 
 export type QmpRequestId = string | number;
 
 export type QmpClientOptions = {
   readonly socketPath: string;
   readonly timeoutMs?: number;
+  readonly maxBufferBytes?: number;
 };
 
 export type QmpGreeting = {
@@ -67,6 +69,7 @@ export type ParsedQmpMessage =
 export class QmpClient {
   readonly #socketPath: string;
   readonly #timeoutMs: number;
+  readonly #maxBufferBytes: number;
   #socket: net.Socket;
   #buffer = "";
   #connected = false;
@@ -92,6 +95,7 @@ export class QmpClient {
   constructor(options: QmpClientOptions) {
     this.#socketPath = options.socketPath;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_QMP_TIMEOUT_MS;
+    this.#maxBufferBytes = options.maxBufferBytes ?? DEFAULT_QMP_MAX_BUFFER_BYTES;
     this.#socket = this.#createSocket();
   }
 
@@ -233,6 +237,9 @@ export class QmpClient {
   }
 
   drainEvents(): readonly QmpEvent[] {
+    if (this.#pending.size > 0) {
+      throw qmpError("QMP_PROTOCOL_ERROR", "cannot drain QMP events while commands are pending");
+    }
     return this.#events.splice(0, this.#events.length);
   }
 
@@ -273,7 +280,7 @@ export class QmpClient {
         );
         settled = true;
         cleanup();
-        this.#destroyPermanently(error);
+        this.#destroyForRetry(error);
         reject(error);
       }, this.#timeoutMs);
 
@@ -297,6 +304,7 @@ export class QmpClient {
         reject(
           qmpError("QMP_CONNECTION_FAILED", `failed to connect QMP socket ${this.#socketPath}`, {
             cause: error.message,
+            code: "code" in error ? error.code : undefined,
           }),
         );
       };
@@ -335,7 +343,7 @@ export class QmpClient {
         });
         this.#greetingWaiter = undefined;
         this.#greetingPromise = undefined;
-        this.#destroyPermanently(error);
+        this.#destroyForRetry(error);
         reject(error);
       }, timeoutMs);
 
@@ -363,6 +371,14 @@ export class QmpClient {
 
   #handleData(chunk: string | Buffer): void {
     this.#buffer += chunk.toString();
+    if (Buffer.byteLength(this.#buffer, "utf8") > this.#maxBufferBytes) {
+      this.#terminateForProtocolError(
+        qmpError("QMP_PARSE_ERROR", "QMP message exceeded maximum buffer size", {
+          maxBufferBytes: this.#maxBufferBytes,
+        }),
+      );
+      return;
+    }
 
     while (true) {
       const newline = this.#buffer.indexOf("\n");
@@ -485,17 +501,13 @@ export class QmpClient {
     this.#socket.destroy();
   }
 
-  #destroyPermanently(error: CrucibleError): void {
-    this.#terminalError = qmpError("QMP_DISCONNECTED", "QMP client socket is no longer usable", {
-      cause: error.message,
-      code: error.code,
-      details: error.details,
-    });
+  #destroyForRetry(error: CrucibleError): void {
     this.#connected = false;
     this.#ready = false;
     this.#greeting = undefined;
     this.#usedCallerIds.clear();
     this.#failAll(error);
+    this.#suppressNextClose = true;
     this.#socket.destroy();
   }
 

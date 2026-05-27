@@ -46,7 +46,10 @@ describe("QmpClient", () => {
     const socketPath = path.join(await createTempDir(), "qmp.sock");
     const client = new QmpClient({ socketPath, timeoutMs: 200 });
 
-    await expect(client.connect()).rejects.toMatchObject({ code: "QMP_CONNECTION_FAILED" });
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_CONNECTION_FAILED",
+      details: { code: "ENOENT" },
+    });
 
     const server = await createFakeQmpServerAt(socketPath, (connection) => {
       connection.send(capturedGreeting);
@@ -170,6 +173,32 @@ describe("QmpClient", () => {
       arguments: { verbose: true },
       id: "status-1",
     });
+
+    client.close();
+    await server.close();
+  });
+
+  it("rejects drainEvents while a command is pending", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-block", () => {
+        connection.send({ event: "BLOCK_JOB_READY" });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    const command = client.execute("query-block", undefined, { timeoutMs: 50 });
+    await waitFor(() => server.requests.some((request) => request.execute === "query-block"));
+
+    expect(() => client.drainEvents()).toThrow(
+      /cannot drain QMP events while commands are pending/,
+    );
+    await expect(command).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
 
     client.close();
     await server.close();
@@ -506,14 +535,45 @@ describe("QmpClient", () => {
     await server.close();
   });
 
-  it("is explicitly single-use after a negotiation timeout destroys the socket", async () => {
-    const server = await createFakeQmpServer(() => undefined);
-    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 20 });
+  it("allows retry after a connect timeout", async () => {
+    const socketPath = path.join(await createTempDir(), "qmp.sock");
+    const server = await createFakeQmpServerAt(socketPath, () => undefined);
+    const client = new QmpClient({ socketPath, timeoutMs: 20 });
 
     await expect(client.connect()).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
+    await server.close();
+
+    const retryServer = await createFakeQmpServerAt(socketPath, (connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+    });
+
+    await expect(client.connect()).resolves.toEqual(capturedGreeting.QMP);
+
+    client.close();
+    await retryServer.close();
+  });
+
+  it("terminates when an unterminated QMP message exceeds the buffer limit", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.sendRaw("x".repeat(33));
+    });
+    const client = new QmpClient({
+      socketPath: server.socketPath,
+      timeoutMs: 200,
+      maxBufferBytes: 32,
+    });
+
     await expect(client.connect()).rejects.toMatchObject({
-      code: "QMP_DISCONNECTED",
-      message: "QMP client socket is no longer usable",
+      code: "QMP_PARSE_ERROR",
+      message: "QMP message exceeded maximum buffer size",
+      details: { maxBufferBytes: 32 },
+    });
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_PARSE_ERROR",
+      message: "QMP message exceeded maximum buffer size",
     });
 
     client.close();
