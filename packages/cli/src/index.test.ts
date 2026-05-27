@@ -24,6 +24,7 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VM create dry run:");
+    expect(result.stdout).toContain("qemu-img create -f qcow2");
     expect(result.stdout).toContain("qemu-system-x86_64");
     expect(result.stdout).toContain("artifacts/disks/crucible-win11.qcow2");
     expect(result.stdout).toContain("qmp socket: artifacts/qmp.sock");

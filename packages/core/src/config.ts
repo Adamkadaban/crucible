@@ -1,6 +1,7 @@
-import { z } from "zod";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { ZodError, z } from "zod";
 
+import { CrucibleError } from "./errors.js";
 import { DEFAULT_MEDIA_CACHE_DIR } from "./media.js";
 
 const mediaOverrideSchema = z
@@ -101,11 +102,27 @@ export function parseCrucibleConfig(input: unknown): CrucibleConfig {
 }
 
 export function loadCrucibleConfigFile(filePath = "crucible.config.json"): CrucibleConfig {
-  if (!existsSync(filePath)) {
-    return defaultCrucibleConfig;
-  }
+  try {
+    return parseCrucibleConfig(JSON.parse(readFileSync(filePath, "utf8")));
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return defaultCrucibleConfig;
+    }
 
-  return parseCrucibleConfig(JSON.parse(readFileSync(filePath, "utf8")));
+    if (error instanceof SyntaxError || error instanceof ZodError) {
+      throw new CrucibleError("CONFIG_INVALID", `Invalid Crucible config file: ${filePath}`, error);
+    }
+
+    throw new CrucibleError(
+      "CONFIG_INVALID",
+      `Unable to read Crucible config file: ${filePath}`,
+      error,
+    );
+  }
 }
 
 export const defaultCrucibleConfig = parseCrucibleConfig({});
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}

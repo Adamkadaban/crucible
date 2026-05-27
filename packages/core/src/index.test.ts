@@ -4,6 +4,7 @@ import {
   createEmptyArtifactManifest,
   CRUCIBLE_VERSION,
   buildQemuCommandPlan,
+  CrucibleError,
   defaultCrucibleConfig,
   describeCommand,
   getManualDownloadInstructions,
@@ -71,6 +72,10 @@ describe("core bootstrap exports", () => {
     expect(loadCrucibleConfigFile("missing-crucible.config.json")).toEqual(defaultCrucibleConfig);
   });
 
+  it("wraps invalid config file failures", () => {
+    expect(() => loadCrucibleConfigFile("package.json")).toThrow(CrucibleError);
+  });
+
   it("creates empty artifact manifests", () => {
     expect(createEmptyArtifactManifest("lab-one")).toEqual({
       version: 1,
@@ -92,7 +97,8 @@ describe("core bootstrap exports", () => {
     expect(plan.args).toContain("type=q35,accel=kvm");
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).toContain("scsi-hd,drive=crucible-disk0");
-    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-net0");
+    expect(plan.args).not.toContain("-netdev");
+    expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-net0");
     expect(plan.args).toContain("virtio-serial-pci");
     expect(plan.args).toContain("virtserialport,chardev=crucible-qga0,name=org.qemu.guest_agent.0");
     expect(plan.args).toContain("unix:artifacts/qmp.sock,server=on,wait=off");
@@ -104,6 +110,14 @@ describe("core bootstrap exports", () => {
       format: "qcow2",
       bus: "virtio-scsi",
     });
+    expect(plan.createDiskCommand).toEqual([
+      "qemu-img",
+      "create",
+      "-f",
+      "qcow2",
+      "artifacts/disks/crucible-win11.qcow2",
+      "128G",
+    ]);
   });
 
   it("derives the default qcow2 path from configured artifact and VM names", () => {
@@ -150,6 +164,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
     expect(plan.args).toContain("user,id=crucible-net0,restrict=off");
+    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-net0");
     expect(plan.args).toContain("unix:/run/crucible/qmp.sock,server=on,wait=off");
     expect(plan.args).toContain(
       "socket,path=/run/crucible/qga.sock,server=on,wait=off,id=crucible-qga0",
@@ -163,6 +178,7 @@ describe("core bootstrap exports", () => {
     const output = renderQemuDryRun(buildQemuCommandPlan());
 
     expect(output).toContain("QEMU dry run plan:");
+    expect(output).toContain("create disk: qemu-img create -f qcow2");
     expect(output).toContain("qemu-system-x86_64");
     expect(output).toContain("qmp socket: artifacts/qmp.sock");
     expect(output).toContain("qga socket: artifacts/qga.sock");

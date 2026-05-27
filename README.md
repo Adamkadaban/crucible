@@ -90,11 +90,11 @@ paths where the files should be placed.
 
 ## QEMU Dry Runs
 
-`crucible vm:create --dry-run` and `crucible vm:start --dry-run` render the planned QEMU command
-without launching a VM. The default plan uses `qemu-system-x86_64` with KVM acceleration, a qcow2
-disk at `artifacts/disks/crucible-win11.qcow2`, `virtio-net-pci`, `virtio-scsi`, `virtio-serial`, a
-QMP Unix socket at `artifacts/qmp.sock`, and a QGA virtserial channel backed by
-`artifacts/qga.sock`.
+`crucible vm:create --dry-run` and `crucible vm:start --dry-run` render the planned qcow2 creation
+and QEMU command without launching a VM. The default plan uses `qemu-system-x86_64` with KVM
+acceleration, a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`, no network device in isolated
+mode, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at `artifacts/qmp.sock`, and a QGA
+virtserial channel backed by `artifacts/qga.sock`.
 
 Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the default
 `virtio-scsi-pci`/`scsi-hd` pair. `vm.extraQemuArgs` is appended at the end of the generated argv so

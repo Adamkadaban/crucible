@@ -20,6 +20,8 @@ export type QemuCommandPlan = {
   readonly executable: string;
   readonly args: readonly string[];
   readonly dryRunCommand: string;
+  readonly createDiskCommand: readonly string[];
+  readonly dryRunCreateDiskCommand: string;
   readonly disk: QemuDiskPlan;
   readonly sockets: QemuSocketPlan;
   readonly extraArgs: readonly string[];
@@ -35,6 +37,14 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
   const config = options.config ?? defaultCrucibleConfig;
   const executable = options.executable ?? DEFAULT_QEMU_EXECUTABLE;
   const diskPath = options.diskPath ?? getDefaultDiskPath(config);
+  const createDiskCommand = [
+    "qemu-img",
+    "create",
+    "-f",
+    "qcow2",
+    diskPath,
+    `${config.vm.diskGiB}G`,
+  ];
   const args = [
     "-name",
     config.vm.name,
@@ -59,6 +69,11 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     executable,
     args,
     dryRunCommand: shellQuoteCommand(executable, args),
+    createDiskCommand,
+    dryRunCreateDiskCommand: shellQuoteCommand(
+      createDiskCommand[0] ?? "qemu-img",
+      createDiskCommand.slice(1),
+    ),
     disk: {
       path: diskPath,
       format: "qcow2",
@@ -79,6 +94,7 @@ function getDefaultDiskPath(config: CrucibleConfig): string {
 export function renderQemuDryRun(plan: QemuCommandPlan): string {
   return [
     "QEMU dry run plan:",
+    `- create disk: ${plan.dryRunCreateDiskCommand}`,
     `- command: ${plan.dryRunCommand}`,
     `- disk: ${plan.disk.path} (${plan.disk.format}, ${plan.disk.bus})`,
     `- qmp socket: ${plan.sockets.qmp}`,
@@ -104,9 +120,13 @@ function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly strin
 }
 
 function buildNetworkArgs(config: CrucibleConfig): readonly string[] {
+  if (config.network.mode === "isolated") {
+    return [];
+  }
+
   return [
     "-netdev",
-    `user,id=${DEFAULT_NETDEV_ID},restrict=${config.network.mode === "isolated" ? "on" : "off"}`,
+    `user,id=${DEFAULT_NETDEV_ID},restrict=off`,
     "-device",
     `${config.virtio.networkDevice},netdev=${DEFAULT_NETDEV_ID}`,
   ];

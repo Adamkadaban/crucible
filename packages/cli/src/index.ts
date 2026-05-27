@@ -85,7 +85,7 @@ function getHelpText(): string {
     "  crucible provision   Provision a Windows analysis VM (scaffolded)",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan  Print default and manual media download locations",
-    "  crucible vm:create --dry-run  Print the planned qcow2/QEMU creation inputs",
+    "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
     "  crucible vm:start --dry-run   Print the planned QEMU argv and sockets",
   ].join("\n");
 }
