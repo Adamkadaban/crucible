@@ -119,6 +119,8 @@ function renderQemuStartDryRunLines(plan: QemuCommandPlan): readonly string[] {
   return [
     `- command: ${plan.dryRunCommand}`,
     `- disk: ${plan.disk.path} (${plan.disk.format}, ${plan.disk.bus})`,
+    `- network mode: ${plan.network.mode} (${plan.network.backend})`,
+    `- guest control: ${plan.network.controlAddress.hostAddress}:${plan.network.controlAddress.guestApiPort} -> ${plan.network.controlAddress.guestAddress}:${plan.network.controlAddress.guestApiPort}`,
     `- qmp socket: ${plan.sockets.qmp}`,
     `- qga socket: ${plan.sockets.qga}`,
   ];

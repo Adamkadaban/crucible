@@ -63,6 +63,7 @@ export type {
   NetworkTeardownPlan,
   QemuNetworkBackend,
   QemuNetworkPlan,
+  QemuNetworkPortForward,
 } from "./network.js";
 export { createEmptyArtifactManifest } from "./manifest.js";
 export type {

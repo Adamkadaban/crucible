@@ -162,7 +162,7 @@ describe("core bootstrap exports", () => {
     expect(() => parseNetworkConfig({ controlPort: 0 })).toThrow(/Too small/);
   });
 
-  it("plans isolated networking without QEMU NIC egress", () => {
+  it("plans isolated networking with restricted host-only QEMU control mapping", () => {
     const plan = buildNetworkPlan({
       config: parseNetworkConfig({ mode: "isolated", controlPort: 9443 }),
       vmName: "analysis-one",
@@ -170,14 +170,30 @@ describe("core bootstrap exports", () => {
 
     expect(plan.mode).toBe("isolated");
     expect(plan.qemu).toMatchObject({
-      backend: "none",
-      args: [],
+      backend: "user",
+      netdevId: "crucible-analysis-one-net0",
+      deviceModel: "virtio-net-pci",
+      args: [
+        "-netdev",
+        "user,id=crucible-analysis-one-net0,restrict=on,hostfwd=tcp:192.0.2.1:9443-192.0.2.2:9443",
+        "-device",
+        "virtio-net-pci,netdev=crucible-analysis-one-net0",
+      ],
       controlAddress: {
         hostAddress: "192.0.2.1",
         guestAddress: "192.0.2.2",
         prefixLength: 30,
         guestApiPort: 9443,
       },
+      portForwards: [
+        {
+          protocol: "tcp",
+          hostAddress: "192.0.2.1",
+          hostPort: 9443,
+          guestAddress: "192.0.2.2",
+          guestPort: 9443,
+        },
+      ],
     });
     expect(plan.firewall.dryRunOnly).toBe(true);
     expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
@@ -244,7 +260,7 @@ describe("core bootstrap exports", () => {
       deviceModel: "virtio-net-pci",
       args: [
         "-netdev",
-        "user,id=crucible-analysis-one-net0",
+        "user,id=crucible-analysis-one-net0,restrict=off,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
         "-device",
         "virtio-net-pci,netdev=crucible-analysis-one-net0",
       ],
@@ -266,6 +282,15 @@ describe("core bootstrap exports", () => {
 
     expect(plan.qemu).toMatchObject({
       backend: "tap",
+      portForwards: [
+        {
+          protocol: "tcp",
+          hostAddress: "192.0.2.1",
+          hostPort: 8443,
+          guestAddress: "192.0.2.2",
+          guestPort: 8443,
+        },
+      ],
       args: [
         "-netdev",
         "tap,id=crucible-analysis-one-net0,ifname=crucible-analysis-one-net0-tap,script=no,downscript=no",
@@ -358,9 +383,12 @@ describe("core bootstrap exports", () => {
     expect(plan.args).toContain("type=q35,accel=kvm");
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0");
-    expect(plan.args).not.toContain("-netdev");
-    expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-win11-net0");
-    expect(plan.network.backend).toBe("none");
+    expect(plan.args).toContain(
+      "user,id=crucible-win11-net0,restrict=on,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+    );
+    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-win11-net0");
+    expect(plan.network.backend).toBe("user");
+    expect(plan.network.mode).toBe("isolated");
     expect(plan.args).toContain("virtio-serial-pci");
     expect(plan.args).toContain("virtserialport,chardev=crucible-qga0,name=org.qemu.guest_agent.0");
     expect(plan.args).toContain("unix:artifacts/qmp.sock,server=on,wait=off");
@@ -425,8 +453,9 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
-    expect(plan.args).toContain("user,id=crucible-custom-lab-net0");
-    expect(plan.args).not.toContain("user,id=crucible-custom-lab-net0,restrict=off");
+    expect(plan.args).toContain(
+      "user,id=crucible-custom-lab-net0,restrict=off,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+    );
     expect(plan.args).toContain("virtio-net-pci,netdev=crucible-custom-lab-net0");
     expect(plan.network).toMatchObject({ backend: "user", mode: "nat" });
     expect(plan.args).toContain("unix:/run/crucible/qmp.sock,server=on,wait=off");
@@ -476,6 +505,8 @@ describe("core bootstrap exports", () => {
     expect(output).toContain("QEMU dry run plan:");
     expect(output).toContain("create disk: qemu-img create -f qcow2");
     expect(output).toContain("qemu-system-x86_64");
+    expect(output).toContain("network mode: isolated (user)");
+    expect(output).toContain("guest control: 192.0.2.1:8443 -> 192.0.2.2:8443");
     expect(output).toContain("qmp socket: artifacts/qmp.sock");
     expect(output).toContain("qga socket: artifacts/qga.sock");
   });
@@ -486,6 +517,7 @@ describe("core bootstrap exports", () => {
     expect(output).toContain("QEMU dry run plan:");
     expect(output).not.toContain("create disk: qemu-img create -f qcow2");
     expect(output).toContain("qemu-system-x86_64");
+    expect(output).toContain("network mode: isolated (user)");
     expect(output).toContain("qmp socket: artifacts/qmp.sock");
   });
 });

@@ -18,7 +18,7 @@ The default QEMU plan uses:
 - KVM acceleration with `-machine type=q35,accel=kvm`
 - host CPU passthrough with `-cpu host`
 - a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`
-- no network device in isolated mode
+- restricted QEMU user-mode networking in isolated mode for host control only
 - `virtio-scsi-pci` plus `scsi-hd` for the OS disk
 - `virtio-serial-pci` for guest channels
 - a QMP Unix socket at `artifacts/qmp.sock`
@@ -51,10 +51,13 @@ Operators can append QEMU arguments through `vm.extraQemuArgs`:
 Extra arguments are appended after Crucible's required lifecycle devices so dry-run output clearly
 shows both the managed baseline and operator overrides.
 
-When `network.mode` is `nat`, the current planner emits `virtio-net-pci` connected to a QEMU
-user-mode netdev. When `network.mode` is `capture`, it emits a tap-backed netdev contract for later
-packet-capture work. Isolated mode intentionally omits `-netdev` and the NIC device so there is no
-default guest egress path. See `docs/network-isolation.md` for the network model contracts.
+When `network.mode` is `isolated`, the planner emits `virtio-net-pci` connected to a QEMU user-mode
+netdev with `restrict=on` plus a host-control `hostfwd` from `192.0.2.1:<controlPort>` to
+`192.0.2.2:<controlPort>`. This keeps the guest NIC present for the control plane without granting
+general egress. When `network.mode` is `nat`, the planner uses the same QEMU user-mode netdev with
+`restrict=off` so egress is an explicit operator choice. When `network.mode` is `capture`, it emits
+a tap-backed netdev contract for later packet-capture work. See `docs/network-isolation.md` for the
+network model contracts.
 
 ## Lifecycle State
 

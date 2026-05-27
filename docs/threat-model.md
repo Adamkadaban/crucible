@@ -12,10 +12,13 @@ to narrow control paths, no shared folders, and no accidental guest Internet egr
 
 ## Network Boundaries
 
-- `isolated` mode is the default malware-analysis posture and carries a deny-egress firewall intent.
-- `nat` mode is operator opt-in because it grants guest Internet egress.
+- `isolated` mode is the default malware-analysis posture, uses a restricted QEMU user-mode NIC for
+  the control channel only, and carries a deny-egress firewall intent.
+- `nat` mode is operator opt-in because it uses unrestricted QEMU user networking and grants guest
+  Internet egress.
 - `capture` mode is operator opt-in and must store packet captures as artifacts, not source files.
-- The guest control channel is modeled as host-only and bound to an explicit guest API port.
+- The guest control channel is modeled as host-only and bound to an explicit guest API port, mapped
+  by default from `192.0.2.1:8443` to `192.0.2.2:8443`.
 
 ## Host Exposure
 
