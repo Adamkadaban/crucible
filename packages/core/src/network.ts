@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { CrucibleError } from "./errors.js";
+
 export const NETWORK_MODES = ["isolated", "nat", "capture"] as const;
 
 export type NetworkMode = (typeof NETWORK_MODES)[number];
@@ -89,7 +91,8 @@ export function parseNetworkConfig(input: unknown): NetworkConfig {
 }
 
 export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
-  const netdevId = options.netdevId ?? "crucible-net0";
+  const netdevId = options.netdevId ?? defaultNetdevId(options.vmName);
+  validateQemuSuboptionValue("netdevId", netdevId);
   const owner = buildNetworkOwnerTag(options.vmName, netdevId);
   const controlAddress = buildControlAddressAllocation(options.config.controlPort);
   const mode = options.config.mode;
@@ -113,6 +116,30 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
     },
     warnings: buildNetworkWarnings(mode),
   };
+}
+
+function defaultNetdevId(vmName: string): string {
+  const suffix = vmName
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9-]/g, "-")
+    .replaceAll(/-+/g, "-")
+    .replaceAll(/^-|-$/g, "");
+
+  if (suffix.length === 0) {
+    return "crucible-vm-net0";
+  }
+
+  return `${suffix.startsWith("crucible-") ? suffix : `crucible-${suffix}`}-net0`;
+}
+
+function validateQemuSuboptionValue(name: string, value: string): void {
+  if (/[,\\]/.test(value)) {
+    throw new CrucibleError(
+      "CONFIG_INVALID",
+      `${name} cannot contain ',' or '\\' because QEMU suboptions would misparse it`,
+      { name, value },
+    );
+  }
 }
 
 function buildNetworkOwnerTag(vmName: string, resourceId: string): NetworkOwnerTag {

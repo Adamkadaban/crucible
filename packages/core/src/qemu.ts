@@ -3,7 +3,6 @@ import { CrucibleError } from "./errors.js";
 import { buildNetworkPlan, type QemuNetworkPlan } from "./network.js";
 
 const DEFAULT_QEMU_EXECUTABLE = "qemu-system-x86_64";
-const DEFAULT_NETDEV_ID = "crucible-net0";
 const DEFAULT_DISK_ID = "crucible-disk0";
 const QGA_CHARDEV_ID = "crucible-qga0";
 
@@ -48,7 +47,6 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     config: config.network,
     vmName: config.vm.name,
     networkDevice: config.virtio.networkDevice,
-    netdevId: DEFAULT_NETDEV_ID,
   }).qemu;
   const createDiskCommand = [
     "qemu-img",

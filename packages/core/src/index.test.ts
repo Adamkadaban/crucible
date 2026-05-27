@@ -185,10 +185,51 @@ describe("core bootstrap exports", () => {
       "deny-guest-egress",
     ]);
     expect(plan.teardown).toEqual({
-      owner: { project: "crucible", vmName: "analysis-one", resourceId: "crucible-net0" },
-      firewallRuleIds: ["crucible-net0-allow-host-control", "crucible-net0-deny-guest-egress"],
+      owner: {
+        project: "crucible",
+        vmName: "analysis-one",
+        resourceId: "crucible-analysis-one-net0",
+      },
+      firewallRuleIds: [
+        "crucible-analysis-one-net0-allow-host-control",
+        "crucible-analysis-one-net0-deny-guest-egress",
+      ],
       interfaceNames: [],
     });
+  });
+
+  it("scopes default network ownership IDs to the VM name", () => {
+    const first = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      vmName: "analysis one",
+    });
+    const second = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      vmName: "analysis-two",
+    });
+
+    expect(first.qemu.netdevId).toBe("crucible-analysis-one-net0");
+    expect(first.teardown.interfaceNames).toEqual(["crucible-analysis-one-net0-tap"]);
+    expect(second.qemu.netdevId).toBe("crucible-analysis-two-net0");
+    expect(second.teardown.interfaceNames).toEqual(["crucible-analysis-two-net0-tap"]);
+    expect(first.firewall.rules[0]?.id).not.toBe(second.firewall.rules[0]?.id);
+  });
+
+  it("rejects netdev IDs that QEMU suboptions would misparse", () => {
+    expect(() =>
+      buildNetworkPlan({
+        config: parseNetworkConfig({ mode: "nat" }),
+        vmName: "analysis-one",
+        netdevId: "bad,id",
+      }),
+    ).toThrow(/netdevId cannot contain/);
+    expect(() =>
+      buildNetworkPlan({
+        config: parseNetworkConfig({ mode: "capture" }),
+        vmName: "analysis-one",
+        netdevId: "bad\\id",
+      }),
+    ).toThrow(/netdevId cannot contain/);
   });
 
   it("plans NAT networking as explicit guest egress", () => {
@@ -199,9 +240,14 @@ describe("core bootstrap exports", () => {
 
     expect(plan.qemu).toMatchObject({
       backend: "user",
-      netdevId: "crucible-net0",
+      netdevId: "crucible-analysis-one-net0",
       deviceModel: "virtio-net-pci",
-      args: ["-netdev", "user,id=crucible-net0", "-device", "virtio-net-pci,netdev=crucible-net0"],
+      args: [
+        "-netdev",
+        "user,id=crucible-analysis-one-net0",
+        "-device",
+        "virtio-net-pci,netdev=crucible-analysis-one-net0",
+      ],
     });
     expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
       "allow-host-control",
@@ -222,16 +268,16 @@ describe("core bootstrap exports", () => {
       backend: "tap",
       args: [
         "-netdev",
-        "tap,id=crucible-net0,ifname=crucible-net0-tap,script=no,downscript=no",
+        "tap,id=crucible-analysis-one-net0,ifname=crucible-analysis-one-net0-tap,script=no,downscript=no",
         "-device",
-        "virtio-net-pci,netdev=crucible-net0",
+        "virtio-net-pci,netdev=crucible-analysis-one-net0",
       ],
     });
     expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
       "allow-host-control",
       "capture-guest-traffic",
     ]);
-    expect(plan.teardown.interfaceNames).toEqual(["crucible-net0-tap"]);
+    expect(plan.teardown.interfaceNames).toEqual(["crucible-analysis-one-net0-tap"]);
     expect(plan.firewall.rules.every((rule) => rule.owner.project === "crucible")).toBe(true);
   });
 
@@ -313,7 +359,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0");
     expect(plan.args).not.toContain("-netdev");
-    expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-net0");
+    expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-win11-net0");
     expect(plan.network.backend).toBe("none");
     expect(plan.args).toContain("virtio-serial-pci");
     expect(plan.args).toContain("virtserialport,chardev=crucible-qga0,name=org.qemu.guest_agent.0");
@@ -379,9 +425,9 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
-    expect(plan.args).toContain("user,id=crucible-net0");
-    expect(plan.args).not.toContain("user,id=crucible-net0,restrict=off");
-    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-net0");
+    expect(plan.args).toContain("user,id=crucible-custom-lab-net0");
+    expect(plan.args).not.toContain("user,id=crucible-custom-lab-net0,restrict=off");
+    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-custom-lab-net0");
     expect(plan.network).toMatchObject({ backend: "user", mode: "nat" });
     expect(plan.args).toContain("unix:/run/crucible/qmp.sock,server=on,wait=off");
     expect(plan.args).toContain(
