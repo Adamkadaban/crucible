@@ -60,6 +60,10 @@ creation, health checks, and clean snapshot preparation. Generated Windows accou
 mTLS files are host-only secrets under `artifacts.secretsDirectory`, not repository files or guest
 shared-folder contents.
 
+The WinDbg stage now has PowerShell scripts for installing debugger tooling with
+`winget install Microsoft.WinDbg` or a Windows SDK Debugging Tools fallback, configuring
+`_NT_SYMBOL_PATH`, and detecting `cdb.exe`/`windbg.exe` readiness.
+
 The analysis policy stage disables Defender policy, records observed code-integrity policy state,
 confirms test signing is disabled, and can apply optional malware-reversing profile settings such as
 hostname, locale, sleep behavior, Explorer visibility, and low-risk lab camouflage. Username and

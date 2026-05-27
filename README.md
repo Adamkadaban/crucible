@@ -167,12 +167,16 @@ while leaving command-specific payloads opaque for QEMU version compatibility. S
 
 ## Provisioning Contracts
 
-Phase 3 currently defines the Windows provisioning contracts without running a real VM in CI. The
+Phase 3 currently defines the Windows provisioning contracts without executing the full flow. The
 core package models the ordered stages for media readiness, VM boot, QGA readiness, WinDbg/CDB
 installation, guest agent installation, analysis policy changes, local accounts, health checks, and
 clean snapshot preparation. Script contracts describe the runner, PowerShell argv, timeout,
 elevation, and redaction behavior, while secret contracts keep generated Windows credentials and
 mTLS material under the configured `artifacts.secretsDirectory` as host-only `0600` files.
+
+The WinDbg stage includes PowerShell scripts that prefer `winget install Microsoft.WinDbg`, fall
+back to Windows SDK Debugging Tools, configure `_NT_SYMBOL_PATH`, and detect CDB plus WinDbg
+readiness without requiring a real Windows VM in CI.
 
 The analysis policy stage uses `guest/provision/configure-policy.ps1` for isolated analysis VMs. It
 disables Windows Defender policy, applies and records code-integrity policy changes, forces test

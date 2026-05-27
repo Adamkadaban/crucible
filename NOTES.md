@@ -37,3 +37,9 @@ requests; resolve initial threads and report the re-review blocker. `AGENTS.md:7
 **Resolution:** The policy script emits JSON that host tests validate from fixtures, keeping
 Defender/code-integrity/test-signing readiness CI-safe until the real-VM provisioning worktree wires
 execution. `packages/core/src/analysis-policy.ts` · issue #59
+
+## 2026-05-27 — WinDbg winget package may not provide CDB
+
+**Resolution:** Keep `winget install Microsoft.WinDbg` as the preferred WinDbg path, but verify both
+CDB and a WinDbg executable after winget and use SDK Debugging Tools as a backstop when tooling is
+incomplete. `guest/provision/install-windbg.ps1:176` · PR #62
