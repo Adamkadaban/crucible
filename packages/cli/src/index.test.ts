@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { parseCrucibleConfig } from "@crucible/core";
@@ -5,16 +9,16 @@ import { parseCrucibleConfig } from "@crucible/core";
 import { runCrucibleCli } from "./index.js";
 
 describe("crucible CLI bootstrap", () => {
-  it("prints help", () => {
-    const result = runCrucibleCli(["--help"]);
+  it("prints help", async () => {
+    const result = await runCrucibleCli(["--help"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
   });
 
-  it("prints media plan without manual links by default", () => {
-    const result = runCrucibleCli(["media:plan"]);
+  it("prints media plan without manual links by default", async () => {
+    const result = await runCrucibleCli(["media:plan"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Media profile: windows11-enterprise-eval");
@@ -26,8 +30,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("Windows Server 2025 Evaluation page");
   });
 
-  it("prints profile-specific manual-download instructions with --manual", () => {
-    const result = runCrucibleCli(["media:plan", "--manual"]);
+  it("prints profile-specific manual-download instructions with --manual", async () => {
+    const result = await runCrucibleCli(["media:plan", "--manual"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Windows 11 Enterprise Evaluation page");
@@ -36,8 +40,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("latest virtio-win ISO");
   });
 
-  it("prints alternate Windows Server media plan", () => {
-    const result = runCrucibleCli(["media:plan", "--profile", "windows-server-2025-eval"]);
+  it("prints alternate Windows Server media plan", async () => {
+    const result = await runCrucibleCli(["media:plan", "--profile", "windows-server-2025-eval"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Media profile: windows-server-2025-eval");
@@ -45,8 +49,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("Windows 11 Enterprise Evaluation page");
   });
 
-  it("prints alternate Windows Server manual-download instructions", () => {
-    const result = runCrucibleCli([
+  it("prints alternate Windows Server manual-download instructions", async () => {
+    const result = await runCrucibleCli([
       "media:plan",
       "--manual",
       "--profile",
@@ -60,15 +64,15 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("latest virtio-win ISO");
   });
 
-  it("rejects unknown media profile", () => {
-    const result = runCrucibleCli(["media:plan", "--profile", "windows-10"]);
+  it("rejects unknown media profile", async () => {
+    const result = await runCrucibleCli(["media:plan", "--profile", "windows-10"]);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown media profile: windows-10");
   });
 
-  it("prints vm:create dry-run QEMU planning output", () => {
-    const result = runCrucibleCli(["vm:create", "--dry-run"], {
+  it("prints vm:create dry-run QEMU planning output", async () => {
+    const result = await runCrucibleCli(["vm:create", "--dry-run"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),
     });
 
@@ -80,8 +84,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("qmp socket: artifacts/qmp.sock");
   });
 
-  it("prints vm:start dry-run QEMU planning output", () => {
-    const result = runCrucibleCli(["vm:start", "--dry-run"], {
+  it("prints vm:start dry-run QEMU planning output", async () => {
+    const result = await runCrucibleCli(["vm:start", "--dry-run"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),
     });
 
@@ -92,17 +96,80 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("qga socket: artifacts/qga.sock");
   });
 
-  it("uses default config instead of cwd config when tests do not inject runtime", () => {
-    const result = runCrucibleCli(["vm:start", "--dry-run"]);
+  it("uses default config instead of cwd config when tests do not inject runtime", async () => {
+    const result = await runCrucibleCli(["vm:start", "--dry-run"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("artifacts/disks/crucible-win11.qcow2");
   });
 
-  it("rejects lifecycle commands without dry-run while launch behavior is not wired", () => {
-    const result = runCrucibleCli(["vm:start"]);
+  it("prints stopped VM status", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const result = await runCrucibleCli(["vm:status"], {
+      config: parseCrucibleConfig({
+        vm: { name: "test-win" },
+        artifacts: {
+          directory: path.join(root, "artifacts"),
+          manifestPath: path.join(root, "artifacts", "manifest.json"),
+          logsDirectory: path.join(root, "artifacts", "logs"),
+          snapshotsDirectory: path.join(root, "snapshots"),
+          secretsDirectory: path.join(root, "secrets"),
+        },
+        qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+        qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+      }),
+    });
 
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("vm:start currently supports --dry-run only");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("status: stopped");
+    expect(result.stdout).toContain("pid: none");
+  });
+
+  it("prints missing VM logs before the VM has started", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+
+    const result = await runCrucibleCli(["vm:logs"], { config });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("stdout log:");
+    expect(result.stdout).toContain("(missing)");
+  });
+
+  it("prints existing VM logs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const logsDirectory = path.join(root, "artifacts", "logs");
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory,
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+    await mkdir(logsDirectory, { recursive: true });
+    await writeFile(path.join(logsDirectory, "test-win.stdout.log"), "out\n", "utf8");
+    await writeFile(path.join(logsDirectory, "test-win.stderr.log"), "err\n", "utf8");
+
+    const result = await runCrucibleCli(["vm:logs"], { config });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("out");
+    expect(result.stdout).toContain("err");
   });
 });

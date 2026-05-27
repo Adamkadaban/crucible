@@ -34,6 +34,17 @@ snapshots before and after malware-analysis or Windows vulnerability debugging w
 nvm use && pnpm install
 ```
 
+The host must be Linux with KVM available. Install the distribution packages that provide QEMU,
+qcow2 tooling, and KVM access before creating a VM:
+
+```sh
+sudo apt-get install qemu-system-x86 qemu-utils ovmf
+scripts/check-host.sh
+```
+
+Package names vary by distribution, but the required binaries and devices are `qemu-system-x86_64`,
+`qemu-img`, and `/dev/kvm`.
+
 ## Use
 
 ```sh
@@ -43,6 +54,10 @@ pnpm crucible media:plan --manual
 pnpm crucible media:plan --profile windows-server-2025-eval
 pnpm crucible vm:create --dry-run
 pnpm crucible vm:start --dry-run
+pnpm crucible vm:status
+pnpm crucible vm:start
+pnpm crucible vm:logs
+pnpm crucible vm:stop
 pnpm crucible provision
 pnpm crucible mcp
 ```
@@ -88,10 +103,11 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
 }
 ```
 
-`crucible media:plan` prints the default Windows 11 Enterprise Evaluation ISO, stable virtio-win
-ISO, optional virtio guest tools bundle, and their expected cache paths. Pass `--manual` to include
-profile-specific manual download URLs. Use `"profile": "windows-server-2025-eval"` or
-`--profile windows-server-2025-eval` to select the alternate Windows Server evaluation media.
+`crucible media:plan` reads `crucible.config.json` when present and prints the default Windows 11
+Enterprise Evaluation ISO, stable virtio-win ISO, optional virtio guest tools bundle, and their
+expected cache paths. Pass `--manual` to include profile-specific manual download URLs. Use
+`"profile": "windows-server-2025-eval"` or `--profile windows-server-2025-eval` to select the
+alternate Windows Server evaluation media.
 
 Custom media overrides accept either `path` or `url`, plus optional `sha256`. Windows and virtio ISO
 overrides must point to `.iso` files, case-insensitively. Driver bundle overrides may point to
@@ -113,11 +129,14 @@ while leaving command-specific payloads opaque for QEMU version compatibility. S
 
 ## VM Lifecycle State
 
-The core lifecycle manager starts the planned QEMU process, records its pid, writes stdout/stderr
-logs, and stores machine-readable state under the configured artifact directory. It prefers QMP for
-graceful shutdown: `vm:stop` semantics send `quit`, while poweroff semantics send
-`system_powerdown`. If QMP is unavailable or the process does not exit before the configured
-timeout, the manager falls back to `SIGTERM` and then `SIGKILL`.
+The CLI lifecycle commands call the same core lifecycle manager used by later MCP tools. `vm:start`
+launches the planned QEMU process, records its pid, writes stdout/stderr logs, and stores
+machine-readable state under the configured artifact directory. `vm:status` prints the recorded pid,
+process liveness, QMP availability, and lifecycle artifact paths. `vm:logs` prints the QEMU stdout
+and stderr log files, reporting `(missing)` before the VM has produced logs. `vm:stop` prefers QMP
+graceful shutdown by sending `quit`; `vm:stop --poweroff` sends `system_powerdown`; `vm:stop --kill`
+sends `SIGKILL`. If QMP is unavailable or the process does not exit before the configured timeout,
+the manager falls back to `SIGTERM` and then `SIGKILL`.
 
 Default lifecycle artifacts are:
 
