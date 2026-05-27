@@ -42,6 +42,78 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("memoizes concurrent connect calls during greeting negotiation", async () => {
+    const sendGreeting: Array<() => void> = [];
+    const server = await createFakeQmpServer((connection) => {
+      sendGreeting.push(() => connection.send(capturedGreeting));
+      connection.onCommand("qmp_capabilities", (request) => {
+        connection.send({ return: {}, id: request.id });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    const firstConnect = client.connect();
+    const secondConnect = client.connect();
+
+    await waitFor(() => sendGreeting.length === 1);
+    sendGreeting[0]?.();
+
+    await expect(Promise.all([firstConnect, secondConnect])).resolves.toEqual([
+      capturedGreeting.QMP,
+      capturedGreeting.QMP,
+    ]);
+    expect(server.requests).toEqual([{ execute: "qmp_capabilities", id: "crucible-1" }]);
+
+    client.close();
+    await server.close();
+  });
+
+  it("queues execute calls behind in-flight connect readiness", async () => {
+    const sendGreeting: Array<() => void> = [];
+    const server = await createFakeQmpServer((connection) => {
+      sendGreeting.push(() => connection.send(capturedGreeting));
+      connection.onCommand("qmp_capabilities", (request) => {
+        connection.send({ return: {}, id: request.id });
+      });
+      connection.onCommand("query-status", (request) => {
+        connection.send({ return: { status: "running" }, id: request.id });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    const connect = client.connect();
+    const command = client.execute("query-status");
+
+    await waitFor(() => sendGreeting.length === 1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(server.requests).toEqual([]);
+    sendGreeting[0]?.();
+
+    await expect(connect).resolves.toEqual(capturedGreeting.QMP);
+    await expect(command).resolves.toMatchObject({ returnValue: { status: "running" } });
+    expect(server.requests.map((request) => request.execute)).toEqual([
+      "qmp_capabilities",
+      "query-status",
+    ]);
+
+    client.close();
+    await server.close();
+  });
+
+  it("rejects execute calls before connect starts", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+    });
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+    });
+
+    client.close();
+    await server.close();
+  });
+
   it("sends command arguments with request IDs and collects events", async () => {
     const server = await createFakeQmpServer((connection) => {
       connection.send(capturedGreeting);
@@ -105,6 +177,26 @@ describe("QmpClient", () => {
       code: "QMP_COMMAND_FAILED",
       message: "VM is not running",
       details: { qmpClass: "GenericError" },
+    });
+
+    client.close();
+    await server.close();
+  });
+
+  it("wraps socket errors as structured Crucible errors", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", () => connection.destroyWithError());
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
     });
 
     client.close();
@@ -247,6 +339,38 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("close rejects in-flight commands immediately", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-block", () => undefined);
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    const command = client.execute("query-block", undefined, { timeoutMs: 500 });
+    await waitFor(() => server.requests.some((request) => request.execute === "query-block"));
+    client.close();
+
+    await expect(command).rejects.toMatchObject({ code: "QMP_DISCONNECTED" });
+    await server.close();
+  });
+
+  it("close rejects an in-flight greeting immediately", async () => {
+    const server = await createFakeQmpServer(() => undefined);
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 500 });
+
+    const connect = client.connect();
+    await waitFor(() => server.connections.length === 1);
+    client.close();
+
+    await expect(connect).rejects.toMatchObject({ code: "QMP_DISCONNECTED" });
+    await server.close();
+  });
+
   it("cleans up a missing greeting by closing the socket", async () => {
     const server = await createFakeQmpServer(() => undefined);
     const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 20 });
@@ -254,6 +378,20 @@ describe("QmpClient", () => {
     await expect(client.connect()).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
     await expect(client.execute("query-status")).rejects.toMatchObject({
       code: "QMP_DISCONNECTED",
+    });
+
+    client.close();
+    await server.close();
+  });
+
+  it("is explicitly single-use after a negotiation timeout destroys the socket", async () => {
+    const server = await createFakeQmpServer(() => undefined);
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 20 });
+
+    await expect(client.connect()).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+      message: "QMP client socket is no longer usable",
     });
 
     client.close();
@@ -290,10 +428,12 @@ type FakeQmpConnection = {
   readonly send: (message: Record<string, unknown>) => void;
   readonly onCommand: (command: string, handler: (request: QmpRequest) => void) => void;
   readonly close: () => void;
+  readonly destroyWithError: () => void;
 };
 
 type FakeQmpServer = {
   readonly socketPath: string;
+  readonly connections: readonly net.Socket[];
   readonly requests: readonly QmpRequest[];
   readonly close: () => Promise<void>;
 };
@@ -301,16 +441,23 @@ type FakeQmpServer = {
 async function createFakeQmpServer(
   setup: (connection: FakeQmpConnection) => void,
 ): Promise<FakeQmpServer> {
-  const dir = await mkdtemp(path.join(tmpdir(), "crucible-qmp-"));
-  tempDirs.push(dir);
+  const dir = await createTempDir();
   const socketPath = path.join(dir, "qmp.sock");
+  const connections: net.Socket[] = [];
   const requests: QmpRequest[] = [];
   const server = net.createServer((socket) => {
+    connections.push(socket);
+    socket.on("error", () => undefined);
     const handlers = new Map<string, (request: QmpRequest) => void>();
     const connection: FakeQmpConnection = {
       send: (message) => socket.write(`${JSON.stringify(message)}\r\n`),
       onCommand: (command, handler) => handlers.set(command, handler),
       close: () => socket.end(),
+      destroyWithError: () => {
+        const error = new Error("fake socket reset") as NodeJS.ErrnoException;
+        error.code = "ECONNRESET";
+        socket.destroy(error);
+      },
     };
 
     setup(connection);
@@ -347,6 +494,7 @@ async function createFakeQmpServer(
 
   return {
     socketPath,
+    connections,
     requests,
     close: () =>
       new Promise<void>((resolve, reject) => {
@@ -359,6 +507,12 @@ async function createFakeQmpServer(
         });
       }),
   };
+}
+
+async function createTempDir(): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), "crucible-qmp-"));
+  tempDirs.push(dir);
+  return dir;
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
