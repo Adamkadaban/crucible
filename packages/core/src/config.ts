@@ -110,6 +110,7 @@ const artifactsConfigSchema = z
 
 export const crucibleConfigSchema = z
   .object({
+    $schema: z.string().optional(),
     vm: z.preprocess((value) => value ?? {}, vmConfigSchema),
     media: z.preprocess((value) => value ?? {}, mediaConfigSchema),
     virtio: z.preprocess((value) => value ?? {}, virtioConfigSchema),
