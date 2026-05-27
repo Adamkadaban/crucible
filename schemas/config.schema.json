@@ -57,8 +57,22 @@
         "controlPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8443 }
       }
     },
-    "qmp": { "$ref": "#/$defs/socketConfig" },
-    "qga": { "$ref": "#/$defs/socketConfig" },
+    "qmp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "socketPath": { "type": "string", "minLength": 1, "default": "artifacts/qmp.sock" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "default": 5000 }
+      }
+    },
+    "qga": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "socketPath": { "type": "string", "minLength": 1, "default": "artifacts/qga.sock" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "default": 10000 }
+      }
+    },
     "artifacts": {
       "type": "object",
       "additionalProperties": false,
@@ -80,14 +94,6 @@
         "path": { "type": "string", "minLength": 1 },
         "url": { "type": "string", "format": "uri" },
         "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
-      }
-    },
-    "socketConfig": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "socketPath": { "type": "string", "minLength": 1 },
-        "timeoutMs": { "type": "integer", "minimum": 100 }
       }
     }
   }

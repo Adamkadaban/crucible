@@ -58,6 +58,12 @@ describe("core bootstrap exports", () => {
     );
   });
 
+  it("rejects unknown config keys", () => {
+    expect(() => parseCrucibleConfig({ media: { cacheDirectory: "typo" } })).toThrow(
+      /Unrecognized key/,
+    );
+  });
+
   it("creates empty artifact manifests", () => {
     expect(createEmptyArtifactManifest("lab-one")).toEqual({
       version: 1,
