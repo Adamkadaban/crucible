@@ -163,7 +163,8 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
-    expect(plan.args).toContain("user,id=crucible-net0,restrict=off");
+    expect(plan.args).toContain("user,id=crucible-net0");
+    expect(plan.args).not.toContain("user,id=crucible-net0,restrict=off");
     expect(plan.args).toContain("virtio-net-pci,netdev=crucible-net0");
     expect(plan.args).toContain("unix:/run/crucible/qmp.sock,server=on,wait=off");
     expect(plan.args).toContain(
@@ -172,6 +173,30 @@ describe("core bootstrap exports", () => {
     expect(plan.args.slice(-4)).toEqual(["-display", "none", "-trace", "events=/tmp/qemu events"]);
     expect(plan.dryRunCommand).toContain("'custom lab'");
     expect(plan.dryRunCommand).toContain("'events=/tmp/qemu events'");
+  });
+
+  it("rejects disk paths that QEMU drive suboptions would misparse", () => {
+    expect(() => buildQemuCommandPlan({ diskPath: "/var/lib/crucible/bad,disk.qcow2" })).toThrow(
+      /diskPath cannot contain/,
+    );
+  });
+
+  it("rejects derived disk paths that QEMU drive suboptions would misparse", () => {
+    const config = parseCrucibleConfig({ vm: { name: "bad,name" } });
+
+    expect(() => buildQemuCommandPlan({ config })).toThrow(/diskPath cannot contain/);
+  });
+
+  it("rejects QMP socket paths that QEMU suboptions would misparse", () => {
+    const config = parseCrucibleConfig({ qmp: { socketPath: "artifacts/qmp,bad.sock" } });
+
+    expect(() => buildQemuCommandPlan({ config })).toThrow(/qmp\.socketPath cannot contain/);
+  });
+
+  it("rejects QGA socket paths that QEMU suboptions would misparse", () => {
+    const config = parseCrucibleConfig({ qga: { socketPath: "artifacts/qga\\bad.sock" } });
+
+    expect(() => buildQemuCommandPlan({ config })).toThrow(/qga\.socketPath cannot contain/);
   });
 
   it("renders dry-run output for CLI lifecycle commands", () => {

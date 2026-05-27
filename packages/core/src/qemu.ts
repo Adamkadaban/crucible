@@ -1,9 +1,10 @@
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
+import { CrucibleError } from "./errors.js";
 
 const DEFAULT_QEMU_EXECUTABLE = "qemu-system-x86_64";
 const DEFAULT_NETDEV_ID = "crucible-net0";
 const DEFAULT_DISK_ID = "crucible-disk0";
-const QGA_CHANNEL_ID = "crucible-qga0";
+const QGA_CHARDEV_ID = "crucible-qga0";
 
 export type QemuDiskPlan = {
   readonly path: string;
@@ -37,6 +38,9 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
   const config = options.config ?? defaultCrucibleConfig;
   const executable = options.executable ?? DEFAULT_QEMU_EXECUTABLE;
   const diskPath = options.diskPath ?? getDefaultDiskPath(config);
+  validateQemuSuboptionValue("diskPath", diskPath);
+  validateQemuSuboptionValue("qmp.socketPath", config.qmp.socketPath);
+  validateQemuSuboptionValue("qga.socketPath", config.qga.socketPath);
   const createDiskCommand = [
     "qemu-img",
     "create",
@@ -126,7 +130,7 @@ function buildNetworkArgs(config: CrucibleConfig): readonly string[] {
 
   return [
     "-netdev",
-    `user,id=${DEFAULT_NETDEV_ID},restrict=off`,
+    `user,id=${DEFAULT_NETDEV_ID}`,
     "-device",
     `${config.virtio.networkDevice},netdev=${DEFAULT_NETDEV_ID}`,
   ];
@@ -137,10 +141,20 @@ function buildGuestAgentArgs(config: CrucibleConfig): readonly string[] {
     "-device",
     "virtio-serial-pci",
     "-chardev",
-    `socket,path=${config.qga.socketPath},server=on,wait=off,id=${QGA_CHANNEL_ID}`,
+    `socket,path=${config.qga.socketPath},server=on,wait=off,id=${QGA_CHARDEV_ID}`,
     "-device",
-    `virtserialport,chardev=${QGA_CHANNEL_ID},name=org.qemu.guest_agent.0`,
+    `virtserialport,chardev=${QGA_CHARDEV_ID},name=org.qemu.guest_agent.0`,
   ];
+}
+
+function validateQemuSuboptionValue(name: string, value: string): void {
+  if (/[,\\]/.test(value)) {
+    throw new CrucibleError(
+      "CONFIG_INVALID",
+      `${name} cannot contain ',' or '\\' because QEMU comma-delimited suboptions would misparse it`,
+      { name, value },
+    );
+  }
 }
 
 function buildOptionalVirtioDeviceArgs(config: CrucibleConfig): readonly string[] {
