@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Adamkadaban/crucible/schemas/config.schema.json",
+  "title": "Crucible configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "vm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "default": "crucible-win11" },
+        "cpus": { "type": "integer", "minimum": 1, "default": 4 },
+        "memoryMiB": { "type": "integer", "minimum": 2048, "default": 8192 },
+        "diskGiB": { "type": "integer", "minimum": 40, "default": 128 },
+        "extraQemuArgs": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cacheDir": { "type": "string", "minLength": 1, "default": "media/cache" },
+        "profile": {
+          "type": "string",
+          "enum": ["windows11-enterprise-eval", "windows-server-2025-eval"],
+          "default": "windows11-enterprise-eval"
+        },
+        "windowsIso": { "$ref": "#/$defs/mediaOverride" },
+        "virtioIso": { "$ref": "#/$defs/mediaOverride" },
+        "virtioGuestTools": { "$ref": "#/$defs/mediaOverride" }
+      }
+    },
+    "virtio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diskBus": {
+          "type": "string",
+          "enum": ["virtio-blk", "virtio-scsi"],
+          "default": "virtio-scsi"
+        },
+        "networkDevice": {
+          "type": "string",
+          "enum": ["virtio-net-pci"],
+          "default": "virtio-net-pci"
+        },
+        "balloon": { "type": "boolean", "default": true },
+        "rng": { "type": "boolean", "default": true }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["isolated", "nat", "capture"], "default": "isolated" },
+        "controlPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8443 }
+      }
+    },
+    "qmp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "socketPath": { "type": "string", "minLength": 1, "default": "artifacts/qmp.sock" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "default": 5000 }
+      }
+    },
+    "qga": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "socketPath": { "type": "string", "minLength": 1, "default": "artifacts/qga.sock" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "default": 10000 }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "directory": { "type": "string", "minLength": 1, "default": "artifacts" },
+        "manifestPath": { "type": "string", "minLength": 1, "default": "artifacts/manifest.json" },
+        "logsDirectory": { "type": "string", "minLength": 1, "default": "artifacts/logs" },
+        "snapshotsDirectory": { "type": "string", "minLength": 1, "default": "snapshots" },
+        "secretsDirectory": { "type": "string", "minLength": 1, "default": "secrets" }
+      }
+    }
+  },
+  "$defs": {
+    "mediaOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["path"] }, { "required": ["url"] }],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    }
+  }
+}

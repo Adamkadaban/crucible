@@ -45,8 +45,33 @@ pnpm crucible mcp
 
 ## Configuration
 
-The planned config file is `crucible.config.json`. It will support custom Windows ISOs, virtio ISOs,
-driver bundles, QEMU arguments, media cache paths, and provisioning preferences.
+The planned config file is `crucible.config.json`. The schema lives at `schemas/config.schema.json`
+and covers VM sizing, media cache paths, custom Windows and virtio media, virtio device preferences,
+extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories.
+
+```json
+{
+  "$schema": "./schemas/config.schema.json",
+  "vm": {
+    "name": "crucible-win11",
+    "cpus": 4,
+    "memoryMiB": 8192,
+    "diskGiB": 128
+  },
+  "media": {
+    "cacheDir": "media/cache",
+    "profile": "windows11-enterprise-eval",
+    "windowsIso": { "path": "/isos/Windows11EnterpriseEvaluation.iso" },
+    "virtioIso": { "path": "/isos/virtio-win.iso" }
+  },
+  "network": {
+    "mode": "isolated"
+  }
+}
+```
+
+If automated downloads are blocked, `crucible media:plan` prints manual download URLs and the cache
+paths where the files should be placed.
 
 ## Hacking On It
 
