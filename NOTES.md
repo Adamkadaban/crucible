@@ -31,3 +31,9 @@ the owner-authored lifecycle manager scope implemented in this branch. `PLAN.md:
 **Resolution:** Initial Copilot review worked through PR auto-request, but manual re-request after
 fixes returned `requested:false` because Copilot is not enabled as a repo collaborator for manual
 requests; resolve initial threads and report the re-review blocker. `AGENTS.md:70` · PR #52
+
+## 2026-05-27 — WinDbg winget package may not provide CDB
+
+**Resolution:** Keep `winget install Microsoft.WinDbg` as the preferred WinDbg path, but verify both
+CDB and a WinDbg executable after winget and use SDK Debugging Tools as a backstop when tooling is
+incomplete. `guest/provision/install-windbg.ps1:176` · PR #62

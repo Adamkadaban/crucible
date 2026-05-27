@@ -239,7 +239,7 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 **Deliverable checklist:**
 
 - [ ] Add provisioning scripts for QEMU guest agent readiness and bootstrap checks.
-- [ ] Add WinDbg installation script using `winget install Microsoft.WinDbg` when available and SDK
+- [x] Add WinDbg installation script using `winget install Microsoft.WinDbg` when available and SDK
       Debugging Tools fallback when not.
 - [ ] Add OpenSSH enablement only as a bootstrap fallback, not as the steady-state control plane.
 - [ ] Add Windows Defender disablement, code-integrity policy changes, and test-signing checks for
