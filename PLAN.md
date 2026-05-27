@@ -156,7 +156,7 @@ real VM.
 
 **Deliverable checklist:**
 
-- [ ] Define `crucible.config.json` schema for VM name, CPU, memory, disk, default media cache,
+- [x] Define `crucible.config.json` schema for VM name, CPU, memory, disk, default media cache,
       optional Windows ISO path or URL, optional virtio ISO path or URL, virtio device preferences,
       extra QEMU args, networking mode, QMP socket path, QGA socket path, and artifact directories.
 - [ ] Implement media cache planning for Windows 11 Enterprise Evaluation ISO and stable virtio-win
@@ -169,7 +169,7 @@ real VM.
       collection, and structured errors.
 - [ ] Implement lifecycle manager for create, start, stop, poweroff, kill-after-timeout, status, and
       cleanup.
-- [ ] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
+- [x] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
       generated credentials.
 - [ ] Add CLI commands for `vm:create`, `vm:start`, `vm:stop`, `vm:status`, and `vm:logs`.
 - [ ] Add host-only fake tests for QEMU command generation, QMP parsing, lifecycle state
@@ -178,14 +178,14 @@ real VM.
 
 **Parallel-work split table:**
 
-| Wave            | Worktree slug        | Depends on | Tasks                                                                                                                |
-| --------------- | -------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| 1 (solo)        | lifecycle-interfaces | Phase 0    | Config schema, media cache contracts, state manifest interfaces, shared process runner contracts                     |
-| 2 (parallel x3) | media-cache          | wave 1     | Default Windows desktop/virtio media sources, manual-download link output, cache planner, override validation, tests |
-| 2 (parallel x3) | qemu-command-builder | wave 1     | QEMU argv generation, configurable virtio defaults, dry-run rendering, tests                                         |
-| 2 (parallel x3) | qmp-client           | wave 1     | QMP socket client, negotiation, commands, events, timeout tests                                                      |
-| 3 (parallel x2) | lifecycle-manager    | wave 2     | VM process manager, pid/log handling, stop/kill semantics, tests                                                     |
-| 4 (solo)        | lifecycle-cli-docs   | wave 3     | CLI lifecycle commands, README/docs updates, dry-run exit test                                                       |
+| Wave            | Worktree slug        | Depends on | Tasks                                                                                                                 |
+| --------------- | -------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| 1 (solo)        | lifecycle-interfaces | Phase 0    | Completed in PR #16: config schema, media cache contracts, state manifest interfaces, shared process runner contracts |
+| 2 (parallel x3) | media-cache          | wave 1     | Default Windows desktop/virtio media sources, manual-download link output, cache planner, override validation, tests  |
+| 2 (parallel x3) | qemu-command-builder | wave 1     | QEMU argv generation, configurable virtio defaults, dry-run rendering, tests                                          |
+| 2 (parallel x3) | qmp-client           | wave 1     | QMP socket client, negotiation, commands, events, timeout tests                                                       |
+| 3 (parallel x2) | lifecycle-manager    | wave 2     | VM process manager, pid/log handling, stop/kill semantics, tests                                                      |
+| 4 (solo)        | lifecycle-cli-docs   | wave 3     | CLI lifecycle commands, README/docs updates, dry-run exit test                                                        |
 
 ### Phase 2 — Contained Networking and Threat Model
 
