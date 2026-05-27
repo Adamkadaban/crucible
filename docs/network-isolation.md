@@ -1,10 +1,10 @@
 # Network Isolation
 
-Crucible's network model starts with contracts rather than host mutation. The default mode is
-`isolated`, and later Phase 2 work will turn the firewall contracts into concrete host setup
-commands.
+Crucible's malware-analysis default is no guest Internet egress. The network model currently defines
+the QEMU and firewall contracts that later Phase 2 work applies to the host. Until apply-mode
+network setup lands, use dry-run output to verify that the selected mode matches the analysis risk.
 
-## Modes
+## Network Modes
 
 - `isolated` emits a restricted QEMU user-mode NIC for the host-control path and carries firewall
   intent to deny guest egress.
@@ -12,6 +12,23 @@ commands.
   networking.
 - `capture` is an explicit opt-in mode for tap-backed traffic capture while retaining project-owned
   teardown tags.
+
+## Configuration
+
+The config schema accepts only these network fields:
+
+```json
+{
+  "network": {
+    "mode": "isolated",
+    "controlPort": 8443
+  }
+}
+```
+
+`network.mode` must be `isolated`, `nat`, or `capture`. If omitted, it defaults to `isolated`.
+`network.controlPort` is the guest API port reserved for the host-only control plane and defaults to
+`8443`.
 
 ## QEMU Integration
 
@@ -43,11 +60,42 @@ capture setup can bind traffic to a specific Crucible VM.
 - `NetworkTeardownPlan` lists only project-owned firewall rule IDs and interface names that teardown
   code may remove.
 
+## Firewall Intent
+
+The network model records intent rather than applying broad host firewall changes:
+
+| Mode       | Rule intents                                  | Internet egress   |
+| ---------- | --------------------------------------------- | ----------------- |
+| `isolated` | `allow-host-control`, `deny-guest-egress`     | No                |
+| `nat`      | `allow-host-control`, `allow-nat-egress`      | Yes               |
+| `capture`  | `allow-host-control`, `capture-guest-traffic` | Capture path only |
+
+`nat` plans include the warning
+`nat mode grants guest Internet egress and is not the malware-analysis default`. `capture` plans
+include the warning `capture mode must keep packet captures outside repo-controlled paths`.
+
 ## Teardown Ownership
 
-Every planned network resource carries a `NetworkOwnerTag` with `project`, `vmName`, and
-`resourceId`. Teardown implementations must match these tags before deleting firewall rules or
-interfaces and must not perform broad firewall table cleanup.
+Every planned network resource carries a `NetworkOwnerTag` with `project: "crucible"`, `vmName`, and
+`resourceId`. The default `resourceId` is derived from the VM name, for example
+`crucible-analysis-one-net0`. Teardown implementations must match these tags before deleting
+firewall rules or interfaces and must not perform broad firewall table cleanup.
+
+In `isolated` and `nat` modes, the current teardown interface list is empty because no project-owned
+tap interface is planned. In `capture` mode, teardown may remove only `<netdevId>-tap` for the
+matching owner tag.
+
+## Operator Guidance
+
+- Use `isolated` for malware samples unless a specific analysis objective requires egress.
+- Review `vm:start --dry-run` before launch. In isolated mode, the QEMU argv should contain
+  `restrict=on` and only the loopback control `hostfwd` mapping.
+- Do not add `vm.extraQemuArgs` that create bridge, socket, VNC-over-network, host filesystem, or
+  unrestricted network devices unless the host is dedicated to that risk.
+- Keep packet captures, dumps, and downloaded guest artifacts under artifact directories, not in Git
+  or synced folders.
+- Treat host firewall apply mode as privileged host mutation once it lands. It must remain bounded
+  to project-owned rules and interfaces.
 
 ## Open Implementation Work
 

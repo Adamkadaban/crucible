@@ -17,6 +17,21 @@ Crucible is a Linux-hosted MCP server and CLI for creating a disposable Windows 
 on QEMU/KVM, installing debugger tooling and a secure guest control service, then restoring clean
 snapshots before and after malware-analysis or Windows vulnerability debugging work.
 
+## Safety Warnings
+
+- Treat the Windows guest as hostile after running any sample, exploit proof of concept, or unknown
+  binary. Crucible reduces accidental exposure; it does not guarantee containment against QEMU/KVM
+  or host kernel escapes.
+- The default `network.mode` is `isolated` and must not allow guest Internet egress. Use `nat` only
+  when live egress is intentional, and use `capture` only when packet capture artifacts are
+  expected.
+- Do not expose host home directories, SSH agents, cloud credentials, package tokens, browser
+  profiles, or repository roots to the guest. Host shared folders are not part of the safe default.
+- Keep malware samples, VM disks, snapshots, crash dumps, packet captures, symbol caches, and
+  generated credentials out of Git and out of synced personal folders.
+- Review dry-run QEMU output before launching with `vm.extraQemuArgs`; extra network, socket, or
+  filesystem flags can bypass Crucible's containment assumptions.
+
 ## Highlights
 
 - **Linux-first host** - Uses QEMU/KVM, QMP, virtio devices, and host-only control paths.
@@ -111,7 +126,7 @@ unrestricted QEMU user networking with the same control-port mapping, and `captu
 capture contract for later firewall and packet-capture work. See
 [`docs/network-isolation.md`](./docs/network-isolation.md) and
 [`docs/threat-model.md`](./docs/threat-model.md) for the Phase 2 network contracts and containment
-outline.
+boundaries.
 
 `crucible media:plan` reads `crucible.config.json` when present and prints the default Windows 11
 Enterprise Evaluation ISO, stable virtio-win ISO, optional virtio guest tools bundle, and their
@@ -160,7 +175,9 @@ Default lifecycle artifacts are:
 
 Cleanup is intentionally narrow: stale pid files and sockets are removed only for project-owned
 paths and only when the recorded process is no longer alive. Disk images, Windows media, snapshots,
-sample directories, and other operator-provided artifacts are not deleted by lifecycle cleanup.
+sample directories, and other operator-provided artifacts are not deleted by lifecycle cleanup. For
+real malware work, prefer artifact and sample directories on a dedicated analysis volume rather than
+under a shared home directory or cloud-synced path.
 
 ## QEMU Dry Runs
 
