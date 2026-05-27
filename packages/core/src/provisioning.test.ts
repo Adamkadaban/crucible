@@ -257,15 +257,22 @@ describe("provisioning contracts", () => {
 
     expect(script).toContain("CRUCIBLE_STANDARD_PASSWORD");
     expect(script).toContain("CRUCIBLE_ADMIN_PASSWORD");
+    expect(script).toContain("-PasswordNeverExpires:$true");
+    expect(script).toContain("-UserMayChangePassword:$false");
     expect(script).not.toContain(
       "param(\n    [Parameter(Mandatory = $true)]\n    [string]$Password",
     );
+    expect(script).not.toContain("-PasswordNeverExpires $true");
+    expect(script).not.toContain("-UserMayChangePassword $false");
   });
 
   it("limits guest agent firewall setup to the host-only source address", async () => {
     const script = await readFile("guest/provision/install-agent.ps1", "utf8");
 
     expect(script).toContain("HostOnlySourceAddress");
+    expect(script).toContain("[System.Net.IPAddress]::TryParse");
+    expect(script).toContain("[System.Net.IPAddress]::Any");
+    expect(script).toContain("[System.Net.IPAddress]::IPv6Any");
     expect(script).toContain("-RemoteAddress $HostOnlySourceAddress");
     expect(script).toContain("opensshBootstrapOnly = $true");
     expect(script).not.toContain("-RemoteAddress Any");

@@ -42,7 +42,7 @@ function Ensure-LocalAccount {
         New-LocalUser -Name $Username -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
     }
     else {
-        Set-LocalUser -Name $Username -Password $securePassword -PasswordNeverExpires $true -UserMayChangePassword $false
+        Set-LocalUser -Name $Username -Password $securePassword -PasswordNeverExpires:$true -UserMayChangePassword:$false
         Enable-LocalUser -Name $Username
     }
 

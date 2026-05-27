@@ -21,9 +21,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ($HostOnlySourceAddress -eq "0.0.0.0" -or $HostOnlySourceAddress -eq "::") {
-    throw "HostOnlySourceAddress must be a narrow host-only address"
+function Assert-SingleHostAddress {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Address
+    )
+
+    $parsedAddress = [System.Net.IPAddress]::None
+    if (-not [System.Net.IPAddress]::TryParse($Address, [ref]$parsedAddress)) {
+        throw "HostOnlySourceAddress must be a single IP address"
+    }
+
+    if ($parsedAddress.Equals([System.Net.IPAddress]::Any) -or $parsedAddress.Equals([System.Net.IPAddress]::IPv6Any)) {
+        throw "HostOnlySourceAddress must not be a wildcard address"
+    }
 }
+
+Assert-SingleHostAddress -Address $HostOnlySourceAddress
 
 if ($ControlPort -lt 1 -or $ControlPort -gt 65535) {
     throw "ControlPort must be between 1 and 65535"
