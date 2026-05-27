@@ -1,0 +1,58 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
+
+function readProvisionScript(name: string): string {
+  return readFileSync(path.join(repositoryRoot, "guest/provision", name), "utf8");
+}
+
+describe("WinDbg provisioning scripts", () => {
+  it("prefers winget for WinDbg installation", () => {
+    const script = readProvisionScript("install-windbg.ps1");
+
+    expect(script).toContain("Install-WithWinget");
+    expect(script).toContain('"Microsoft.WinDbg"');
+    expect(script).toContain('"--accept-package-agreements"');
+    expect(script).toContain('"--accept-source-agreements"');
+    expect(script).toContain('"--disable-interactivity"');
+  });
+
+  it("falls back to SDK Debugging Tools when winget is unavailable", () => {
+    const script = readProvisionScript("install-windbg.ps1");
+
+    expect(script).toContain("Install-WithSdkDebuggingTools");
+    expect(script).toContain("OptionId.WindowsDesktopDebuggers");
+    expect(script).toContain("Invoke-WebRequest");
+    expect(script).toContain("winsdksetup.exe");
+  });
+
+  it("configures the machine symbol path and debugger readiness checks", () => {
+    const installScript = readProvisionScript("install-windbg.ps1");
+    const detectionScript = readProvisionScript("test-windbg.ps1");
+
+    for (const script of [installScript, detectionScript]) {
+      expect(script).toContain("cdb.exe");
+      expect(script).toContain("windbg.exe");
+      expect(script).toContain("WinDbgX.exe");
+      expect(script).toContain("_NT_SYMBOL_PATH");
+      expect(script).toContain("https://msdl.microsoft.com/download/symbols");
+      expect(script).toContain("ConvertTo-Json -Compress");
+    }
+
+    expect(installScript).toContain("SetEnvironmentVariable");
+    expect(installScript).toContain("CDB is still missing after winget");
+    expect(detectionScript).toContain("healthy =");
+  });
+
+  it("supports dry-run coverage without a Windows VM", () => {
+    const script = readProvisionScript("install-windbg.ps1");
+
+    expect(script).toContain("[switch]$DryRun");
+    expect(script).toContain(
+      "dry-run: readiness check would verify cdb.exe, windbg.exe, and symbol path",
+    );
+  });
+});
