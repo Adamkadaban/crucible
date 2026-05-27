@@ -130,28 +130,31 @@ async function runVmStopCommand(
   args: readonly string[],
   runtime: CliRuntime,
 ): Promise<CommandResult> {
-  if (args.length > 1) {
-    return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[1]}` };
-  }
-
   const manager = getLifecycleManager(runtime);
   let result: VmStopResult;
+  let action = "stop";
 
   switch (args[0]) {
     case undefined:
       result = await manager.stop();
       break;
     case "--poweroff":
+      action = "poweroff";
       result = await manager.poweroff();
       break;
     case "--kill":
+      action = "kill";
       result = await manager.kill();
       break;
     default:
       return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[0]}` };
   }
 
-  return { exitCode: 0, stdout: renderVmStopResult(result), stderr: "" };
+  if (args.length > 1) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[1]}` };
+  }
+
+  return { exitCode: 0, stdout: renderVmStopResult(result, action), stderr: "" };
 }
 
 async function runVmStatusCommand(
@@ -208,9 +211,9 @@ function getRuntimeConfig(runtime: CliRuntime): CrucibleConfig {
   return loadCrucibleConfigFile(runtime.configPath);
 }
 
-function renderVmStopResult(result: VmStopResult): string {
+function renderVmStopResult(result: VmStopResult, action: string): string {
   return [
-    `VM ${result.mode} requested.`,
+    `VM ${action} requested.`,
     `qmp command sent: ${result.qmpCommandSent ? "yes" : "no"}`,
     `signal sent: ${result.signalSent ?? "none"}`,
     `killed after timeout: ${result.killedAfterTimeout ? "yes" : "no"}`,

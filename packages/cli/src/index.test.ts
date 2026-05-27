@@ -97,10 +97,27 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("uses default config instead of cwd config when tests do not inject runtime", async () => {
-    const result = await runCrucibleCli(["vm:start", "--dry-run"]);
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const result = await runCrucibleCli(["vm:start", "--dry-run"], {
+      configPath: path.join(root, "missing.config.json"),
+    });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("artifacts/disks/crucible-win11.qcow2");
+  });
+
+  it("reports the first invalid vm:stop option before extra arguments", async () => {
+    const result = await runCrucibleCli(["vm:stop", "--unknown", "--kill"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown vm:stop option: --unknown");
+  });
+
+  it("rejects extra vm:stop arguments after a valid option", async () => {
+    const result = await runCrucibleCli(["vm:stop", "--kill", "--extra"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown vm:stop option: --extra");
   });
 
   it("prints stopped VM status", async () => {
