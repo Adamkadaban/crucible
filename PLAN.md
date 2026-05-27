@@ -169,7 +169,7 @@ real VM.
       collection, and structured errors.
 - [x] Implement lifecycle manager for start, stop, poweroff, kill-after-timeout, status, and
       cleanup.
-- [ ] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
+- [x] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
       generated credentials.
 - [x] Add CLI commands for `vm:create`, `vm:start`, `vm:stop`, `vm:status`, and `vm:logs`.
 - [x] Add host-only fake tests for QEMU command generation, QMP parsing, lifecycle state
@@ -185,7 +185,10 @@ real VM.
 | 2 (parallel x3) | qemu-command-builder | wave 1     | Completed in PR #29: QEMU argv generation, configurable virtio defaults, dry-run rendering, tests                     |
 | 2 (parallel x3) | qmp-client           | wave 1     | Completed in PR #34: QMP socket client, negotiation, commands, events, timeout tests                                  |
 | 3 (parallel x2) | lifecycle-manager    | wave 2     | Completed in PR #37: VM process manager, pid/log handling, stop/kill semantics, tests                                 |
-| 4 (solo)        | lifecycle-cli-docs   | wave 3     | CLI lifecycle commands, README/docs updates, dry-run exit test                                                        |
+| 4 (solo)        | lifecycle-cli-docs   | wave 3     | Completed in PR #40: CLI lifecycle commands, README/docs updates, dry-run exit test                                   |
+
+Phase 1 exit test passed on 2026-05-27:
+`pnpm crucible media:plan && pnpm crucible vm:create --dry-run && pnpm crucible vm:start --dry-run && pnpm test -- --run lifecycle`.
 
 ### Phase 2 — Contained Networking and Threat Model
 
