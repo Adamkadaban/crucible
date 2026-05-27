@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { CRUCIBLE_VERSION, getManualDownloadInstructions, MANUAL_DOWNLOADS } from "./index.js";
+import {
+  createEmptyArtifactManifest,
+  CRUCIBLE_VERSION,
+  defaultCrucibleConfig,
+  describeCommand,
+  getManualDownloadInstructions,
+  MANUAL_DOWNLOADS,
+  parseCrucibleConfig,
+} from "./index.js";
 
 describe("core bootstrap exports", () => {
   it("exposes a version", () => {
@@ -14,5 +22,53 @@ describe("core bootstrap exports", () => {
     expect(instructions).toContain("Windows 11 Enterprise Evaluation");
     expect(instructions).toContain("virtio-win");
     expect(instructions).toContain("/tmp/crucible-media");
+  });
+
+  it("parses the default lifecycle config", () => {
+    expect(defaultCrucibleConfig.vm.name).toBe("crucible-win11");
+    expect(defaultCrucibleConfig.media.profile).toBe("windows11-enterprise-eval");
+    expect(defaultCrucibleConfig.network.mode).toBe("isolated");
+    expect(defaultCrucibleConfig.virtio.diskBus).toBe("virtio-scsi");
+  });
+
+  it("accepts custom media overrides and qemu args", () => {
+    const config = parseCrucibleConfig({
+      vm: {
+        name: "lab-one",
+        extraQemuArgs: ["-cpu", "host"],
+      },
+      media: {
+        windowsIso: { path: "/isos/win11.iso" },
+        virtioIso: {
+          url: "https://example.com/virtio.iso",
+          sha256: "a".repeat(64),
+        },
+      },
+    });
+
+    expect(config.vm.name).toBe("lab-one");
+    expect(config.vm.extraQemuArgs).toEqual(["-cpu", "host"]);
+    expect(config.media.windowsIso?.path).toBe("/isos/win11.iso");
+    expect(config.media.virtioIso?.sha256).toBe("a".repeat(64));
+  });
+
+  it("rejects empty media overrides", () => {
+    expect(() => parseCrucibleConfig({ media: { windowsIso: {} } })).toThrow(
+      /media override must include path or url/,
+    );
+  });
+
+  it("creates empty artifact manifests", () => {
+    expect(createEmptyArtifactManifest("lab-one")).toEqual({
+      version: 1,
+      vmName: "lab-one",
+      artifacts: [],
+    });
+  });
+
+  it("describes process commands", () => {
+    expect(
+      describeCommand({ executable: "qemu-system-x86_64", args: ["-enable-kvm"], timeoutMs: 1000 }),
+    ).toBe("qemu-system-x86_64 -enable-kvm");
   });
 });
