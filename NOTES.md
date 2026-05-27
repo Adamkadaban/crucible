@@ -38,6 +38,12 @@ requests; resolve initial threads and report the re-review blocker. `AGENTS.md:7
 Defender/code-integrity/test-signing readiness CI-safe until the real-VM provisioning worktree wires
 execution. `packages/core/src/analysis-policy.ts` · issue #59
 
+## 2026-05-27 — Account passwords stay off provisioning argv
+
+**Resolution:** Windows execution account passwords are generated into host-only secret JSON files
+and injected into the account script through process environment variables so PowerShell argv and
+stage contracts do not carry plaintext credentials. `packages/core/src/provisioning.ts` · issue #57
+
 ## 2026-05-27 — WinDbg winget package may not provide CDB
 
 **Resolution:** Keep `winget install Microsoft.WinDbg` as the preferred WinDbg path, but verify both

@@ -54,18 +54,25 @@ shows the launch argv only. Neither command downloads media, creates disks, or s
 
 ## Provisioning Outline
 
-Windows provisioning is currently contract-first. The planned flow is media readiness, VM boot, QGA
-readiness, WinDbg/CDB installation, guest agent installation, analysis policy changes, local account
-creation, health checks, and clean snapshot preparation. Generated Windows account credentials and
-mTLS files are host-only secrets under `artifacts.secretsDirectory`, not repository files or guest
-shared-folder contents.
-
-The WinDbg stage now has PowerShell scripts for installing debugger tooling with
-`winget install Microsoft.WinDbg` or a Windows SDK Debugging Tools fallback, configuring
-`_NT_SYMBOL_PATH`, and detecting `cdb.exe`/`windbg.exe` readiness.
+Windows provisioning currently has contracts plus fixture-tested WinDbg, account, and service
+scripts, and analysis policy scripts. The planned flow is media readiness, VM boot, QGA readiness,
+WinDbg/CDB installation, guest agent installation, analysis policy changes, local account creation,
+health checks, and clean snapshot preparation. The WinDbg stage has PowerShell scripts for
+installing debugger tooling with `winget install Microsoft.WinDbg` or a Windows SDK Debugging Tools
+fallback, configuring `_NT_SYMBOL_PATH`, and detecting `cdb.exe`/`windbg.exe` readiness.
 
 The analysis policy stage disables Defender policy, records observed code-integrity policy state,
 confirms test signing is disabled, and can apply optional malware-reversing profile settings such as
 hostname, locale, sleep behavior, Explorer visibility, and low-risk lab camouflage. Username and
-screen size are currently audit labels for later account/display provisioning. See
-[`provisioning.md`](./provisioning.md) for the stage, script contract, config, and audit details.
+screen size are currently audit labels for later account/display provisioning.
+
+Generated Windows account credentials and mTLS files are host-only secrets under
+`artifacts.secretsDirectory`, not repository files or guest shared-folder contents. The local
+account script consumes generated passwords from process environment variables rather than
+command-line arguments. The guest service script expects mTLS material staged under
+`C:\ProgramData\Crucible\Agent\certs`, registers `CrucibleGuestAgent`, and creates a Windows
+firewall rule scoped to the host-only source address and configured control port.
+
+OpenSSH is reserved for bootstrap fallback only. Do not treat SSH as the steady-state control plane;
+normal post-bootstrap execution must go through the mTLS guest service. See
+[`provisioning.md`](./provisioning.md) for the stage and script contract details.

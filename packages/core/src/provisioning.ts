@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -57,6 +59,7 @@ export type ProvisioningScriptInvocationContract = {
   readonly timeoutMs: number;
   readonly elevated: boolean;
   readonly redactedArgumentIndexes: readonly number[];
+  readonly environmentSecretRefs: readonly ProvisioningSecretKind[];
 };
 
 export type ProvisioningScriptResult = {
@@ -127,6 +130,47 @@ export type ProvisioningPlan = {
   readonly secrets: ProvisioningSecretStorageContract;
 };
 
+export type WindowsExecutionPrincipal = "standard" | "admin";
+
+export type WindowsAccountSecret = {
+  readonly username: string;
+  readonly password: string;
+  readonly principal: WindowsExecutionPrincipal;
+  readonly generatedAt: string;
+};
+
+export type WindowsAccountSecretSummary = {
+  readonly username: string;
+  readonly principal: WindowsExecutionPrincipal;
+  readonly path: string;
+  readonly fileMode: "0600";
+};
+
+export type WindowsAccountSecretOptions = {
+  readonly vmName: string;
+  readonly secretsDirectory: string;
+  readonly standardUsername?: string;
+  readonly adminUsername?: string;
+  readonly passwordLength?: number;
+  readonly generatedAt?: Date;
+  readonly randomBytes?: (size: number) => Buffer;
+};
+
+export type WindowsAccountSecretWriteResult = {
+  readonly rootDirectory: string;
+  readonly accounts: readonly WindowsAccountSecretSummary[];
+};
+
+export type GuestAgentCertificateStagePlan = {
+  readonly caCertificateSecretPath: string;
+  readonly guestServerCertificateSecretPath: string;
+  readonly guestServerPrivateKeySecretPath: string;
+  readonly guestStagingDirectory: string;
+  readonly stagedCaCertificatePath: string;
+  readonly stagedServerCertificatePath: string;
+  readonly stagedServerPrivateKeyPath: string;
+};
+
 export type ProvisioningPlanOptions = {
   readonly vmName: string;
   readonly secretsDirectory: string;
@@ -139,6 +183,11 @@ export type ProvisioningPlanOptions = {
 const POWERSHELL = "powershell.exe";
 const DEFAULT_SCRIPT_TIMEOUT_MS = 10 * 60 * 1000;
 const INSTALL_SCRIPT_TIMEOUT_MS = 45 * 60 * 1000;
+const PASSWORD_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const PASSWORD_LOWER = "abcdefghijkmnopqrstuvwxyz";
+const PASSWORD_DIGIT = "23456789";
+const PASSWORD_SYMBOL = "!#$%+,-.:=?@^_";
+const PASSWORD_ALPHABET = `${PASSWORD_UPPER}${PASSWORD_LOWER}${PASSWORD_DIGIT}${PASSWORD_SYMBOL}`;
 
 export const PROVISIONING_STAGE_TRANSITIONS: readonly ProvisioningStageTransition[] = [
   { from: "start", onSuccess: "media-ready", onFailure: "blocked" },
@@ -275,8 +324,12 @@ function buildProvisioningStageContracts(
       ],
       script: script("install-guest-agent", "qga-powershell", "guest/provision/install-agent.ps1", {
         scriptArguments: [
+          "-ServiceName",
+          "CrucibleGuestAgent",
           "-ControlAddress",
           options.guestAddress,
+          "-HostOnlySourceAddress",
+          "192.0.2.1",
           "-ControlPort",
           String(options.controlPort),
         ],
@@ -337,6 +390,7 @@ function buildProvisioningStageContracts(
         "guest/provision/create-local-accounts.ps1",
         {
           elevated: true,
+          environmentSecretRefs: ["windows-standard-password", "windows-admin-password"],
         },
       ),
       producesSecrets: ["windows-standard-password", "windows-admin-password"],
@@ -398,7 +452,10 @@ function script(
   runner: ProvisioningScriptRunner,
   scriptPath: string,
   overrides: Partial<
-    Pick<ProvisioningScriptInvocationContract, "timeoutMs" | "elevated" | "redactedArgumentIndexes">
+    Pick<
+      ProvisioningScriptInvocationContract,
+      "timeoutMs" | "elevated" | "redactedArgumentIndexes" | "environmentSecretRefs"
+    >
   > & {
     readonly scriptArguments?: readonly string[];
   } = {},
@@ -421,8 +478,126 @@ function script(
     timeoutMs: DEFAULT_SCRIPT_TIMEOUT_MS,
     elevated: false,
     redactedArgumentIndexes: [],
+    environmentSecretRefs: [],
     ...contractOverrides,
   };
+}
+
+export async function writeWindowsAccountSecrets(
+  options: WindowsAccountSecretOptions,
+): Promise<WindowsAccountSecretWriteResult> {
+  const contract = buildProvisioningSecretStorageContract(options.vmName, options.secretsDirectory);
+  const standardRef = requiredSecretRef(contract, "windows-standard-password");
+  const adminRef = requiredSecretRef(contract, "windows-admin-password");
+  const generatedAt = (options.generatedAt ?? new Date()).toISOString();
+  const passwordLength = options.passwordLength ?? 32;
+  const random = options.randomBytes ?? randomBytes;
+  const accounts = [
+    {
+      ref: standardRef,
+      secret: {
+        username: options.standardUsername ?? "CrucibleUser",
+        password: generatePassword(passwordLength, random),
+        principal: "standard" as const,
+        generatedAt,
+      },
+    },
+    {
+      ref: adminRef,
+      secret: {
+        username: options.adminUsername ?? "CrucibleAdmin",
+        password: generatePassword(passwordLength, random),
+        principal: "admin" as const,
+        generatedAt,
+      },
+    },
+  ];
+
+  for (const account of accounts) {
+    await mkdir(path.dirname(account.ref.path), { recursive: true, mode: 0o700 });
+    await writeFile(account.ref.path, `${JSON.stringify(account.secret, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    await chmod(account.ref.path, 0o600);
+  }
+
+  return {
+    rootDirectory: contract.rootDirectory,
+    accounts: accounts.map(({ ref, secret }) => ({
+      username: secret.username,
+      principal: secret.principal,
+      path: ref.path,
+      fileMode: ref.fileMode,
+    })),
+  };
+}
+
+export function buildGuestAgentCertificateStagePlan(
+  options: Pick<ProvisioningPlanOptions, "vmName" | "secretsDirectory"> & {
+    readonly guestStagingDirectory?: string;
+  },
+): GuestAgentCertificateStagePlan {
+  const contract = buildProvisioningSecretStorageContract(options.vmName, options.secretsDirectory);
+  const guestStagingDirectory =
+    options.guestStagingDirectory ?? "C:\\ProgramData\\Crucible\\Agent\\certs";
+
+  return {
+    caCertificateSecretPath: requiredSecretRef(contract, "mtls-ca-certificate").path,
+    guestServerCertificateSecretPath: requiredSecretRef(contract, "mtls-guest-server-certificate")
+      .path,
+    guestServerPrivateKeySecretPath: requiredSecretRef(contract, "mtls-guest-server-private-key")
+      .path,
+    guestStagingDirectory,
+    stagedCaCertificatePath: `${guestStagingDirectory}\\ca.cert.pem`,
+    stagedServerCertificatePath: `${guestStagingDirectory}\\guest-server.cert.pem`,
+    stagedServerPrivateKeyPath: `${guestStagingDirectory}\\guest-server.key.pem`,
+  };
+}
+
+function requiredSecretRef(
+  contract: ProvisioningSecretStorageContract,
+  kind: ProvisioningSecretKind,
+): ProvisioningSecretRef {
+  const ref = contract.secretRefs.find((entry) => entry.kind === kind);
+
+  if (ref === undefined) {
+    throw new Error(`Missing provisioning secret reference: ${kind}`);
+  }
+
+  return ref;
+}
+
+function generatePassword(length: number, random: (size: number) => Buffer): string {
+  if (length < 24) {
+    throw new Error("Windows account passwords must be at least 24 characters");
+  }
+
+  const requiredCharacters = [
+    pickPasswordCharacter(PASSWORD_UPPER, random(1)[0] ?? 0),
+    pickPasswordCharacter(PASSWORD_LOWER, random(1)[0] ?? 0),
+    pickPasswordCharacter(PASSWORD_DIGIT, random(1)[0] ?? 0),
+    pickPasswordCharacter(PASSWORD_SYMBOL, random(1)[0] ?? 0),
+  ];
+  const remaining = Array.from(random(length - requiredCharacters.length), (byte) =>
+    pickPasswordCharacter(PASSWORD_ALPHABET, byte),
+  );
+  const characters = [...requiredCharacters, ...remaining];
+  const shuffleBytes = random(characters.length);
+
+  for (let index = characters.length - 1; index > 0; index -= 1) {
+    const swapIndex = (shuffleBytes[index] ?? 0) % (index + 1);
+    [characters[index], characters[swapIndex]] = [
+      characters[swapIndex] ?? "",
+      characters[index] ?? "",
+    ];
+  }
+
+  return characters.join("");
+}
+
+function pickPasswordCharacter(alphabet: string, byte: number): string {
+  return alphabet[byte % alphabet.length] ?? alphabet[0] ?? "A";
 }
 
 function secretRef(
