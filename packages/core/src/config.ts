@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { existsSync, readFileSync } from "node:fs";
 
 import { DEFAULT_MEDIA_CACHE_DIR } from "./media.js";
 
@@ -97,6 +98,14 @@ export type CrucibleConfigInput = z.input<typeof crucibleConfigSchema>;
 
 export function parseCrucibleConfig(input: unknown): CrucibleConfig {
   return crucibleConfigSchema.parse(input);
+}
+
+export function loadCrucibleConfigFile(filePath = "crucible.config.json"): CrucibleConfig {
+  if (!existsSync(filePath)) {
+    return defaultCrucibleConfig;
+  }
+
+  return parseCrucibleConfig(JSON.parse(readFileSync(filePath, "utf8")));
 }
 
 export const defaultCrucibleConfig = parseCrucibleConfig({});

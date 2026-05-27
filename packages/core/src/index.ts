@@ -1,4 +1,9 @@
-export { defaultCrucibleConfig, parseCrucibleConfig, crucibleConfigSchema } from "./config.js";
+export {
+  defaultCrucibleConfig,
+  loadCrucibleConfigFile,
+  parseCrucibleConfig,
+  crucibleConfigSchema,
+} from "./config.js";
 export type { CrucibleConfig, CrucibleConfigInput } from "./config.js";
 export { CrucibleError } from "./errors.js";
 export type { CrucibleErrorCode } from "./errors.js";
@@ -31,5 +36,7 @@ export type {
   ProcessResult,
   ProcessRunner,
 } from "./process.js";
+export { buildQemuCommandPlan, renderQemuDryRun } from "./qemu.js";
+export type { QemuCommandPlan, QemuDiskPlan, QemuPlanOptions, QemuSocketPlan } from "./qemu.js";
 
 export const CRUCIBLE_VERSION = "0.0.0";

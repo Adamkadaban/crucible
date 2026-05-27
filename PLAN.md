@@ -163,7 +163,7 @@ real VM.
       ISO defaults, with Windows Server as an alternate profile, checksum metadata when available,
       manual-download instructions when automated downloads are blocked, and explicit operator
       override paths for custom ISOs.
-- [ ] Implement QEMU command builder with KVM acceleration, qcow2 disks, virtio-net, virtio-blk or
+- [x] Implement QEMU command builder with KVM acceleration, qcow2 disks, virtio-net, virtio-blk or
       virtio-scsi, virtio-serial, QMP socket, and QGA channel.
 - [ ] Implement QMP client with greeting negotiation, request IDs, timeout handling, event
       collection, and structured errors.

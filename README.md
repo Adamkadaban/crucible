@@ -39,6 +39,8 @@ nvm use && pnpm install
 ```sh
 pnpm crucible --help
 pnpm crucible media:plan
+pnpm crucible vm:create --dry-run
+pnpm crucible vm:start --dry-run
 pnpm crucible provision
 pnpm crucible mcp
 ```
@@ -56,13 +58,26 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
     "name": "crucible-win11",
     "cpus": 4,
     "memoryMiB": 8192,
-    "diskGiB": 128
+    "diskGiB": 128,
+    "extraQemuArgs": []
   },
   "media": {
     "cacheDir": "media/cache",
     "profile": "windows11-enterprise-eval",
     "windowsIso": { "path": "/isos/Windows11EnterpriseEvaluation.iso" },
     "virtioIso": { "path": "/isos/virtio-win.iso" }
+  },
+  "virtio": {
+    "diskBus": "virtio-scsi",
+    "networkDevice": "virtio-net-pci",
+    "balloon": true,
+    "rng": true
+  },
+  "qmp": {
+    "socketPath": "artifacts/qmp.sock"
+  },
+  "qga": {
+    "socketPath": "artifacts/qga.sock"
   },
   "network": {
     "mode": "isolated"
@@ -72,6 +87,19 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
 
 If automated downloads are blocked, `crucible media:plan` prints manual download URLs and the cache
 paths where the files should be placed.
+
+## QEMU Dry Runs
+
+`crucible vm:create --dry-run` and `crucible vm:start --dry-run` render the planned QEMU command
+without launching a VM. The default plan uses `qemu-system-x86_64` with KVM acceleration, a qcow2
+disk at `artifacts/disks/crucible-win11.qcow2`, `virtio-net-pci`, `virtio-scsi`, `virtio-serial`, a
+QMP Unix socket at `artifacts/qmp.sock`, and a QGA virtserial channel backed by
+`artifacts/qga.sock`.
+
+Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the default
+`virtio-scsi-pci`/`scsi-hd` pair. `vm.extraQemuArgs` is appended at the end of the generated argv so
+operators can add explicit QEMU flags while keeping Crucible's required lifecycle devices visible in
+dry-run output.
 
 ## Hacking On It
 
