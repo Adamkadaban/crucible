@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMediaCachePlan,
+  buildNetworkPlan,
   buildQemuCommandPlan,
   createEmptyArtifactManifest,
   CRUCIBLE_VERSION,
@@ -13,7 +14,9 @@ import {
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
   MANUAL_DOWNLOADS,
+  NETWORK_MODES,
   parseCrucibleConfig,
+  parseNetworkConfig,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
 } from "./index.js";
@@ -149,6 +152,135 @@ describe("core bootstrap exports", () => {
     expect(defaultCrucibleConfig.qmp.timeoutMs).toBe(DEFAULT_QMP_TIMEOUT_MS);
   });
 
+  it("defines the supported network modes", () => {
+    expect(NETWORK_MODES).toEqual(["isolated", "nat", "capture"]);
+    expect(parseNetworkConfig({})).toEqual({ mode: "isolated", controlPort: 8443 });
+  });
+
+  it("rejects unknown network modes and invalid control ports", () => {
+    expect(() => parseNetworkConfig({ mode: "bridge" })).toThrow(/Invalid option/);
+    expect(() => parseNetworkConfig({ controlPort: 0 })).toThrow(/Too small/);
+  });
+
+  it("plans isolated networking without QEMU NIC egress", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "isolated", controlPort: 9443 }),
+      vmName: "analysis-one",
+    });
+
+    expect(plan.mode).toBe("isolated");
+    expect(plan.qemu).toMatchObject({
+      backend: "none",
+      args: [],
+      controlAddress: {
+        hostAddress: "192.0.2.1",
+        guestAddress: "192.0.2.2",
+        prefixLength: 30,
+        guestApiPort: 9443,
+      },
+    });
+    expect(plan.firewall.dryRunOnly).toBe(true);
+    expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
+      "allow-host-control",
+      "deny-guest-egress",
+    ]);
+    expect(plan.teardown).toEqual({
+      owner: {
+        project: "crucible",
+        vmName: "analysis-one",
+        resourceId: "crucible-analysis-one-net0",
+      },
+      firewallRuleIds: [
+        "crucible-analysis-one-net0-allow-host-control",
+        "crucible-analysis-one-net0-deny-guest-egress",
+      ],
+      interfaceNames: [],
+    });
+  });
+
+  it("scopes default network ownership IDs to the VM name", () => {
+    const first = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      vmName: "analysis one",
+    });
+    const second = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      vmName: "analysis-two",
+    });
+
+    expect(first.qemu.netdevId).toBe("crucible-analysis-one-net0");
+    expect(first.teardown.interfaceNames).toEqual(["crucible-analysis-one-net0-tap"]);
+    expect(second.qemu.netdevId).toBe("crucible-analysis-two-net0");
+    expect(second.teardown.interfaceNames).toEqual(["crucible-analysis-two-net0-tap"]);
+    expect(first.firewall.rules[0]?.id).not.toBe(second.firewall.rules[0]?.id);
+  });
+
+  it("rejects netdev IDs that QEMU suboptions would misparse", () => {
+    expect(() =>
+      buildNetworkPlan({
+        config: parseNetworkConfig({ mode: "nat" }),
+        vmName: "analysis-one",
+        netdevId: "bad,id",
+      }),
+    ).toThrow(/netdevId cannot contain/);
+    expect(() =>
+      buildNetworkPlan({
+        config: parseNetworkConfig({ mode: "capture" }),
+        vmName: "analysis-one",
+        netdevId: "bad\\id",
+      }),
+    ).toThrow(/netdevId cannot contain/);
+  });
+
+  it("plans NAT networking as explicit guest egress", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "nat" }),
+      vmName: "analysis-one",
+    });
+
+    expect(plan.qemu).toMatchObject({
+      backend: "user",
+      netdevId: "crucible-analysis-one-net0",
+      deviceModel: "virtio-net-pci",
+      args: [
+        "-netdev",
+        "user,id=crucible-analysis-one-net0",
+        "-device",
+        "virtio-net-pci,netdev=crucible-analysis-one-net0",
+      ],
+    });
+    expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
+      "allow-host-control",
+      "allow-nat-egress",
+    ]);
+    expect(plan.warnings).toEqual([
+      "nat mode grants guest Internet egress and is not the malware-analysis default",
+    ]);
+  });
+
+  it("plans capture networking with owned tap teardown contract", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      vmName: "analysis-one",
+    });
+
+    expect(plan.qemu).toMatchObject({
+      backend: "tap",
+      args: [
+        "-netdev",
+        "tap,id=crucible-analysis-one-net0,ifname=crucible-analysis-one-net0-tap,script=no,downscript=no",
+        "-device",
+        "virtio-net-pci,netdev=crucible-analysis-one-net0",
+      ],
+    });
+    expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
+      "allow-host-control",
+      "capture-guest-traffic",
+    ]);
+    expect(plan.teardown.interfaceNames).toEqual(["crucible-analysis-one-net0-tap"]);
+    expect(plan.firewall.rules.every((rule) => rule.owner.project === "crucible")).toBe(true);
+  });
+
   it("accepts custom media overrides and qemu args", () => {
     const config = parseCrucibleConfig({
       vm: {
@@ -227,7 +359,8 @@ describe("core bootstrap exports", () => {
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0");
     expect(plan.args).not.toContain("-netdev");
-    expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-net0");
+    expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-win11-net0");
+    expect(plan.network.backend).toBe("none");
     expect(plan.args).toContain("virtio-serial-pci");
     expect(plan.args).toContain("virtserialport,chardev=crucible-qga0,name=org.qemu.guest_agent.0");
     expect(plan.args).toContain("unix:artifacts/qmp.sock,server=on,wait=off");
@@ -292,9 +425,10 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
-    expect(plan.args).toContain("user,id=crucible-net0");
-    expect(plan.args).not.toContain("user,id=crucible-net0,restrict=off");
-    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-net0");
+    expect(plan.args).toContain("user,id=crucible-custom-lab-net0");
+    expect(plan.args).not.toContain("user,id=crucible-custom-lab-net0,restrict=off");
+    expect(plan.args).toContain("virtio-net-pci,netdev=crucible-custom-lab-net0");
+    expect(plan.network).toMatchObject({ backend: "user", mode: "nat" });
     expect(plan.args).toContain("unix:/run/crucible/qmp.sock,server=on,wait=off");
     expect(plan.args).toContain(
       "socket,path=/run/crucible/qga.sock,server=on,wait=off,id=crucible-qga0",

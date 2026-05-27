@@ -54,7 +54,13 @@
       "additionalProperties": false,
       "properties": {
         "mode": { "type": "string", "enum": ["isolated", "nat", "capture"], "default": "isolated" },
-        "controlPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8443 }
+        "controlPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8443,
+          "description": "Guest API port reachable only through the host control network."
+        }
       }
     },
     "qmp": {
