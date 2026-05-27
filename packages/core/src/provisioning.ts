@@ -9,6 +9,7 @@ import {
 } from "./analysis-policy.js";
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
+import { buildNetworkPlan } from "./network.js";
 import { type SnapshotCommandResult } from "./snapshot.js";
 
 export const PROVISIONING_STAGE_IDS = [
@@ -149,7 +150,7 @@ export type GuestHealthReport = {
   readonly generatedAt: string;
   readonly lifecycleStatus: VmStatus["status"];
   readonly qmpAvailable: boolean;
-  readonly qgaAvailable: boolean;
+  readonly vmProcessAlive: boolean;
   readonly controlEndpoint: string;
   readonly checks: readonly GuestHealthCheckResult[];
 };
@@ -276,7 +277,7 @@ export async function runProvisioningCommand(
     vmName: config.vm.name,
     secretsDirectory: config.artifacts.secretsDirectory,
     controlPort: config.network.controlPort,
-    guestAddress: "192.0.2.2",
+    guestAddress: getGuestControlAddress(config),
     snapshotName,
     analysisPolicy: config.analysisPolicy,
   });
@@ -340,7 +341,7 @@ export function buildGuestHealthReport(options: {
       vmName: config.vm.name,
       secretsDirectory: config.artifacts.secretsDirectory,
       controlPort: config.network.controlPort,
-      guestAddress: "192.0.2.2",
+      guestAddress: getGuestControlAddress(config),
       analysisPolicy: config.analysisPolicy,
     });
   const healthStage = requiredStage(plan, "health-checked");
@@ -363,10 +364,23 @@ export function buildGuestHealthReport(options: {
     generatedAt: (options.now ?? (() => new Date()))().toISOString(),
     lifecycleStatus: options.lifecycleStatus.status,
     qmpAvailable: options.lifecycleStatus.qmpAvailable,
-    qgaAvailable: options.lifecycleStatus.processAlive,
+    vmProcessAlive: options.lifecycleStatus.processAlive,
     controlEndpoint: `127.0.0.1:${config.network.controlPort}`,
     checks,
   };
+}
+
+function getGuestControlAddress(config: CrucibleConfig): string {
+  const plan = buildNetworkPlan({
+    config: config.network,
+    vmName: config.vm.name,
+    networkDevice: config.virtio.networkDevice,
+  });
+  const controlForward = plan.qemu.portForwards[0];
+  if (controlForward === undefined) {
+    throw new Error("Network plan did not provide a guest control address");
+  }
+  return controlForward.guestAddress;
 }
 
 export function createInitialProvisioningStateMachine(): ProvisioningStateMachine {

@@ -389,7 +389,7 @@ function renderGuestHealth(report: GuestHealthReport): string {
     `generated at: ${report.generatedAt}`,
     `lifecycle status: ${report.lifecycleStatus}`,
     `qmp available: ${report.qmpAvailable ? "yes" : "no"}`,
-    `qga available: ${report.qgaAvailable ? "yes" : "no"}`,
+    `vm process alive: ${report.vmProcessAlive ? "yes" : "no"}`,
     `control endpoint: ${report.controlEndpoint}`,
     "checks:",
     ...report.checks.map(

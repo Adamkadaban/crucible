@@ -1,13 +1,14 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { CrucibleError } from "./errors.js";
 import {
-  createEmptyArtifactManifest,
-  type ArtifactManifest,
-  type ArtifactRecord,
+  dedupeArtifacts,
+  readArtifactManifestOrCreate,
   type SnapshotRecord,
+  writeArtifactManifest,
+  writeJson,
 } from "./manifest.js";
 import { type VmQmpClientFactory, type VmQmpSession } from "./lifecycle.js";
 import { QmpClient } from "./qmp.js";
@@ -80,11 +81,7 @@ export class SnapshotManager {
       artifactManifestPath: this.#config.artifacts.manifestPath,
       clean: snapshotName === "clean-base",
     };
-    await writeFile(
-      metadataPath,
-      `${JSON.stringify({ version: 1, createdAt, ...result }, undefined, 2)}\n`,
-      "utf8",
-    );
+    await writeJson(metadataPath, { version: 1, createdAt, ...result });
     await appendSnapshotArtifact(this.#config, {
       kind: "snapshot",
       name: snapshotName,
@@ -114,40 +111,15 @@ async function appendSnapshotArtifact(
   config: CrucibleConfig,
   snapshot: SnapshotRecord,
 ): Promise<void> {
-  const existing = await readArtifactManifest(config);
-  await mkdir(path.dirname(config.artifacts.manifestPath), { recursive: true });
-  await writeFile(
+  const existing = await readArtifactManifestOrCreate(
     config.artifacts.manifestPath,
-    `${JSON.stringify(
-      {
-        version: 1,
-        vmName: config.vm.name,
-        artifacts: dedupeArtifacts([...existing.artifacts, snapshot]),
-      },
-      undefined,
-      2,
-    )}\n`,
-    "utf8",
+    config.vm.name,
   );
-}
-
-async function readArtifactManifest(config: CrucibleConfig): Promise<ArtifactManifest> {
-  try {
-    return JSON.parse(await readFile(config.artifacts.manifestPath, "utf8")) as ArtifactManifest;
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return createEmptyArtifactManifest(config.vm.name);
-    }
-    throw error;
-  }
-}
-
-function dedupeArtifacts(artifacts: readonly ArtifactRecord[]): readonly ArtifactRecord[] {
-  return [
-    ...new Map(
-      artifacts.map((artifact) => [`${artifact.kind}:${artifact.path}`, artifact]),
-    ).values(),
-  ];
+  await writeArtifactManifest(config.artifacts.manifestPath, {
+    version: 1,
+    vmName: config.vm.name,
+    artifacts: dedupeArtifacts([...existing.artifacts, snapshot]),
+  });
 }
 
 function validateSnapshotName(snapshotName: string): void {
@@ -162,8 +134,4 @@ function validateSnapshotName(snapshotName: string): void {
 
 function defaultQmpClientFactory(socketPath: string, timeoutMs: number): VmQmpSession {
   return new QmpClient({ socketPath, timeoutMs });
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }

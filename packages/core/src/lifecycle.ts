@@ -6,9 +6,11 @@ import path from "node:path";
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { CrucibleError } from "./errors.js";
 import {
-  createEmptyArtifactManifest,
-  type ArtifactManifest,
+  dedupeArtifacts,
+  readArtifactManifestOrCreate,
   type ArtifactRecord,
+  writeArtifactManifest,
+  writeJson,
 } from "./manifest.js";
 import { QmpClient, type QmpCommandOptions } from "./qmp.js";
 import { buildQemuCommandPlan, type QemuCommandPlan } from "./qemu.js";
@@ -447,9 +449,10 @@ export class VmLifecycleManager {
   }
 
   async #writeArtifactManifest(): Promise<void> {
-    const existing =
-      (await readJsonIfExists<ArtifactManifest>(this.paths.artifactManifest)) ??
-      createEmptyArtifactManifest(this.#config.vm.name);
+    const existing = await readArtifactManifestOrCreate(
+      this.paths.artifactManifest,
+      this.#config.vm.name,
+    );
     const now = this.#nowIso();
     const artifacts: ArtifactRecord[] = [
       ...existing.artifacts,
@@ -467,8 +470,7 @@ export class VmLifecycleManager {
       { kind: "log", name: "QEMU stderr log", path: this.paths.stderrLog, createdAt: now },
     ];
 
-    await mkdir(path.dirname(this.paths.artifactManifest), { recursive: true });
-    await writeJson(this.paths.artifactManifest, {
+    await writeArtifactManifest(this.paths.artifactManifest, {
       version: 1,
       vmName: this.#config.vm.name,
       artifacts: dedupeArtifacts(artifacts),
@@ -521,10 +523,6 @@ async function readJsonIfExists<T>(filePath: string): Promise<T | undefined> {
   }
 }
 
-async function writeJson(filePath: string, value: unknown): Promise<void> {
-  await writeFile(filePath, `${JSON.stringify(value, undefined, 2)}\n`, "utf8");
-}
-
 async function removeIfExists(filePath: string): Promise<boolean> {
   try {
     await rm(filePath, { force: false });
@@ -556,14 +554,6 @@ function formatStatusWarning(error: unknown): string {
     return error.message;
   }
   return String(error);
-}
-
-function dedupeArtifacts(artifacts: readonly ArtifactRecord[]): readonly ArtifactRecord[] {
-  return [
-    ...new Map(
-      artifacts.map((artifact) => [`${artifact.kind}:${artifact.path}`, artifact]),
-    ).values(),
-  ];
 }
 
 function isProjectOwnedPath(

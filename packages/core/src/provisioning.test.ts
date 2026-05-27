@@ -401,7 +401,7 @@ describe("provisioning contracts", () => {
       status: "unavailable",
       generatedAt: "2026-05-27T00:00:00.000Z",
       qmpAvailable: false,
-      qgaAvailable: false,
+      vmProcessAlive: false,
       controlEndpoint: "127.0.0.1:8443",
     });
     expect(report.checks.map((check) => check.status)).toEqual(["fail", "fail", "fail", "fail"]);

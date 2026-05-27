@@ -92,7 +92,13 @@ export type {
   QemuNetworkPlan,
   QemuNetworkPortForward,
 } from "./network.js";
-export { createEmptyArtifactManifest } from "./manifest.js";
+export {
+  createEmptyArtifactManifest,
+  dedupeArtifacts,
+  readArtifactManifestOrCreate,
+  writeArtifactManifest,
+  writeJson,
+} from "./manifest.js";
 export type {
   ArtifactKind,
   ArtifactManifest,
