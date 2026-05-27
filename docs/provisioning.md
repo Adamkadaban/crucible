@@ -1,10 +1,10 @@
 # Windows Provisioning Contracts
 
 Phase 3 provisioning is contract-first. The current implementation defines the machine-readable
-state, stage, script, result, policy-audit, and secret shapes that later work will execute against a
-real Windows VM. WinDbg, account, service, and analysis policy scripts are present and
-fixture-tested, but CI tests inspect them with host-only fakes and JSON fixtures instead of running
-a Windows VM.
+state, stage, script, result, policy-audit, secret, snapshot, and health shapes that real-VM
+adapters execute against a Windows VM. WinDbg, account, service, analysis policy, provision-command,
+snapshot, and health behavior are fixture-tested, but CI tests inspect them with host-only fakes and
+JSON fixtures instead of running a Windows VM.
 
 ## State Machine
 
@@ -39,6 +39,18 @@ requirement, and redacted argv positions. Supported runners are:
 PowerShell script invocations use `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>`
 plus stage-specific arguments. Later executors must return structured script results with status,
 exit code, captured stdout/stderr, timestamps, and duration.
+
+`crucible provision` starts the configured QEMU VM, then asks the provisioning executor to run the
+ordered stage contracts. The default executor is intentionally blocking because it has no real QGA
+or guest-service adapter by itself. Production use must configure adapters that can satisfy each
+runner:
+
+- `qga-powershell` stages run through QEMU Guest Agent bootstrap execution.
+- `guest-agent-powershell` stages run through the Crucible guest service after mTLS service setup.
+- `host` stages run on the Linux host with bounded timeouts.
+
+If any stage returns `blocked`, provisioning stops and reports guest-health contract status instead
+of advancing to snapshots.
 
 ## WinDbg Provisioning
 
@@ -119,6 +131,19 @@ Host-side helpers parse the JSON audit output and produce readiness checks for `
 `code-integrity-recorded`, `test-signing-disabled`, and `analysis-profile-audited`. These checks are
 fixture-tested and do not require a real Windows VM in CI.
 
+## Guest Health
+
+`crucible guest:health` renders the readiness checks from the `health-checked` stage:
+
+- `debugger-health` for CDB, WinDbg, and symbol path readiness.
+- `service-health` for the guest service endpoint.
+- `execution-contexts` for standard and admin execution contexts.
+- `policy-health` for Defender, code-integrity, and test-signing state.
+
+The command exits non-zero unless the real guest path can confirm health. With only host-side state
+available, checks are reported as `fail` when QMP is unavailable or `unknown` when the VM is running
+but the guest health endpoint has not been queried.
+
 ## Clean-Base Snapshot
 
 The provisioning exit flow uses `snapshot:create clean-base` after the guest is healthy and
@@ -160,8 +185,23 @@ or `::`.
 OpenSSH remains a bootstrap fallback for environments where QGA cannot complete early provisioning.
 It is not the steady-state control plane and is not opened by the account or service scripts.
 
+## Real-VM Exit Test
+
+The Phase 3 exit command is:
+
+```sh
+pnpm crucible provision && \
+  pnpm crucible snapshot:create clean-base && \
+  pnpm crucible snapshot:restore clean-base && \
+  pnpm crucible guest:health
+```
+
+This must be run on a Linux/KVM host with Windows media, virtio media, QEMU Guest Agent readiness,
+and the guest-service adapter available. It is intentionally not part of CI. If the host cannot run
+the real VM test, leave Phase 3 incomplete and file or reference the blocker.
+
 ## Not Implemented Yet
 
-The contracts and scripts intentionally stop before full provisioning execution. Later Phase 3 work
-will add the remaining PowerShell scripts, fake executors, real QGA and guest-service invocation,
-health commands, and the real-VM phase exit test.
+The remaining gap is real QGA and guest-service invocation against an installed Windows VM.
+Host-only tests cover the command behavior and contracts, but they are not a substitute for the
+Phase 3 real-VM exit test.

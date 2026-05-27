@@ -256,7 +256,7 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
       state.
 - [x] Add snapshot creation and restore commands using qcow2/QMP semantics with metadata in the
       artifact manifest.
-- [ ] Document Windows media, virtio driver, WinDbg installation caveats, and manual recovery steps.
+- [x] Document Windows media, virtio driver, WinDbg installation caveats, and manual recovery steps.
 
 **Parallel-work split table:**
 
@@ -267,7 +267,13 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 | 2 (parallel x3) | account-service-provisioning | wave 1     | Account setup, service install script, certificate staging, tests                                           |
 | 2 (parallel x3) | analysis-vm-policy           | wave 1     | Completed in PR: Defender/code-integrity/test-signing policy script, malrev profile flags, readiness checks |
 | 3 (parallel x2) | snapshot-manager             | wave 2     | Completed in PR: snapshot create/list/restore metadata and QMP/qcow2 integration tests                      |
-| 3 (parallel x2) | provision-real-vm            | wave 2     | End-to-end `crucible provision` command, guest health command, real-VM exit test docs                       |
+| 3 (parallel x2) | provision-real-vm            | wave 2     | Completed in PR: end-to-end `crucible provision` command, guest health command, real-VM exit test docs      |
+
+Phase 3 real target outcome on 2026-05-27: host-only CI-safe tests cover `crucible provision`,
+`crucible snapshot:create clean-base`, `crucible snapshot:restore clean-base`, and
+`crucible guest:health` through fake lifecycle/provisioning/snapshot adapters. The real-VM exit test
+was not run in this worktree because no configured Windows VM/QGA/guest-service adapter was
+available; Phase 3 remains incomplete until the real command sequence passes on target hardware.
 
 ### Phase 4 — Guest Control Service
 

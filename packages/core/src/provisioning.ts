@@ -7,6 +7,10 @@ import {
   defaultAnalysisVmPolicyConfig,
   type AnalysisVmPolicyConfig,
 } from "./analysis-policy.js";
+import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
+import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
+import { buildNetworkPlan } from "./network.js";
+import { type SnapshotCreateResult } from "./snapshot.js";
 
 export const PROVISIONING_STAGE_IDS = [
   "media-ready",
@@ -130,6 +134,58 @@ export type ProvisioningPlan = {
   readonly secrets: ProvisioningSecretStorageContract;
 };
 
+export type GuestHealthStatus = "healthy" | "degraded" | "unavailable";
+
+export type GuestHealthCheckResult = {
+  readonly id: string;
+  readonly description: string;
+  readonly required: boolean;
+  readonly status: "pass" | "fail" | "unknown";
+  readonly detail?: string;
+};
+
+export type GuestHealthReport = {
+  readonly vmName: string;
+  readonly status: GuestHealthStatus;
+  readonly generatedAt: string;
+  readonly lifecycleStatus: VmStatus["status"];
+  readonly qmpAvailable: boolean;
+  readonly vmProcessAlive: boolean;
+  readonly controlEndpoint: string;
+  readonly checks: readonly GuestHealthCheckResult[];
+};
+
+export type ProvisioningCommandStep = {
+  readonly id: ProvisioningStageId | "snapshot-created";
+  readonly title: string;
+  readonly status: "succeeded" | "blocked";
+  readonly detail: string;
+};
+
+export type ProvisioningCommandResult = {
+  readonly vmName: string;
+  readonly status: "complete" | "blocked";
+  readonly snapshotName: string;
+  readonly steps: readonly ProvisioningCommandStep[];
+  readonly health: GuestHealthReport;
+  readonly snapshot?: SnapshotCreateResult;
+};
+
+export type ProvisioningExecutor = {
+  readonly runStage: (stage: ProvisioningStageContract) => Promise<ProvisioningCommandStep>;
+};
+
+export type ProvisioningCommandRunnerOptions = {
+  readonly config?: CrucibleConfig;
+  readonly lifecycleManager: Pick<VmLifecycleManager, "start" | "status">;
+  readonly executor?: ProvisioningExecutor;
+  readonly snapshotManager: {
+    readonly create: (snapshotName: string) => Promise<SnapshotCreateResult>;
+  };
+  readonly now?: () => Date;
+  readonly snapshotName?: string;
+};
+
 export type WindowsExecutionPrincipal = "standard" | "admin";
 
 export type WindowsAccountSecret = {
@@ -210,6 +266,121 @@ export function buildProvisioningPlan(options: ProvisioningPlanOptions): Provisi
     stateMachine: createInitialProvisioningStateMachine(),
     secrets: buildProvisioningSecretStorageContract(options.vmName, options.secretsDirectory),
   };
+}
+
+export async function runProvisioningCommand(
+  options: ProvisioningCommandRunnerOptions,
+): Promise<ProvisioningCommandResult> {
+  const config = options.config ?? defaultCrucibleConfig;
+  const snapshotName = options.snapshotName ?? "clean-base";
+  const plan = buildProvisioningPlan({
+    vmName: config.vm.name,
+    secretsDirectory: config.artifacts.secretsDirectory,
+    controlPort: config.network.controlPort,
+    guestAddress: getGuestControlAddress(config),
+    snapshotName,
+    analysisPolicy: config.analysisPolicy,
+  });
+  const executor = options.executor ?? blockedProvisioningExecutor;
+  const steps: ProvisioningCommandStep[] = [];
+
+  await options.lifecycleManager.start();
+
+  for (const stage of plan.stages) {
+    const step = await executor.runStage(stage);
+    steps.push(step);
+    if (step.status === "blocked") {
+      return {
+        vmName: config.vm.name,
+        status: "blocked",
+        snapshotName,
+        steps,
+        health: buildGuestHealthReport({
+          config,
+          lifecycleStatus: await options.lifecycleManager.status(),
+          plan,
+          now: options.now,
+        }),
+      };
+    }
+  }
+
+  const snapshot = await options.snapshotManager.create(snapshotName);
+  steps.push({
+    id: "snapshot-created",
+    title: "Clean snapshot created",
+    status: "succeeded",
+    detail: snapshot.snapshot.path,
+  });
+
+  return {
+    vmName: config.vm.name,
+    status: "complete",
+    snapshotName,
+    steps,
+    snapshot,
+    health: buildGuestHealthReport({
+      config,
+      lifecycleStatus: await options.lifecycleManager.status(),
+      plan,
+      now: options.now,
+    }),
+  };
+}
+
+export function buildGuestHealthReport(options: {
+  readonly config?: CrucibleConfig;
+  readonly lifecycleStatus: VmStatus;
+  readonly plan?: ProvisioningPlan;
+  readonly now?: () => Date;
+}): GuestHealthReport {
+  const config = options.config ?? defaultCrucibleConfig;
+  const plan =
+    options.plan ??
+    buildProvisioningPlan({
+      vmName: config.vm.name,
+      secretsDirectory: config.artifacts.secretsDirectory,
+      controlPort: config.network.controlPort,
+      guestAddress: getGuestControlAddress(config),
+      analysisPolicy: config.analysisPolicy,
+    });
+  const healthStage = requiredStage(plan, "health-checked");
+  const checks: GuestHealthCheckResult[] = healthStage.readinessChecks.map((check) => ({
+    ...check,
+    status: options.lifecycleStatus.qmpAvailable ? "unknown" : "fail",
+    detail: options.lifecycleStatus.qmpAvailable
+      ? "requires guest agent health endpoint execution on the provisioned VM"
+      : "QMP is unavailable; guest health cannot be confirmed",
+  }));
+  const status = checks.some((check) => check.status === "fail")
+    ? "unavailable"
+    : checks.some((check) => check.status === "unknown")
+      ? "degraded"
+      : "healthy";
+
+  return {
+    vmName: config.vm.name,
+    status,
+    generatedAt: (options.now ?? (() => new Date()))().toISOString(),
+    lifecycleStatus: options.lifecycleStatus.status,
+    qmpAvailable: options.lifecycleStatus.qmpAvailable,
+    vmProcessAlive: options.lifecycleStatus.processAlive,
+    controlEndpoint: `127.0.0.1:${config.network.controlPort}`,
+    checks,
+  };
+}
+
+function getGuestControlAddress(config: CrucibleConfig): string {
+  const plan = buildNetworkPlan({
+    config: config.network,
+    vmName: config.vm.name,
+    networkDevice: config.virtio.networkDevice,
+  });
+  const controlForward = plan.qemu.portForwards[0];
+  if (controlForward === undefined) {
+    throw new Error("Network plan did not provide a guest control address");
+  }
+  return controlForward.guestAddress;
 }
 
 export function createInitialProvisioningStateMachine(): ProvisioningStateMachine {
@@ -446,6 +617,26 @@ function buildProvisioningStageContracts(
 function requiredCheck(id: string, description: string): ProvisioningReadinessCheck {
   return { id, description, required: true };
 }
+
+function requiredStage(plan: ProvisioningPlan, id: ProvisioningStageId): ProvisioningStageContract {
+  const stage = plan.stages.find((entry) => entry.id === id);
+  if (stage === undefined) {
+    throw new Error(`Missing provisioning stage: ${id}`);
+  }
+  return stage;
+}
+
+const blockedProvisioningExecutor: ProvisioningExecutor = {
+  runStage(stage) {
+    return Promise.resolve({
+      id: stage.id,
+      title: stage.title,
+      status: "blocked",
+      detail:
+        "real Windows provisioning execution requires configured QGA and guest-agent adapters; CI uses fakes only",
+    });
+  },
+};
 
 function script(
   id: string,

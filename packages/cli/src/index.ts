@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import {
   buildNetworkPlan,
   buildNetworkTeardownOutputModel,
+  buildGuestHealthReport,
   buildMediaCachePlan,
-  buildProvisioningPlan,
   buildQemuCommandPlan,
   CrucibleError,
   FIREWALL_BACKENDS,
@@ -15,6 +15,7 @@ import {
   normalizeSnapshotName,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
+  runProvisioningCommand,
   SnapshotManager,
   type CrucibleConfig,
   type FirewallBackend,
@@ -25,6 +26,9 @@ import {
   type NetworkMode,
   type NetworkTeardownCommandPlan,
   type NetworkTeardownOutputModel,
+  type GuestHealthReport,
+  type ProvisioningCommandResult,
+  type ProvisioningExecutor,
   type SnapshotCreateResult,
   type SnapshotRecord,
   type SnapshotRestoreResult,
@@ -43,7 +47,17 @@ type CommandResult = {
 type CliRuntime = {
   readonly config?: CrucibleConfig;
   readonly configPath?: string;
+  readonly lifecycleManager?: CliLifecycleManager;
+  readonly provisioningExecutor?: ProvisioningExecutor;
+  readonly snapshotManager?: CliSnapshotManager;
 };
+
+type CliLifecycleManager = Pick<
+  VmLifecycleManager,
+  "paths" | "start" | "stop" | "poweroff" | "kill" | "status"
+>;
+
+type CliSnapshotManager = Pick<SnapshotManager, "create" | "list" | "restore">;
 
 type MediaPlanArgs = {
   readonly profile: MediaProfileName;
@@ -97,7 +111,9 @@ export async function runCrucibleCli(
     case "snapshot:restore":
       return runSnapshotRestoreCommand(rest, runtime);
     case "provision":
-      return renderProvisionCommand(rest, runtime);
+      return runProvisionCommand(rest, runtime);
+    case "guest:health":
+      return runGuestHealthCommand(rest, runtime);
     case "mcp":
       return {
         exitCode: 0,
@@ -230,12 +246,12 @@ async function runVmLogsCommand(
   };
 }
 
-function getLifecycleManager(runtime: CliRuntime): VmLifecycleManager {
-  return new VmLifecycleManager({ config: getRuntimeConfig(runtime) });
+function getLifecycleManager(runtime: CliRuntime): CliLifecycleManager {
+  return runtime.lifecycleManager ?? new VmLifecycleManager({ config: getRuntimeConfig(runtime) });
 }
 
-function getSnapshotManager(runtime: CliRuntime): SnapshotManager {
-  return new SnapshotManager({ config: getRuntimeConfig(runtime) });
+function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
+  return runtime.snapshotManager ?? new SnapshotManager({ config: getRuntimeConfig(runtime) });
 }
 
 async function runSnapshotCreateCommand(
@@ -279,33 +295,46 @@ async function runSnapshotRestoreCommand(
   return { exitCode: 0, stdout: renderSnapshotRestoreResult(result), stderr: "" };
 }
 
-function renderProvisionCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+async function runProvisionCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
   if (args.length > 0) {
     return { exitCode: 2, stdout: "", stderr: `Unknown provision option: ${args[0]}` };
   }
 
   const config = getRuntimeConfig(runtime);
-  const plan = buildProvisioningPlan({
-    vmName: config.vm.name,
-    secretsDirectory: config.artifacts.secretsDirectory,
-    controlPort: config.network.controlPort,
-    guestAddress: "192.0.2.2",
-    analysisPolicy: config.analysisPolicy,
+  const result = await runProvisioningCommand({
+    config,
+    lifecycleManager: getLifecycleManager(runtime),
+    executor: runtime.provisioningExecutor,
+    snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
   });
-  const policyStage = plan.stages.find((stage) => stage.id === "policy-configured");
 
   return {
-    exitCode: 0,
-    stdout: [
-      "crucible provision is scaffolded.",
-      "Provisioning plan includes analysis VM policy configuration and CI-safe readiness contracts.",
-      `VM: ${plan.vmName}`,
-      `Analysis policy script: ${policyStage?.script?.scriptPath ?? "missing"}`,
-      `Analysis policy argv: ${policyStage?.script?.arguments.map(shellQuote).join(" ") ?? "missing"}`,
-      "Audit checks: Defender disabled, code-integrity state recorded, test signing disabled, environment profile recorded.",
-      "Real Windows VM execution is deferred to the Phase 3 provision-real-vm worktree.",
-      getManualDownloadInstructions(),
-    ].join("\n"),
+    exitCode: result.status === "complete" ? 0 : 1,
+    stdout: renderProvisioningResult(result),
+    stderr: "",
+  };
+}
+
+async function runGuestHealthCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown guest:health option: ${args[0]}` };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const report = buildGuestHealthReport({
+    config,
+    lifecycleStatus: await getLifecycleManager(runtime).status(),
+  });
+
+  return {
+    exitCode: report.status === "healthy" ? 0 : 1,
+    stdout: renderGuestHealth(report),
     stderr: "",
   };
 }
@@ -346,6 +375,44 @@ function renderVmStatus(status: VmStatus): string {
   }
 
   return lines.join("\n");
+}
+
+function renderProvisioningResult(result: ProvisioningCommandResult): string {
+  const lines = [
+    `Provisioning status: ${result.status}`,
+    `VM: ${result.vmName}`,
+    `Clean snapshot: ${result.snapshotName}`,
+    "Steps:",
+    ...result.steps.map((step) => `- ${step.id}: ${step.status} (${step.detail})`),
+    "",
+    renderGuestHealth(result.health),
+  ];
+
+  if (result.snapshot !== undefined) {
+    lines.push("", renderSnapshotCreateResult(result.snapshot));
+  }
+
+  if (result.status === "blocked") {
+    lines.push("", "Manual media recovery:", getManualDownloadInstructions());
+  }
+
+  return lines.join("\n");
+}
+
+function renderGuestHealth(report: GuestHealthReport): string {
+  return [
+    `Guest health: ${report.status}`,
+    `VM: ${report.vmName}`,
+    `generated at: ${report.generatedAt}`,
+    `lifecycle status: ${report.lifecycleStatus}`,
+    `qmp available: ${report.qmpAvailable ? "yes" : "no"}`,
+    `vm process alive: ${report.vmProcessAlive ? "yes" : "no"}`,
+    `control endpoint: ${report.controlEndpoint}`,
+    "checks:",
+    ...report.checks.map(
+      (check) => `- ${check.id}: ${check.status} (${check.detail ?? check.description})`,
+    ),
+  ].join("\n");
 }
 
 function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
@@ -793,7 +860,10 @@ function getHelpText(): string {
     "crucible",
     "",
     "Usage:",
-    "  crucible provision   Provision a Windows analysis VM (scaffolded)",
+    "  crucible provision   Provision a Windows analysis VM",
+    "  crucible snapshot:create clean-base",
+    "  crucible snapshot:restore clean-base",
+    "  crucible guest:health",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
