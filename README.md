@@ -165,6 +165,16 @@ and commands. The parser rejects malformed JSON and unknown top-level message fi
 while leaving command-specific payloads opaque for QEMU version compatibility. See
 [`docs/protocol.md`](./docs/protocol.md) for details.
 
+## Provisioning Contracts
+
+Phase 3 currently defines the Windows provisioning contracts without executing them. The core
+package models the ordered stages for media readiness, VM boot, QGA readiness, WinDbg/CDB
+installation, guest agent installation, policy changes, local accounts, health checks, and clean
+snapshot preparation. Script contracts describe the runner, PowerShell argv, timeout, elevation, and
+redaction behavior, while secret contracts keep generated Windows credentials and mTLS material
+under the configured `artifacts.secretsDirectory` as host-only `0600` files. See
+[`docs/provisioning.md`](./docs/provisioning.md) for the outline.
+
 ## VM Lifecycle State
 
 The CLI lifecycle commands call the same core lifecycle manager used by later MCP tools. `vm:start`

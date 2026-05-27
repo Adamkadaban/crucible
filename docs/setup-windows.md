@@ -51,3 +51,12 @@ pnpm crucible vm:start --dry-run
 
 `vm:create --dry-run` shows the qcow2 creation command and QEMU launch argv. `vm:start --dry-run`
 shows the launch argv only. Neither command downloads media, creates disks, or starts a VM.
+
+## Provisioning Outline
+
+Windows provisioning is currently contract-only. The planned flow is media readiness, VM boot, QGA
+readiness, WinDbg/CDB installation, guest agent installation, analysis policy changes, local account
+creation, health checks, and clean snapshot preparation. Generated Windows account credentials and
+mTLS files are host-only secrets under `artifacts.secretsDirectory`, not repository files or guest
+shared-folder contents. See [`provisioning.md`](./provisioning.md) for the stage and script contract
+details.

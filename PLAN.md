@@ -260,14 +260,14 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 
 **Parallel-work split table:**
 
-| Wave            | Worktree slug                | Depends on | Tasks                                                                                       |
-| --------------- | ---------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
-| 1 (solo)        | provisioning-contracts       | Phase 2    | Provisioning state machine, script invocation contracts, secret storage contract            |
-| 2 (parallel x3) | windbg-provisioning          | wave 1     | `install-windbg.ps1`, detection scripts, docs, tests with script lint/fakes                 |
-| 2 (parallel x3) | account-service-provisioning | wave 1     | Account setup, service install script, certificate staging, tests                           |
-| 2 (parallel x3) | analysis-vm-policy           | wave 1     | Defender/code-integrity/test-signing policy scripts, malrev profile flags, readiness checks |
-| 3 (parallel x2) | snapshot-manager             | wave 2     | Snapshot create/list/restore metadata and QMP/qcow2 integration tests                       |
-| 3 (parallel x2) | provision-real-vm            | wave 2     | End-to-end `crucible provision` command, guest health command, real-VM exit test docs       |
+| Wave            | Worktree slug                | Depends on | Tasks                                                                                             |
+| --------------- | ---------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| 1 (solo)        | provisioning-contracts       | Phase 2    | Completed in PR: provisioning state machine, script invocation contracts, secret storage contract |
+| 2 (parallel x3) | windbg-provisioning          | wave 1     | `install-windbg.ps1`, detection scripts, docs, tests with script lint/fakes                       |
+| 2 (parallel x3) | account-service-provisioning | wave 1     | Account setup, service install script, certificate staging, tests                                 |
+| 2 (parallel x3) | analysis-vm-policy           | wave 1     | Defender/code-integrity/test-signing policy scripts, malrev profile flags, readiness checks       |
+| 3 (parallel x2) | snapshot-manager             | wave 2     | Snapshot create/list/restore metadata and QMP/qcow2 integration tests                             |
+| 3 (parallel x2) | provision-real-vm            | wave 2     | End-to-end `crucible provision` command, guest health command, real-VM exit test docs             |
 
 ### Phase 4 — Guest Control Service
 

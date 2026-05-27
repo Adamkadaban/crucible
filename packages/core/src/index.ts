@@ -92,6 +92,34 @@ export type {
   ProcessRunner,
 } from "./process.js";
 export {
+  buildProvisioningPlan,
+  buildProvisioningSecretStorageContract,
+  canAdvanceProvisioningStage,
+  createInitialProvisioningStateMachine,
+  PROVISIONING_SCRIPT_RUNNERS,
+  PROVISIONING_SECRET_KINDS,
+  PROVISIONING_STAGE_IDS,
+  PROVISIONING_STAGE_TRANSITIONS,
+} from "./provisioning.js";
+export type {
+  ProvisioningPlan,
+  ProvisioningPlanOptions,
+  ProvisioningReadinessCheck,
+  ProvisioningRunStatus,
+  ProvisioningScriptInvocationContract,
+  ProvisioningScriptResult,
+  ProvisioningScriptRunner,
+  ProvisioningSecretKind,
+  ProvisioningSecretRef,
+  ProvisioningSecretStorageContract,
+  ProvisioningStageContract,
+  ProvisioningStageId,
+  ProvisioningStageState,
+  ProvisioningStageStatus,
+  ProvisioningStageTransition,
+  ProvisioningStateMachine,
+} from "./provisioning.js";
+export {
   DEFAULT_QMP_MAX_BUFFER_BYTES,
   DEFAULT_QMP_TIMEOUT_MS,
   parseQmpMessage,
