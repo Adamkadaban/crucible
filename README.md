@@ -39,6 +39,8 @@ nvm use && pnpm install
 ```sh
 pnpm crucible --help
 pnpm crucible media:plan
+pnpm crucible media:plan --manual
+pnpm crucible media:plan --profile windows-server-2025-eval
 pnpm crucible vm:create --dry-run
 pnpm crucible vm:start --dry-run
 pnpm crucible provision
@@ -65,7 +67,8 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
     "cacheDir": "media/cache",
     "profile": "windows11-enterprise-eval",
     "windowsIso": { "path": "/isos/Windows11EnterpriseEvaluation.iso" },
-    "virtioIso": { "path": "/isos/virtio-win.iso" }
+    "virtioIso": { "path": "/isos/virtio-win.iso" },
+    "driverBundle": { "path": "/drivers/virtio-win-guest-tools.exe" }
   },
   "virtio": {
     "diskBus": "virtio-scsi",
@@ -85,16 +88,24 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
 }
 ```
 
-If automated downloads are blocked, `crucible media:plan` prints manual download URLs and the cache
-paths where the files should be placed.
+`crucible media:plan` prints the default Windows 11 Enterprise Evaluation ISO, stable virtio-win
+ISO, optional virtio guest tools bundle, and their expected cache paths. Pass `--manual` to include
+profile-specific manual download URLs. Use `"profile": "windows-server-2025-eval"` or
+`--profile windows-server-2025-eval` to select the alternate Windows Server evaluation media.
+
+Custom media overrides accept either `path` or `url`, plus optional `sha256`. Windows and virtio ISO
+overrides must point to `.iso` files, case-insensitively. Driver bundle overrides may point to
+`.iso`, `.exe`, `.zip`, or `.msi` files, also case-insensitively. If automated downloads are
+blocked, place manually downloaded files at the cache paths printed by
+`crucible media:plan --manual` or point `crucible.config.json` at operator-managed paths.
 
 ## QEMU Dry Runs
 
-`crucible vm:create --dry-run` and `crucible vm:start --dry-run` render the planned qcow2 creation
-and QEMU command without launching a VM. The default plan uses `qemu-system-x86_64` with KVM
-acceleration, a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`, no network device in isolated
-mode, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at `artifacts/qmp.sock`, and a QGA
-virtserial channel backed by `artifacts/qga.sock`.
+`crucible vm:create --dry-run` renders the planned qcow2 creation and QEMU command without launching
+a VM. `crucible vm:start --dry-run` renders only the QEMU command and sockets. The default plan uses
+`qemu-system-x86_64` with KVM acceleration, a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`,
+no network device in isolated mode, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at
+`artifacts/qmp.sock`, and a QGA virtserial channel backed by `artifacts/qga.sock`.
 
 Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the default
 `virtio-scsi-pci`/`scsi-hd` pair. `vm.extraQemuArgs` is appended at the end of the generated argv so

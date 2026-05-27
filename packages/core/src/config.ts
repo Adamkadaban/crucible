@@ -1,22 +1,53 @@
 import { readFileSync } from "node:fs";
+import type { ZodType } from "zod";
 import { ZodError, z } from "zod";
 
 import { CrucibleError } from "./errors.js";
 import { DEFAULT_MEDIA_CACHE_DIR } from "./media.js";
 
-const mediaOverrideSchema = z
-  .object({
-    path: z.string().min(1).optional(),
-    url: z.string().url().optional(),
-    sha256: z
-      .string()
-      .regex(/^[a-fA-F0-9]{64}$/)
-      .optional(),
-  })
-  .strict()
-  .refine((value) => value.path !== undefined || value.url !== undefined, {
-    message: "media override must include path or url",
+const isoPathSchema = z
+  .string()
+  .min(1)
+  .regex(/\.iso$/i, {
+    message: "media ISO override paths must end in .iso",
   });
+
+const isoUrlSchema = z.url().regex(/\.iso(?:[?#].*)?$/i, {
+  message: "media ISO override URLs must end in .iso",
+});
+
+const driverBundlePathSchema = z
+  .string()
+  .min(1)
+  .regex(/\.(?:iso|exe|zip|msi)$/i, {
+    message: "driver bundle override paths must end in .iso, .exe, .zip, or .msi",
+  });
+
+const driverBundleUrlSchema = z.url().regex(/\.(?:iso|exe|zip|msi)(?:[?#].*)?$/i, {
+  message: "driver bundle override URLs must end in .iso, .exe, .zip, or .msi",
+});
+
+function mediaOverrideSchema(pathSchema: ZodType<string>, urlSchema: ZodType<string>) {
+  return z
+    .object({
+      path: pathSchema.optional(),
+      url: urlSchema.optional(),
+      sha256: z
+        .string()
+        .regex(/^[a-fA-F0-9]{64}$/)
+        .optional(),
+    })
+    .strict()
+    .refine((value) => value.path !== undefined || value.url !== undefined, {
+      message: "media override must include path or url",
+    });
+}
+
+const isoOverrideSchema = mediaOverrideSchema(isoPathSchema, isoUrlSchema);
+const driverBundleOverrideSchema = mediaOverrideSchema(
+  driverBundlePathSchema,
+  driverBundleUrlSchema,
+);
 
 const socketPathSchema = z.string().min(1);
 
@@ -36,9 +67,9 @@ const mediaConfigSchema = z
     profile: z
       .enum(["windows11-enterprise-eval", "windows-server-2025-eval"])
       .default("windows11-enterprise-eval"),
-    windowsIso: mediaOverrideSchema.optional(),
-    virtioIso: mediaOverrideSchema.optional(),
-    virtioGuestTools: mediaOverrideSchema.optional(),
+    windowsIso: isoOverrideSchema.optional(),
+    virtioIso: isoOverrideSchema.optional(),
+    driverBundle: driverBundleOverrideSchema.optional(),
   })
   .strict();
 
