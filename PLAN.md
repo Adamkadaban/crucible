@@ -181,9 +181,9 @@ real VM.
 | Wave            | Worktree slug        | Depends on | Tasks                                                                                                                 |
 | --------------- | -------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
 | 1 (solo)        | lifecycle-interfaces | Phase 0    | Completed in PR #16: config schema, media cache contracts, state manifest interfaces, shared process runner contracts |
-| 2 (parallel x3) | media-cache          | wave 1     | Default Windows desktop/virtio media sources, manual-download link output, cache planner, override validation, tests  |
-| 2 (parallel x3) | qemu-command-builder | wave 1     | QEMU argv generation, configurable virtio defaults, dry-run rendering, tests                                          |
-| 2 (parallel x3) | qmp-client           | wave 1     | QMP socket client, negotiation, commands, events, timeout tests                                                       |
+| 2 (parallel x3) | media-cache          | wave 1     | Completed in PR #25: default Windows desktop/virtio media sources, manual-download link output, cache planner, tests  |
+| 2 (parallel x3) | qemu-command-builder | wave 1     | Completed in PR #29: QEMU argv generation, configurable virtio defaults, dry-run rendering, tests                     |
+| 2 (parallel x3) | qmp-client           | wave 1     | Completed in PR #34: QMP socket client, negotiation, commands, events, timeout tests                                  |
 | 3 (parallel x2) | lifecycle-manager    | wave 2     | VM process manager, pid/log handling, stop/kill semantics, tests                                                      |
 | 4 (solo)        | lifecycle-cli-docs   | wave 3     | CLI lifecycle commands, README/docs updates, dry-run exit test                                                        |
 
