@@ -8,6 +8,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CrucibleError } from "./errors.js";
 import { parseQmpMessage, QmpClient } from "./qmp.js";
 
+class ThrowingWriteQmpClient extends QmpClient {
+  failNextWrite = false;
+
+  protected override writeToSocket(data: string): void {
+    if (this.failNextWrite) {
+      this.failNextWrite = false;
+      throw new Error("write failed");
+    }
+    super.writeToSocket(data);
+  }
+}
+
 const capturedGreeting = {
   QMP: {
     version: {
@@ -253,6 +265,61 @@ describe("QmpClient", () => {
       message: "VM is not running",
       details: { qmpClass: "GenericError" },
     });
+
+    client.close();
+    await server.close();
+  });
+
+  it("includes command-window events in QMP error details", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("stop", (request) => {
+        connection.send({ event: "STOP", data: { reason: "request" } });
+        connection.send({
+          error: { class: "GenericError", desc: "VM is not running" },
+          id: request.id,
+        });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("stop")).rejects.toMatchObject({
+      code: "QMP_COMMAND_FAILED",
+      details: {
+        qmpClass: "GenericError",
+        events: [{ event: "STOP", data: { reason: "request" } }],
+      },
+    });
+    expect(client.drainEvents()).toEqual([]);
+
+    client.close();
+    await server.close();
+  });
+
+  it("cleans pending state when socket.write throws synchronously", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", () => undefined);
+    });
+
+    const client = new ThrowingWriteQmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+    client.failNextWrite = true;
+
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+      message: "failed to write QMP command",
+      details: { cause: "write failed" },
+    });
+    expect(() => client.drainEvents()).not.toThrow();
 
     client.close();
     await server.close();

@@ -244,7 +244,17 @@ export class QmpClient {
       }, this.#timeoutFor(options));
 
       this.#pending.set(id, { id, eventStart, resolve, reject, timeout });
-      this.#socket.write(`${JSON.stringify(request)}\r\n`);
+      try {
+        this.writeToSocket(`${JSON.stringify(request)}\r\n`);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.#pending.delete(id);
+        reject(
+          qmpError("QMP_DISCONNECTED", "failed to write QMP command", {
+            cause: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
     });
 
     return {
@@ -259,6 +269,10 @@ export class QmpClient {
       throw qmpError("QMP_PROTOCOL_ERROR", "cannot drain QMP events while commands are pending");
     }
     return this.#events.splice(0, this.#events.length);
+  }
+
+  protected writeToSocket(data: string): void {
+    this.#socket.write(data);
   }
 
   close(): void {
@@ -436,12 +450,7 @@ export class QmpClient {
           this.#settlePendingReturn(message.response);
           break;
         case "error":
-          this.#settlePendingError(
-            message.response.id,
-            qmpError("QMP_COMMAND_FAILED", message.response.error.desc, {
-              qmpClass: message.response.error.class,
-            }),
-          );
+          this.#settlePendingError(message.response.id, message.response.error);
           break;
       }
     } catch (error) {
@@ -454,10 +463,15 @@ export class QmpClient {
     pending.resolve({ ...response, events: this.#takePendingEvents(pending) });
   }
 
-  #settlePendingError(id: QmpRequestId | undefined, error: unknown): void {
+  #settlePendingError(id: QmpRequestId | undefined, error: QmpErrorMessage["error"]): void {
     const pending = this.#takePending(id);
-    this.#takePendingEvents(pending);
-    pending.reject(error);
+    const events = this.#takePendingEvents(pending);
+    pending.reject(
+      qmpError("QMP_COMMAND_FAILED", error.desc, {
+        qmpClass: error.class,
+        events,
+      }),
+    );
   }
 
   #takePending(id: QmpRequestId | undefined): PendingCommand {
