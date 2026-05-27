@@ -341,13 +341,18 @@ describe("provisioning contracts", () => {
       snapshotManager: {
         create: (snapshotName) =>
           Promise.resolve({
-            operation: "create",
-            snapshotName,
-            qmpCommand: "savevm",
-            baseDiskPath: "artifacts/disks/analysis-one.qcow2",
-            metadataPath: "snapshots/analysis-one/clean-base.json",
-            artifactManifestPath: "artifacts/manifest.json",
-            clean: true,
+            snapshot: {
+              kind: "snapshot",
+              name: snapshotName,
+              path: "artifacts/disks/analysis-one.qcow2",
+              createdAt: "2026-05-27T00:00:00.000Z",
+              baseDiskPath: "artifacts/disks/analysis-one.qcow2",
+              clean: true,
+              qemuTag: snapshotName,
+              mode: "online-qmp",
+            },
+            qmpCommands: ["snapshot-save"],
+            qcow2Commands: [],
           }),
       },
       now: () => new Date("2026-05-27T00:00:00.000Z"),
@@ -355,7 +360,7 @@ describe("provisioning contracts", () => {
 
     expect(result.status).toBe("complete");
     expect(stages).toEqual(PROVISIONING_STAGE_IDS);
-    expect(result.snapshot?.snapshotName).toBe("clean-base");
+    expect(result.snapshot?.snapshot.name).toBe("clean-base");
     expect(result.health.status).toBe("degraded");
     expect(result.health.checks.map((check) => check.id)).toEqual([
       "debugger-health",

@@ -92,13 +92,7 @@ export type {
   QemuNetworkPlan,
   QemuNetworkPortForward,
 } from "./network.js";
-export {
-  createEmptyArtifactManifest,
-  dedupeArtifacts,
-  readArtifactManifestOrCreate,
-  writeArtifactManifest,
-  writeJson,
-} from "./manifest.js";
+export { createEmptyArtifactManifest, upsertArtifactRecord } from "./manifest.js";
 export type {
   ArtifactKind,
   ArtifactManifest,
@@ -174,11 +168,12 @@ export type {
 } from "./qmp.js";
 export { buildQemuCommandPlan, renderQemuCreateDryRun, renderQemuStartDryRun } from "./qemu.js";
 export type { QemuCommandPlan, QemuDiskPlan, QemuPlanOptions, QemuSocketPlan } from "./qemu.js";
-export { SnapshotManager } from "./snapshot.js";
+export { CLEAN_BASE_SNAPSHOT_NAME, normalizeSnapshotName, SnapshotManager } from "./snapshot.js";
 export type {
-  SnapshotCommandResult,
+  SnapshotCreateResult,
   SnapshotManagerOptions,
-  SnapshotOperation,
+  SnapshotMode,
+  SnapshotRestoreResult,
 } from "./snapshot.js";
 
 export const CRUCIBLE_VERSION = "0.0.0";

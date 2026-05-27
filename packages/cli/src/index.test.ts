@@ -189,7 +189,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("Provisioning status: complete");
     expect(result.stdout).toContain("policy-configured: succeeded");
     expect(result.stdout).toContain("guest/provision/configure-policy.ps1");
-    expect(result.stdout).toContain("Snapshot create: clean-base");
+    expect(result.stdout).toContain("Snapshot created: clean-base");
     expect(result.stdout).toContain("Guest health: degraded");
     expect(result.stdout).toContain("debugger-health: unknown");
   });
@@ -215,11 +215,11 @@ describe("crucible CLI bootstrap", () => {
     });
 
     expect(create.exitCode).toBe(0);
-    expect(create.stdout).toContain("Snapshot create: clean-base");
-    expect(create.stdout).toContain("human-monitor-command savevm clean-base");
+    expect(create.stdout).toContain("Snapshot created: clean-base");
+    expect(create.stdout).toContain("qmp commands: snapshot-save");
     expect(restore.exitCode).toBe(0);
-    expect(restore.stdout).toContain("Snapshot restore: clean-base");
-    expect(restore.stdout).toContain("human-monitor-command loadvm clean-base");
+    expect(restore.stdout).toContain("Snapshot restored: clean-base");
+    expect(restore.stdout).toContain("qmp commands: snapshot-load");
   });
 
   it("reports guest health from lifecycle and provisioning contracts", async () => {
@@ -382,6 +382,62 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("out");
     expect(result.stdout).toContain("err");
   });
+
+  it("prints snapshot list from the artifact manifest", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+    await mkdir(path.join(root, "artifacts"), { recursive: true });
+    await writeFile(
+      config.artifacts.manifestPath,
+      JSON.stringify({
+        version: 1,
+        vmName: "test-win",
+        artifacts: [
+          {
+            kind: "snapshot",
+            name: "clean-base",
+            path: path.join(root, "artifacts", "disks", "test-win.qcow2"),
+            createdAt: "2026-05-27T00:00:00.000Z",
+            baseDiskPath: path.join(root, "artifacts", "disks", "test-win.qcow2"),
+            clean: true,
+            mode: "offline-qcow2",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await runCrucibleCli(["snapshot:list"], { config });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Snapshots:");
+    expect(result.stdout).toContain("clean-base: clean, offline-qcow2");
+  });
+
+  it("defaults snapshot commands to clean-base", async () => {
+    const result = await runCrucibleCli(["snapshot:restore", "--flag"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("snapshot:restore accepts at most one snapshot name");
+  });
+
+  it("reports unsafe snapshot names as argument validation errors", async () => {
+    const result = await runCrucibleCli(["snapshot:create", "../escape"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Snapshot names must be 1-64 characters");
+  });
 });
 
 function fakeLifecycleManager(
@@ -429,28 +485,35 @@ function fakeLifecycleManager(
 function fakeSnapshotManager(config: ReturnType<typeof parseCrucibleConfig>) {
   return {
     create: (snapshotName: string) =>
-      Promise.resolve(fakeSnapshotResult(config, "create", snapshotName)),
+      Promise.resolve(fakeSnapshotCreateResult(config, snapshotName)),
+    list: () => Promise.resolve([]),
     restore: (snapshotName: string) =>
-      Promise.resolve(fakeSnapshotResult(config, "restore", snapshotName)),
+      Promise.resolve({
+        ...fakeSnapshotCreateResult(config, snapshotName),
+        restoredAt: "2026-05-27T00:00:00.000Z",
+        qmpCommands: ["snapshot-load"],
+      }),
   };
 }
 
-function fakeSnapshotResult(
+function fakeSnapshotCreateResult(
   config: ReturnType<typeof parseCrucibleConfig>,
-  operation: "create" | "restore",
   snapshotName: string,
 ) {
+  const diskPath = path.join(config.artifacts.directory, "disks", `${config.vm.name}.qcow2`);
+
   return {
-    operation,
-    snapshotName,
-    qmpCommand: operation === "create" ? ("savevm" as const) : ("loadvm" as const),
-    baseDiskPath: path.join(config.artifacts.directory, "disks", `${config.vm.name}.qcow2`),
-    metadataPath: path.join(
-      config.artifacts.snapshotsDirectory,
-      config.vm.name,
-      `${snapshotName}.json`,
-    ),
-    artifactManifestPath: config.artifacts.manifestPath,
-    clean: snapshotName === "clean-base",
+    snapshot: {
+      kind: "snapshot" as const,
+      name: snapshotName,
+      path: diskPath,
+      createdAt: "2026-05-27T00:00:00.000Z",
+      baseDiskPath: diskPath,
+      clean: snapshotName === "clean-base",
+      qemuTag: snapshotName,
+      mode: "online-qmp" as const,
+    },
+    qmpCommands: ["snapshot-save"],
+    qcow2Commands: [],
   };
 }

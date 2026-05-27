@@ -144,18 +144,16 @@ The command exits non-zero unless the real guest path can confirm health. With o
 available, checks are reported as `fail` when QMP is unavailable or `unknown` when the VM is running
 but the guest health endpoint has not been queried.
 
-## Snapshots
+## Clean-Base Snapshot
 
-`crucible snapshot:create <name>` and `crucible snapshot:restore <name>` use QMP
-`human-monitor-command` to call qcow2 internal snapshot commands:
+The provisioning exit flow uses `snapshot:create clean-base` after the guest is healthy and
+`snapshot:restore clean-base` before the final health check. The snapshot manager stores the
+`clean-base` record in the artifact manifest with the base qcow2 disk path, QEMU snapshot tag, clean
+flag, snapshot mode, and last restore timestamp.
 
-- create: `savevm <name>`
-- restore: `loadvm <name>`
-
-Snapshot names are limited to letters, digits, `.`, `_`, and `-`, start with a letter or digit, and
-are capped at 64 characters. Metadata is written under
-`artifacts.snapshotsDirectory/<vm-name>/<snapshot-name>.json` and recorded as a `snapshot` artifact
-in the artifact manifest. `clean-base` is marked as the clean baseline snapshot.
+QMP-backed snapshots pause the VM, save or load the snapshot, and resume the VM. Offline qcow2
+fallback uses `qemu-img snapshot` only when QMP is unavailable before any snapshot command starts.
+Host-only tests cover both paths without launching QEMU or a Windows guest.
 
 ## Local Accounts
 

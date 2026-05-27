@@ -10,7 +10,7 @@ import {
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
 import { buildNetworkPlan } from "./network.js";
-import { type SnapshotCommandResult } from "./snapshot.js";
+import { type SnapshotCreateResult } from "./snapshot.js";
 
 export const PROVISIONING_STAGE_IDS = [
   "media-ready",
@@ -168,7 +168,7 @@ export type ProvisioningCommandResult = {
   readonly snapshotName: string;
   readonly steps: readonly ProvisioningCommandStep[];
   readonly health: GuestHealthReport;
-  readonly snapshot?: SnapshotCommandResult;
+  readonly snapshot?: SnapshotCreateResult;
 };
 
 export type ProvisioningExecutor = {
@@ -180,7 +180,7 @@ export type ProvisioningCommandRunnerOptions = {
   readonly lifecycleManager: Pick<VmLifecycleManager, "start" | "status">;
   readonly executor?: ProvisioningExecutor;
   readonly snapshotManager: {
-    readonly create: (snapshotName: string) => Promise<SnapshotCommandResult>;
+    readonly create: (snapshotName: string) => Promise<SnapshotCreateResult>;
   };
   readonly now?: () => Date;
   readonly snapshotName?: string;
@@ -310,7 +310,7 @@ export async function runProvisioningCommand(
     id: "snapshot-created",
     title: "Clean snapshot created",
     status: "succeeded",
-    detail: snapshot.metadataPath,
+    detail: snapshot.snapshot.path,
   });
 
   return {

@@ -7,10 +7,12 @@ import {
   buildGuestHealthReport,
   buildMediaCachePlan,
   buildQemuCommandPlan,
+  CrucibleError,
   FIREWALL_BACKENDS,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
   NETWORK_MODES,
+  normalizeSnapshotName,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
   runProvisioningCommand,
@@ -24,10 +26,12 @@ import {
   type NetworkMode,
   type NetworkTeardownCommandPlan,
   type NetworkTeardownOutputModel,
+  type GuestHealthReport,
   type ProvisioningCommandResult,
   type ProvisioningExecutor,
-  type GuestHealthReport,
-  type SnapshotCommandResult,
+  type SnapshotCreateResult,
+  type SnapshotRecord,
+  type SnapshotRestoreResult,
   type VmStatus,
   type VmStopResult,
   VmLifecycleManager,
@@ -53,7 +57,7 @@ type CliLifecycleManager = Pick<
   "paths" | "start" | "stop" | "poweroff" | "kill" | "status"
 >;
 
-type CliSnapshotManager = Pick<SnapshotManager, "create" | "restore">;
+type CliSnapshotManager = Pick<SnapshotManager, "create" | "list" | "restore">;
 
 type MediaPlanArgs = {
   readonly profile: MediaProfileName;
@@ -100,12 +104,14 @@ export async function runCrucibleCli(
       return runVmStatusCommand(rest, runtime);
     case "vm:logs":
       return runVmLogsCommand(rest, runtime);
+    case "snapshot:create":
+      return runSnapshotCreateCommand(rest, runtime);
+    case "snapshot:list":
+      return runSnapshotListCommand(rest, runtime);
+    case "snapshot:restore":
+      return runSnapshotRestoreCommand(rest, runtime);
     case "provision":
       return runProvisionCommand(rest, runtime);
-    case "snapshot:create":
-      return runSnapshotCommand("create", rest, runtime);
-    case "snapshot:restore":
-      return runSnapshotCommand("restore", rest, runtime);
     case "guest:health":
       return runGuestHealthCommand(rest, runtime);
     case "mcp":
@@ -244,6 +250,51 @@ function getLifecycleManager(runtime: CliRuntime): CliLifecycleManager {
   return runtime.lifecycleManager ?? new VmLifecycleManager({ config: getRuntimeConfig(runtime) });
 }
 
+function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
+  return runtime.snapshotManager ?? new SnapshotManager({ config: getRuntimeConfig(runtime) });
+}
+
+async function runSnapshotCreateCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseSnapshotNameArgs(args, "snapshot:create");
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const result = await getSnapshotManager(runtime).create(parsed.name);
+  return { exitCode: 0, stdout: renderSnapshotCreateResult(result), stderr: "" };
+}
+
+async function runSnapshotListCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown snapshot:list option: ${args[0]}` };
+  }
+
+  return {
+    exitCode: 0,
+    stdout: renderSnapshotList(await getSnapshotManager(runtime).list()),
+    stderr: "",
+  };
+}
+
+async function runSnapshotRestoreCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseSnapshotNameArgs(args, "snapshot:restore");
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const result = await getSnapshotManager(runtime).restore(parsed.name);
+  return { exitCode: 0, stdout: renderSnapshotRestoreResult(result), stderr: "" };
+}
+
 async function runProvisionCommand(
   args: readonly string[],
   runtime: CliRuntime,
@@ -265,29 +316,6 @@ async function runProvisionCommand(
     stdout: renderProvisioningResult(result),
     stderr: "",
   };
-}
-
-async function runSnapshotCommand(
-  operation: "create" | "restore",
-  args: readonly string[],
-  runtime: CliRuntime,
-): Promise<CommandResult> {
-  const [snapshotName, ...extra] = args;
-  if (snapshotName === undefined || extra.length > 0) {
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `Usage: crucible snapshot:${operation} <snapshot-name>`,
-    };
-  }
-
-  const manager =
-    runtime.snapshotManager ?? new SnapshotManager({ config: getRuntimeConfig(runtime) });
-  const result =
-    operation === "create"
-      ? await manager.create(snapshotName)
-      : await manager.restore(snapshotName);
-  return { exitCode: 0, stdout: renderSnapshotResult(result), stderr: "" };
 }
 
 async function runGuestHealthCommand(
@@ -361,7 +389,7 @@ function renderProvisioningResult(result: ProvisioningCommandResult): string {
   ];
 
   if (result.snapshot !== undefined) {
-    lines.push("", renderSnapshotResult(result.snapshot));
+    lines.push("", renderSnapshotCreateResult(result.snapshot));
   }
 
   if (result.status === "blocked") {
@@ -369,17 +397,6 @@ function renderProvisioningResult(result: ProvisioningCommandResult): string {
   }
 
   return lines.join("\n");
-}
-
-function renderSnapshotResult(result: SnapshotCommandResult): string {
-  return [
-    `Snapshot ${result.operation}: ${result.snapshotName}`,
-    `qmp command: human-monitor-command ${result.qmpCommand} ${result.snapshotName}`,
-    `base disk: ${result.baseDiskPath}`,
-    `metadata: ${result.metadataPath}`,
-    `artifact manifest: ${result.artifactManifestPath}`,
-    `clean baseline: ${result.clean ? "yes" : "no"}`,
-  ].join("\n");
 }
 
 function renderGuestHealth(report: GuestHealthReport): string {
@@ -394,6 +411,43 @@ function renderGuestHealth(report: GuestHealthReport): string {
     "checks:",
     ...report.checks.map(
       (check) => `- ${check.id}: ${check.status} (${check.detail ?? check.description})`,
+    ),
+  ].join("\n");
+}
+
+function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
+  return [
+    `Snapshot created: ${result.snapshot.name}`,
+    `clean: ${result.snapshot.clean ? "yes" : "no"}`,
+    `mode: ${result.snapshot.mode ?? "unknown"}`,
+    `base disk: ${result.snapshot.baseDiskPath}`,
+    `snapshot artifact path: ${result.snapshot.path}`,
+    `qmp commands: ${result.qmpCommands.length > 0 ? result.qmpCommands.join(", ") : "none"}`,
+    `qcow2 commands: ${result.qcow2Commands.length > 0 ? result.qcow2Commands.map(formatCommandPlan).join("; ") : "none"}`,
+  ].join("\n");
+}
+
+function renderSnapshotRestoreResult(result: SnapshotRestoreResult): string {
+  return [
+    `Snapshot restored: ${result.snapshot.name}`,
+    `restored at: ${result.restoredAt}`,
+    `mode: ${result.snapshot.mode ?? "unknown"}`,
+    `base disk: ${result.snapshot.baseDiskPath}`,
+    `qmp commands: ${result.qmpCommands.length > 0 ? result.qmpCommands.join(", ") : "none"}`,
+    `qcow2 commands: ${result.qcow2Commands.length > 0 ? result.qcow2Commands.map(formatCommandPlan).join("; ") : "none"}`,
+  ].join("\n");
+}
+
+function renderSnapshotList(snapshots: readonly SnapshotRecord[]): string {
+  if (snapshots.length === 0) {
+    return "Snapshots: none";
+  }
+
+  return [
+    "Snapshots:",
+    ...snapshots.map(
+      (snapshot) =>
+        `- ${snapshot.name}: ${snapshot.clean ? "clean" : "dirty"}, ${snapshot.mode ?? "unknown"}, ${snapshot.baseDiskPath}`,
     ),
   ].join("\n");
 }
@@ -550,6 +604,13 @@ function formatCommand(argv: readonly string[]): string {
   return argv.map(shellQuote).join(" ");
 }
 
+function formatCommandPlan(command: {
+  readonly executable: string;
+  readonly args: readonly string[];
+}): string {
+  return formatCommand([command.executable, ...command.args]);
+}
+
 function shellQuote(value: string): string {
   return /^[A-Za-z0-9_./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -587,6 +648,30 @@ type NetPlanArgsResult =
 type NetTeardownArgsResult =
   | { readonly ok: true; readonly args: NetTeardownArgs }
   | { readonly ok: false; readonly message: string };
+
+type SnapshotNameArgsResult =
+  | { readonly ok: true; readonly name: string }
+  | { readonly ok: false; readonly message: string };
+
+function parseSnapshotNameArgs(args: readonly string[], command: string): SnapshotNameArgsResult {
+  if (args.length === 0) {
+    return { ok: true, name: "clean-base" };
+  }
+
+  const [candidate] = args;
+  if (args.length === 1 && candidate !== undefined && !candidate.startsWith("-")) {
+    try {
+      return { ok: true, name: normalizeSnapshotName(candidate) };
+    } catch (error) {
+      if (error instanceof CrucibleError && error.code === "CONFIG_INVALID") {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
+  }
+
+  return { ok: false, message: `${command} accepts at most one snapshot name` };
+}
 
 function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): NetPlanArgsResult {
   let mode = defaultMode;
@@ -788,6 +873,9 @@ function getHelpText(): string {
     "  crucible vm:stop [--poweroff|--kill]",
     "  crucible vm:status",
     "  crucible vm:logs",
+    "  crucible snapshot:create [name]  Create a QMP/qcow2 snapshot (default: clean-base)",
+    "  crucible snapshot:list           List snapshots recorded in the artifact manifest",
+    "  crucible snapshot:restore [name] Restore a QMP/qcow2 snapshot (default: clean-base)",
   ].join("\n");
 }
 
