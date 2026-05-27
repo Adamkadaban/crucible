@@ -129,6 +129,7 @@ describe("provisioning contracts", () => {
       "defender-disabled",
       "code-integrity-recorded",
       "test-signing-disabled",
+      "analysis-profile-audited",
     ]);
 
     const localAccounts = plan.stages.find((stage) => stage.id === "local-accounts-created");

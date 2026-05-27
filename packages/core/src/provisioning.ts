@@ -304,6 +304,10 @@ function buildProvisioningStageContracts(
           "test-signing-disabled",
           "Test signing is disabled unless explicitly overridden",
         ),
+        requiredCheck(
+          "analysis-profile-audited",
+          "Analysis VM environment profile settings are recorded",
+        ),
       ],
       script: script(
         "configure-analysis-policy",

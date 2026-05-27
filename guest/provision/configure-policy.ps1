@@ -58,6 +58,33 @@ function Get-CodeIntegrityBootOptions {
   return @($options)
 }
 
+function Get-DwordValue {
+  param(
+    [string]$Path,
+    [string]$Name
+  )
+
+  try {
+    $Item = Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop
+    return [int]($Item.$Name)
+  } catch {
+    return $null
+  }
+}
+
+function Get-DefenderPreferenceValue {
+  param(
+    [object]$Preferences,
+    [string]$Name
+  )
+
+  if (-not $Preferences) {
+    return $false
+  }
+
+  return [bool]($Preferences.$Name)
+}
+
 $AppliedSettings = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
 
@@ -72,7 +99,11 @@ if ($DisableDefender) {
   Set-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableIOAVProtection" -Value 1
   Set-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SpynetReporting" -Value 0
   Set-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SubmitSamplesConsent" -Value 2
-  Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -SubmitSamplesConsent NeverSend 2>$null
+  if (Get-Command -Name Set-MpPreference -ErrorAction SilentlyContinue) {
+    Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -SubmitSamplesConsent NeverSend 2>$null
+  } else {
+    $Warnings.Add("Set-MpPreference is unavailable; Defender preference changes are limited to registry policy") | Out-Null
+  }
   Add-AppliedSetting "defender-disabled"
 }
 
@@ -137,13 +168,31 @@ if ($CommonAnalysisLabCamouflage) {
   Add-AppliedSetting "common-analysis-lab-camouflage"
 }
 
-$DefenderPreferences = Get-MpPreference -ErrorAction SilentlyContinue
+if (Get-Command -Name Get-MpPreference -ErrorAction SilentlyContinue) {
+  $DefenderPreferences = Get-MpPreference -ErrorAction SilentlyContinue
+} else {
+  $DefenderPreferences = $null
+  $Warnings.Add("Get-MpPreference is unavailable; Defender preference audit is limited to registry policy") | Out-Null
+}
+
 $DefenderService = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
 $CodeIntegrityBootOptions = Get-CodeIntegrityBootOptions
 $TestSigningEnabled = Get-TestSigningEnabled
+$DefenderPolicyDisabled = (Get-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware") -eq 1
+$DefenderRealtimePolicyDisabled = (Get-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableRealtimeMonitoring") -eq 1
+$DefenderRealtimePreferenceDisabled = Get-DefenderPreferenceValue -Preferences $DefenderPreferences -Name "DisableRealtimeMonitoring"
+$CodeIntegrityPolicyValue = Get-DwordValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard" -Name "EnableVirtualizationBasedSecurity"
+$HvciPolicyValue = Get-DwordValue -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" -Name "Enabled"
+$CodeIntegrityStateRecorded = ($null -ne $CodeIntegrityPolicyValue) -and ($null -ne $HvciPolicyValue)
+$HvciDisabled = $HvciPolicyValue -eq 0
+$CodeIntegrityDisabled = ($CodeIntegrityPolicyValue -eq 0) -and $HvciDisabled
 
 if ($RequireTestSigningDisabled -and $TestSigningEnabled) {
   throw "Test signing is enabled. Isolated analysis VMs must keep test signing disabled by default."
+}
+
+if (-not $CodeIntegrityStateRecorded) {
+  $Warnings.Add("Code-integrity registry policy state could not be fully observed") | Out-Null
 }
 
 $Audit = [ordered]@{
@@ -151,15 +200,15 @@ $Audit = [ordered]@{
   mode = $Mode
   generatedAt = (Get-Date).ToUniversalTime().ToString("o")
   defender = [ordered]@{
-    disabled = [bool]$DisableDefender
-    realTimeProtectionDisabled = [bool]($DefenderPreferences.DisableRealtimeMonitoring)
+    disabled = [bool]$DefenderPolicyDisabled
+    realTimeProtectionDisabled = [bool]($DefenderRealtimePolicyDisabled -or $DefenderRealtimePreferenceDisabled)
     serviceStatus = if ($DefenderService) { [string]$DefenderService.Status } else { "missing" }
-    preferencesRecorded = [bool]$DefenderPreferences
+    preferencesRecorded = [bool]($DefenderPreferences -or $DefenderRealtimePolicyDisabled)
   }
   codeIntegrity = [ordered]@{
-    stateRecorded = $true
-    enforcementDisabled = [bool]$DisableCodeIntegrity
-    hypervisorEnforcedCodeIntegrityDisabled = $true
+    stateRecorded = [bool]$CodeIntegrityStateRecorded
+    enforcementDisabled = [bool]$CodeIntegrityDisabled
+    hypervisorEnforcedCodeIntegrityDisabled = [bool]$HvciDisabled
     bootOptions = @($CodeIntegrityBootOptions)
   }
   testSigning = [ordered]@{

@@ -179,9 +179,11 @@ disables Windows Defender policy, applies and records code-integrity policy chan
 signing off, and emits JSON audit output for readiness checks. Test signing has no enablement flag
 in malware-analysis mode; any future driver-lab mode must add an explicit separate policy.
 
-Optional `analysisPolicy.profile` settings can set `hostname`, `username`, `locale`, `screenSize`,
-sleep behavior, Explorer visibility, recent-history clearing, and common analysis-lab camouflage.
-See [`docs/provisioning.md`](./docs/provisioning.md) for the config shape and audit fields.
+Optional `analysisPolicy.profile` settings can set the guest hostname, locale, sleep behavior,
+Explorer visibility, recent-history clearing, and common analysis-lab camouflage. `username` and
+`screenSize` are recorded as profile labels in audit output for later account/display provisioning;
+they do not rename accounts or change resolution in this policy stage. See
+[`docs/provisioning.md`](./docs/provisioning.md) for the config shape and audit fields.
 
 ## VM Lifecycle State
 

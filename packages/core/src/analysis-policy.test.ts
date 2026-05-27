@@ -141,4 +141,24 @@ describe("analysis VM policy", () => {
       expect.objectContaining({ id: "test-signing-disabled", passed: false }),
     );
   });
+
+  it("fails Defender readiness when real-time protection is still enabled", () => {
+    const audit = parseAnalysisVmPolicyAudit({
+      ...healthyAudit,
+      defender: {
+        disabled: true,
+        realTimeProtectionDisabled: false,
+        serviceStatus: "Running",
+        preferencesRecorded: true,
+      },
+    });
+
+    expect(buildAnalysisVmPolicyReadiness(audit)).toContainEqual(
+      expect.objectContaining({
+        id: "defender-disabled",
+        passed: false,
+        message: "Windows Defender is not fully disabled: policy=true, realTime=false",
+      }),
+    );
+  });
 });

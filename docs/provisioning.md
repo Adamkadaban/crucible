@@ -67,13 +67,17 @@ output:
 - Code-integrity and HVCI policy state is changed and recorded.
 - Test signing is forced off and must remain disabled by default. There is no config switch for
   enabling it; a future driver-lab mode must add an explicit separate policy.
-- The script emits JSON with Defender, code-integrity, test-signing, profile, and warning fields.
+- The script emits JSON with observed Defender, code-integrity, test-signing, profile, and warning
+  fields.
 
 The optional `analysisPolicy.profile` config section controls malware-reversing lab profile details:
 
-- `hostname` and `username` labels for common lab personas.
+- `hostname`, which is applied with `Rename-Computer` when it differs from the current computer
+  name.
+- `username`, which is recorded as a profile label for the later account-provisioning stage.
 - `locale`, defaulting to `en-US`.
-- `screenSize`, defaulting to `1920x1080`.
+- `screenSize`, defaulting to `1920x1080`, which is recorded as a profile label for later display
+  provisioning.
 - `disableSleep`, `showFileExtensions`, `showHiddenFiles`, `showExplorerRibbon`, and
   `clearRecentExplorerHistory`, all defaulting to `true`.
 - `commonAnalysisLabCamouflage`, defaulting to `false`, which applies low-risk Explorer and desktop

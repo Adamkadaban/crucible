@@ -178,9 +178,10 @@ export function buildAnalysisVmPolicyReadiness(
     {
       id: "defender-disabled",
       passed: audit.defender.disabled && audit.defender.realTimeProtectionDisabled,
-      message: audit.defender.disabled
-        ? "Windows Defender policy is disabled for the isolated analysis VM"
-        : "Windows Defender is still enabled",
+      message:
+        audit.defender.disabled && audit.defender.realTimeProtectionDisabled
+          ? "Windows Defender policy is disabled for the isolated analysis VM"
+          : `Windows Defender is not fully disabled: policy=${audit.defender.disabled}, realTime=${audit.defender.realTimeProtectionDisabled}`,
     },
     {
       id: "code-integrity-recorded",

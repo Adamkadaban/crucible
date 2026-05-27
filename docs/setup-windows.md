@@ -60,8 +60,8 @@ creation, health checks, and clean snapshot preparation. Generated Windows accou
 mTLS files are host-only secrets under `artifacts.secretsDirectory`, not repository files or guest
 shared-folder contents.
 
-The analysis policy stage disables Defender policy, records code-integrity policy state, confirms
-test signing is disabled, and can apply optional malware-reversing profile settings such as
-hostname, username, locale, screen size, sleep behavior, Explorer visibility, and low-risk lab
-camouflage. See [`provisioning.md`](./provisioning.md) for the stage, script contract, config, and
-audit details.
+The analysis policy stage disables Defender policy, records observed code-integrity policy state,
+confirms test signing is disabled, and can apply optional malware-reversing profile settings such as
+hostname, locale, sleep behavior, Explorer visibility, and low-risk lab camouflage. Username and
+screen size are currently audit labels for later account/display provisioning. See
+[`provisioning.md`](./provisioning.md) for the stage, script contract, config, and audit details.
