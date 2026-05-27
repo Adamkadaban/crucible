@@ -34,7 +34,7 @@ export type ProvisioningScriptRunner = (typeof PROVISIONING_SCRIPT_RUNNERS)[numb
 export type ProvisioningSecretKind = (typeof PROVISIONING_SECRET_KINDS)[number];
 
 export type ProvisioningStageStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
-export type ProvisioningRunStatus = "notStarted" | "running" | "blocked" | "succeeded";
+export type ProvisioningRunStatus = "notStarted" | "running" | "blocked" | "complete";
 
 export type ProvisioningReadinessCheck = {
   readonly id: string;
@@ -383,7 +383,9 @@ function script(
   id: string,
   runner: ProvisioningScriptRunner,
   scriptPath: string,
-  overrides: Partial<Omit<ProvisioningScriptInvocationContract, "arguments">> & {
+  overrides: Partial<
+    Pick<ProvisioningScriptInvocationContract, "timeoutMs" | "elevated" | "redactedArgumentIndexes">
+  > & {
     readonly scriptArguments?: readonly string[];
   } = {},
 ): ProvisioningScriptInvocationContract {

@@ -31,6 +31,8 @@ describe("provisioning contracts", () => {
       version: 1,
       status: "notStarted",
     });
+    const completeStatus: typeof stateMachine.status = "complete";
+    expect(completeStatus).toBe("complete");
     expect(stateMachine.currentStageId).toBeUndefined();
     expect(stateMachine.stages.map((stage) => stage.status)).toEqual(
       PROVISIONING_STAGE_IDS.map(() => "pending"),
