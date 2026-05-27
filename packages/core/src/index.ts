@@ -42,6 +42,28 @@ export type {
   MediaOverride,
   MediaProfileName,
 } from "./media.js";
+export {
+  buildNetworkPlan,
+  NETWORK_MODES,
+  networkConfigSchema,
+  networkModeSchema,
+  parseNetworkConfig,
+} from "./network.js";
+export type {
+  ControlAddressAllocation,
+  FirewallPlan,
+  FirewallRuleIntent,
+  FirewallRulePlan,
+  NetworkConfig,
+  NetworkConfigInput,
+  NetworkMode,
+  NetworkOwnerTag,
+  NetworkPlan,
+  NetworkPlanOptions,
+  NetworkTeardownPlan,
+  QemuNetworkBackend,
+  QemuNetworkPlan,
+} from "./network.js";
 export { createEmptyArtifactManifest } from "./manifest.js";
 export type {
   ArtifactKind,

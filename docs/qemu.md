@@ -51,9 +51,10 @@ Operators can append QEMU arguments through `vm.extraQemuArgs`:
 Extra arguments are appended after Crucible's required lifecycle devices so dry-run output clearly
 shows both the managed baseline and operator overrides.
 
-When `network.mode` is `nat` or `capture`, the current planner emits `virtio-net-pci` connected to a
-QEMU user-mode netdev. Isolated mode intentionally omits `-netdev` and the NIC device so there is no
-default guest egress path.
+When `network.mode` is `nat`, the current planner emits `virtio-net-pci` connected to a QEMU
+user-mode netdev. When `network.mode` is `capture`, it emits a tap-backed netdev contract for later
+packet-capture work. Isolated mode intentionally omits `-netdev` and the NIC device so there is no
+default guest egress path. See `docs/network-isolation.md` for the network model contracts.
 
 ## Lifecycle State
 

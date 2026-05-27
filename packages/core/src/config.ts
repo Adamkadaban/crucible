@@ -4,6 +4,7 @@ import { ZodError, z } from "zod";
 
 import { CrucibleError } from "./errors.js";
 import { DEFAULT_MEDIA_CACHE_DIR } from "./media.js";
+import { networkConfigSchema } from "./network.js";
 
 const isoPathSchema = z
   .string()
@@ -79,13 +80,6 @@ const virtioConfigSchema = z
     networkDevice: z.enum(["virtio-net-pci"]).default("virtio-net-pci"),
     balloon: z.boolean().default(true),
     rng: z.boolean().default(true),
-  })
-  .strict();
-
-const networkConfigSchema = z
-  .object({
-    mode: z.enum(["isolated", "nat", "capture"]).default("isolated"),
-    controlPort: z.number().int().min(1).max(65535).default(8443),
   })
   .strict();
 
