@@ -186,10 +186,10 @@ describe("core bootstrap exports", () => {
       "deny-guest-egress",
     ]);
     expect(plan.firewall.dryRun.map((command) => command.argv[0])).toEqual([
-      "nft",
-      "nft",
-      "nft",
-      "nft",
+      "printf",
+      "printf",
+      "printf",
+      "printf",
     ]);
     expect(plan.firewall.apply.map((command) => command.argv[0])).toEqual([
       "nft",
@@ -330,9 +330,10 @@ describe("core bootstrap exports", () => {
       "crucible:analysis-one:crucible-analysis-one-net0:deny-guest-egress",
     );
     expect(renderedCommands).not.toMatch(/\bflush\b/);
-    expect(renderedCommands).not.toMatch(/\bdelete table\b/);
+    expect(renderedCommands).not.toContain("delete table inet filter");
+    expect(renderedCommands).not.toContain("delete table ip filter");
     expect(renderedCommands).not.toMatch(/\b-F\b/);
-    expect(renderedCommands).not.toMatch(/\b-X\b/);
+    expect(renderedCommands).not.toContain("iptables -X FORWARD");
   });
 
   it("accepts custom media overrides and qemu args", () => {

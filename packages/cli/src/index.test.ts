@@ -78,7 +78,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("Firewall teardown commands (project-owned rules only):");
     expect(result.stdout).toContain("CRUCIBLE-CRUCIBLE-TEST-WIN-NET0");
     expect(result.stdout).not.toContain(" -F ");
-    expect(result.stdout).not.toContain(" -X ");
+    expect(result.stdout).not.toContain("iptables -X FORWARD");
   });
 
   it("rejects unknown network plan options", async () => {

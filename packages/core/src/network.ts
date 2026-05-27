@@ -245,7 +245,7 @@ function buildFirewallPlan(
       ...buildFirewallSetupCommandPlans(backend, owner, "apply"),
       ...rules.map((rule) => buildFirewallCommandPlan(rule, "apply")),
     ],
-    teardown: rules.map((rule) => buildFirewallTeardownCommandPlan(rule)),
+    teardown: buildFirewallTeardownCommandPlans(backend, owner, rules),
     owner,
   };
 }
@@ -262,7 +262,7 @@ function buildFirewallSetupCommandPlans(
     id: `${owner.resourceId}-setup-${index}-${operation}`,
     ruleId: `${owner.resourceId}-setup-${index}`,
     operation,
-    argv: operation === "dry-run" ? dryRunSetupCommand(backend, argv) : argv,
+    argv: operation === "dry-run" ? previewFirewallCommand(argv) : argv,
     description: `${operation === "dry-run" ? "Validate" : "Apply"}: project-owned firewall setup`,
     owner,
   }));
@@ -278,45 +278,56 @@ function buildFirewallCommandPlan(
     id: `${rule.id}-${operation}`,
     ruleId: rule.id,
     operation,
-    argv: operation === "dry-run" ? dryRunFirewallCommand(rule.table, argv) : argv,
+    argv: operation === "dry-run" ? previewFirewallCommand(argv) : argv,
     description: `${operation === "dry-run" ? "Validate" : "Apply"}: ${rule.description}`,
     owner: rule.owner,
   };
 }
 
-function buildFirewallTeardownCommandPlan(rule: FirewallRulePlan): FirewallCommandPlan {
-  const argv =
-    rule.table === "nftables" ? nftablesTeardownCommand(rule) : iptablesTeardownCommand(rule);
-
-  return {
-    id: `${rule.id}-teardown`,
-    ruleId: rule.id,
-    operation: "apply",
-    argv,
-    description: `Remove project-owned rule: ${rule.description}`,
-    owner: rule.owner,
-  };
+function previewFirewallCommand(argv: readonly string[]): readonly string[] {
+  return ["printf", "%s\\n", argv.map(commandArgument).join(" ")];
 }
 
-function dryRunFirewallCommand(
+function commandArgument(value: string): string {
+  return /^[A-Za-z0-9_./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function buildFirewallTeardownCommandPlans(
   backend: FirewallBackend,
-  argv: readonly string[],
-): readonly string[] {
+  owner: NetworkOwnerTag,
+  rules: readonly FirewallRulePlan[],
+): readonly FirewallCommandPlan[] {
   if (backend === "nftables") {
-    return ["nft", "--check", ...argv.slice(1)];
+    return [
+      {
+        id: `${owner.resourceId}-table-teardown`,
+        ruleId: `${owner.resourceId}-table`,
+        operation: "apply",
+        argv: nftablesTeardownCommand(owner),
+        description: "Remove project-owned nftables table and rules",
+        owner,
+      },
+    ];
   }
 
-  return ["iptables", "-C", ...argv.slice(2)];
-}
-
-function dryRunSetupCommand(backend: FirewallBackend, argv: readonly string[]): readonly string[] {
-  if (backend === "nftables") {
-    return ["nft", "--check", ...argv.slice(1)];
-  }
-
-  return argv[1] === "-N"
-    ? ["iptables", "-S", argv[2] ?? ""]
-    : ["iptables", "-C", ...argv.slice(2)];
+  return [
+    ...rules.map((rule) => ({
+      id: `${rule.id}-teardown`,
+      ruleId: rule.id,
+      operation: "apply" as const,
+      argv: iptablesTeardownCommand(rule),
+      description: `Remove project-owned rule: ${rule.description}`,
+      owner: rule.owner,
+    })),
+    ...iptablesSetupTeardownCommands(owner).map((argv, index) => ({
+      id: `${owner.resourceId}-setup-${index}-teardown`,
+      ruleId: `${owner.resourceId}-setup-${index}`,
+      operation: "apply" as const,
+      argv,
+      description: "Remove project-owned iptables setup",
+      owner,
+    })),
+  ];
 }
 
 function nftablesSetupCommands(owner: NetworkOwnerTag): readonly (readonly string[])[] {
@@ -362,6 +373,23 @@ function iptablesSetupCommands(owner: NetworkOwnerTag): readonly (readonly strin
   ];
 }
 
+function iptablesSetupTeardownCommands(owner: NetworkOwnerTag): readonly (readonly string[])[] {
+  return [
+    [
+      "iptables",
+      "-D",
+      "FORWARD",
+      "-m",
+      "comment",
+      "--comment",
+      `crucible:${owner.vmName}:${owner.resourceId}:jump`,
+      "-j",
+      iptablesChain(owner),
+    ],
+    ["iptables", "-X", iptablesChain(owner)],
+  ];
+}
+
 function nftablesRuleCommand(rule: FirewallRulePlan): readonly string[] {
   const chain = nftablesChain(rule.owner);
   const comment = firewallRuleComment(rule);
@@ -380,17 +408,8 @@ function nftablesRuleCommand(rule: FirewallRulePlan): readonly string[] {
   ];
 }
 
-function nftablesTeardownCommand(rule: FirewallRulePlan): readonly string[] {
-  return [
-    "nft",
-    "delete",
-    "rule",
-    "inet",
-    nftablesTable(rule.owner),
-    nftablesChain(rule.owner),
-    "comment",
-    firewallRuleComment(rule),
-  ];
+function nftablesTeardownCommand(owner: NetworkOwnerTag): readonly string[] {
+  return ["nft", "delete", "table", "inet", nftablesTable(owner)];
 }
 
 function iptablesRuleCommand(rule: FirewallRulePlan): readonly string[] {
