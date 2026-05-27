@@ -111,6 +111,28 @@ and commands. The parser rejects malformed JSON and unknown top-level message fi
 while leaving command-specific payloads opaque for QEMU version compatibility. See
 [`docs/protocol.md`](./docs/protocol.md) for details.
 
+## VM Lifecycle State
+
+The core lifecycle manager starts the planned QEMU process, records its pid, writes stdout/stderr
+logs, and stores machine-readable state under the configured artifact directory. It prefers QMP for
+graceful shutdown: `vm:stop` semantics send `quit`, while poweroff semantics send
+`system_powerdown`. If QMP is unavailable or the process does not exit before the configured
+timeout, the manager falls back to `SIGTERM` and then `SIGKILL`.
+
+Default lifecycle artifacts are:
+
+- state manifest: `artifacts/state/crucible-win11.json`
+- artifact manifest: `artifacts/manifest.json`
+- pid file: `artifacts/run/crucible-win11.pid`
+- QMP socket: `artifacts/qmp.sock`
+- QGA socket: `artifacts/qga.sock`
+- stdout log: `artifacts/logs/crucible-win11.stdout.log`
+- stderr log: `artifacts/logs/crucible-win11.stderr.log`
+
+Cleanup is intentionally narrow: stale pid files and sockets are removed only for project-owned
+paths and only when the recorded process is no longer alive. Disk images, Windows media, snapshots,
+sample directories, and other operator-provided artifacts are not deleted by lifecycle cleanup.
+
 ## QEMU Dry Runs
 
 `crucible vm:create --dry-run` renders the planned qcow2 creation and QEMU command without launching

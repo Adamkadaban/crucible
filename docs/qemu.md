@@ -50,3 +50,22 @@ shows both the managed baseline and operator overrides.
 When `network.mode` is `nat` or `capture`, the current planner emits `virtio-net-pci` connected to a
 QEMU user-mode netdev. Isolated mode intentionally omits `-netdev` and the NIC device so there is no
 default guest egress path.
+
+## Lifecycle State
+
+The lifecycle manager consumes the QEMU plan rather than provisioning Windows directly. On start it
+creates the lifecycle directories, launches QEMU detached, writes a pid file, appends QEMU stdout
+and stderr to configured log files, and records both lifecycle state and artifact manifests.
+
+The default state paths are:
+
+- `artifacts/state/<vm-name>.json` for the current lifecycle state
+- `artifacts/manifest.json` for tracked lifecycle artifacts
+- `artifacts/run/<vm-name>.pid` for the QEMU pid
+- `artifacts/logs/<vm-name>.stdout.log` and `artifacts/logs/<vm-name>.stderr.log` for QEMU output
+
+Graceful shutdown uses QMP when possible. Stop sends `quit`; poweroff sends `system_powerdown`. When
+QMP is unavailable, or when QEMU does not exit before the stop timeout, lifecycle cleanup sends
+bounded host signals and escalates to `SIGKILL` after timeout. Stale pid and socket cleanup is
+limited to project-owned paths and does not delete disks, snapshots, Windows ISOs, virtio media, or
+operator sample directories.

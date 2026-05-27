@@ -167,12 +167,12 @@ real VM.
       virtio-scsi, virtio-serial, QMP socket, and QGA channel.
 - [x] Implement QMP client with greeting negotiation, request IDs, timeout handling, event
       collection, and structured errors.
-- [ ] Implement lifecycle manager for create, start, stop, poweroff, kill-after-timeout, status, and
+- [x] Implement lifecycle manager for create, start, stop, poweroff, kill-after-timeout, status, and
       cleanup.
 - [ ] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
       generated credentials.
 - [ ] Add CLI commands for `vm:create`, `vm:start`, `vm:stop`, `vm:status`, and `vm:logs`.
-- [ ] Add host-only fake tests for QEMU command generation, QMP parsing, lifecycle state
+- [x] Add host-only fake tests for QEMU command generation, QMP parsing, lifecycle state
       transitions, and timeout behavior.
 - [ ] Document required host packages and manual Windows ISO/virtio ISO inputs.
 
