@@ -138,19 +138,21 @@ export const MANUAL_DOWNLOADS: readonly ManualDownload[] = [
 export function buildMediaCachePlan(config: Partial<MediaCacheConfig> = {}): MediaCachePlan {
   const cacheDirectory = config.cacheDir ?? DEFAULT_MEDIA_CACHE_DIR;
   const profile = config.profile ?? "windows11-enterprise-eval";
+  const sources = DEFAULT_MEDIA_SOURCES.filter((source) => source.profiles.includes(profile));
 
   return {
     cacheDirectory,
     profile,
-    entries: DEFAULT_MEDIA_SOURCES.filter((source) => source.profiles.includes(profile)).map(
-      (source) => applyMediaOverride(source, cacheDirectory, config),
-    ),
-    manualDownloads: MANUAL_DOWNLOADS,
+    entries: sources.map((source) => applyMediaOverride(source, cacheDirectory, config)),
+    manualDownloads: getManualDownloadsForSources(sources),
   };
 }
 
-export function getManualDownloadInstructions(cacheDir = DEFAULT_MEDIA_CACHE_DIR): string {
-  const lines = MANUAL_DOWNLOADS.map(
+export function getManualDownloadInstructions(
+  cacheDir = DEFAULT_MEDIA_CACHE_DIR,
+  downloads: readonly ManualDownload[] = MANUAL_DOWNLOADS,
+): string {
+  const lines = downloads.map(
     (download) =>
       `- ${download.name}: ${download.url} -> ${path.join(cacheDir, download.cacheFileName)}`,
   );
@@ -160,6 +162,14 @@ export function getManualDownloadInstructions(cacheDir = DEFAULT_MEDIA_CACHE_DIR
     ...lines,
     "Custom paths can be supplied in crucible.config.json.",
   ].join("\n");
+}
+
+function getManualDownloadsForSources(
+  sources: readonly DefaultMediaSource[],
+): readonly ManualDownload[] {
+  const cacheFileNames = new Set(sources.map((source) => source.cacheFileName));
+
+  return MANUAL_DOWNLOADS.filter((download) => cacheFileNames.has(download.cacheFileName));
 }
 
 function applyMediaOverride(

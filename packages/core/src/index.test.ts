@@ -26,6 +26,21 @@ describe("core bootstrap exports", () => {
     expect(instructions).toContain("/tmp/crucible-media");
   });
 
+  it("renders manual download guidance from a caller-selected download list", () => {
+    const instructions = getManualDownloadInstructions("/tmp/crucible-media", [
+      {
+        kind: "virtioIso",
+        name: "stable virtio-win ISO",
+        url: "https://example.com/virtio-win.iso",
+        cacheFileName: "virtio-win-stable.iso",
+      },
+    ]);
+
+    expect(instructions).toContain("stable virtio-win ISO");
+    expect(instructions).toContain("/tmp/crucible-media/virtio-win-stable.iso");
+    expect(instructions).not.toContain("Windows 11 Enterprise Evaluation");
+  });
+
   it("builds the default Windows 11 desktop media plan", () => {
     const plan = buildMediaCachePlan();
 
@@ -51,6 +66,18 @@ describe("core bootstrap exports", () => {
       }),
     ]);
     expect(DEFAULT_MEDIA_SOURCES).toHaveLength(4);
+    expect(plan.manualDownloads.map((download) => download.cacheFileName)).toEqual([
+      "Windows11EnterpriseEvaluation.iso",
+      "Windows11EnterpriseEvaluation.iso",
+      "virtio-win-stable.iso",
+      "virtio-win-guest-tools.exe",
+    ]);
+    expect(plan.manualDownloads).not.toContainEqual(
+      expect.objectContaining({ cacheFileName: "WindowsServer2025Evaluation.iso" }),
+    );
+    expect(plan.manualDownloads).not.toContainEqual(
+      expect.objectContaining({ cacheFileName: "virtio-win-latest.iso" }),
+    );
   });
 
   it("builds the alternate Windows Server media plan", () => {
@@ -68,6 +95,18 @@ describe("core bootstrap exports", () => {
       "virtioIso",
       "driverBundle",
     ]);
+    expect(plan.manualDownloads.map((download) => download.cacheFileName)).toEqual([
+      "WindowsServer2025Evaluation.iso",
+      "WindowsServer2025Evaluation.iso",
+      "virtio-win-stable.iso",
+      "virtio-win-guest-tools.exe",
+    ]);
+    expect(plan.manualDownloads).not.toContainEqual(
+      expect.objectContaining({ cacheFileName: "Windows11EnterpriseEvaluation.iso" }),
+    );
+    expect(plan.manualDownloads).not.toContainEqual(
+      expect.objectContaining({ cacheFileName: "virtio-win-latest.iso" }),
+    );
   });
 
   it("applies operator media overrides to the plan", () => {
@@ -112,10 +151,10 @@ describe("core bootstrap exports", () => {
       media: {
         windowsIso: { path: "/isos/win11.iso" },
         virtioIso: {
-          url: "https://example.com/virtio.iso",
+          url: "https://example.com/virtio.ISO",
           sha256: "a".repeat(64),
         },
-        driverBundle: { path: "/drivers/virtio-tools.exe" },
+        driverBundle: { path: "/drivers/virtio-tools.EXE" },
       },
     });
 
@@ -123,7 +162,8 @@ describe("core bootstrap exports", () => {
     expect(config.vm.extraQemuArgs).toEqual(["-cpu", "host"]);
     expect(config.media.windowsIso?.path).toBe("/isos/win11.iso");
     expect(config.media.virtioIso?.sha256).toBe("a".repeat(64));
-    expect(config.media.driverBundle?.path).toBe("/drivers/virtio-tools.exe");
+    expect(config.media.virtioIso?.url).toBe("https://example.com/virtio.ISO");
+    expect(config.media.driverBundle?.path).toBe("/drivers/virtio-tools.EXE");
   });
 
   it("rejects empty media overrides", () => {

@@ -91,8 +91,12 @@
       "additionalProperties": false,
       "anyOf": [{ "required": ["path"] }, { "required": ["url"] }],
       "properties": {
-        "path": { "type": "string", "minLength": 1, "pattern": "\\.iso$" },
-        "url": { "type": "string", "format": "uri", "pattern": "\\.iso(?:[?#].*)?$" },
+        "path": { "type": "string", "minLength": 1, "pattern": "\\.[iI][sS][oO]$" },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "\\.[iI][sS][oO](?:[?#].*)?$"
+        },
         "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
       }
     },
@@ -101,11 +105,15 @@
       "additionalProperties": false,
       "anyOf": [{ "required": ["path"] }, { "required": ["url"] }],
       "properties": {
-        "path": { "type": "string", "minLength": 1, "pattern": "\\.(?:iso|exe|zip|msi)$" },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\.(?:[iI][sS][oO]|[eE][xX][eE]|[zZ][iI][pP]|[mM][sS][iI])$"
+        },
         "url": {
           "type": "string",
           "format": "uri",
-          "pattern": "\\.(?:iso|exe|zip|msi)(?:[?#].*)?$"
+          "pattern": "\\.(?:[iI][sS][oO]|[eE][xX][eE]|[zZ][iI][pP]|[mM][sS][iI])(?:[?#].*)?$"
         },
         "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
       }

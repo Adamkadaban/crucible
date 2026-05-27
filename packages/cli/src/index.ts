@@ -14,6 +14,11 @@ type CommandResult = {
   readonly stderr: string;
 };
 
+type MediaPlanArgs = {
+  readonly profile: MediaProfileName;
+  readonly includeManualInstructions: boolean;
+};
+
 export function runCrucibleCli(args: readonly string[]): CommandResult {
   const [command, ...rest] = args;
 
@@ -59,34 +64,44 @@ function renderMediaPlanCommand(args: readonly string[]): CommandResult {
     return { exitCode: 2, stdout: "", stderr: parsed.message };
   }
 
-  return { exitCode: 0, stdout: renderMediaPlan(parsed.profile), stderr: "" };
+  return { exitCode: 0, stdout: renderMediaPlan(parsed.args), stderr: "" };
 }
 
-function renderMediaPlan(profile: MediaProfileName): string {
-  const plan = buildMediaCachePlan({ ...defaultCrucibleConfig.media, profile });
-
-  return [
+function renderMediaPlan(args: MediaPlanArgs): string {
+  const plan = buildMediaCachePlan({ ...defaultCrucibleConfig.media, profile: args.profile });
+  const lines = [
     `Media profile: ${plan.profile}`,
     `Media cache: ${plan.cacheDirectory}`,
     "",
     "Planned media:",
     ...plan.entries.map(formatMediaEntry),
-    "",
-    getManualDownloadInstructions(plan.cacheDirectory),
-  ].join("\n");
+  ];
+
+  if (args.includeManualInstructions) {
+    lines.push("", getManualDownloadInstructions(plan.cacheDirectory, plan.manualDownloads));
+  } else {
+    lines.push(
+      "",
+      "Manual download instructions are hidden by default; pass --manual to include profile-specific links.",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 type MediaPlanArgsResult =
-  | { readonly ok: true; readonly profile: MediaProfileName }
+  | { readonly ok: true; readonly args: MediaPlanArgs }
   | { readonly ok: false; readonly message: string };
 
 function parseMediaPlanArgs(args: readonly string[]): MediaPlanArgsResult {
   let profile = defaultCrucibleConfig.media.profile;
+  let includeManualInstructions = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
     if (arg === "--manual") {
+      includeManualInstructions = true;
       continue;
     }
 
@@ -109,7 +124,7 @@ function parseMediaPlanArgs(args: readonly string[]): MediaPlanArgsResult {
     return { ok: false, message: `Unknown media:plan option: ${arg}` };
   }
 
-  return { ok: true, profile };
+  return { ok: true, args: { profile, includeManualInstructions } };
 }
 
 function isMediaProfileName(value: string): value is MediaProfileName {
@@ -134,7 +149,7 @@ function getHelpText(): string {
     "Usage:",
     "  crucible provision   Provision a Windows analysis VM (scaffolded)",
     "  crucible mcp         Start the MCP server (scaffolded)",
-    "  crucible media:plan [--profile windows11-enterprise-eval|windows-server-2025-eval]",
+    "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
   ].join("\n");
 }
 
