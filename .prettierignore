@@ -1,0 +1,10 @@
+dist
+coverage
+node_modules
+references
+artifacts
+media
+samples
+snapshots
+symbols
+pnpm-lock.yaml

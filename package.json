@@ -1,0 +1,41 @@
+{
+  "name": "crucible",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Linux-hosted MCP server for provisioning and controlling isolated Windows VMs for malware analysis and debugging.",
+  "author": "Adam Hassan",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.10.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10.10.0"
+  },
+  "bin": {
+    "crucible": "packages/cli/dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b packages/core packages/mcp-server packages/cli",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "crucible": "tsx packages/cli/src/index.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.check.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@types/node": "25.9.1",
+    "eslint": "9.39.4",
+    "prettier": "3.8.3",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.60.0",
+    "vitest": "4.1.7"
+  }
+}

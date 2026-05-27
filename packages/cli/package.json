@@ -1,0 +1,19 @@
+{
+  "name": "@crucible/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "crucible": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@crucible/core": "workspace:*",
+    "@crucible/mcp-server": "workspace:*"
+  }
+}
