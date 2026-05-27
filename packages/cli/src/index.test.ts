@@ -13,9 +13,11 @@ import {
 
 import { runCrucibleCli } from "./index.js";
 
+const defaultRuntime = { config: defaultCrucibleConfig };
+
 describe("crucible CLI bootstrap", () => {
   it("prints help", async () => {
-    const result = await runCrucibleCli(["--help"], { config: defaultCrucibleConfig });
+    const result = await runCrucibleCli(["--help"], defaultRuntime);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
@@ -23,7 +25,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints media plan without manual links by default", async () => {
-    const result = await runCrucibleCli(["media:plan"], { config: defaultCrucibleConfig });
+    const result = await runCrucibleCli(["media:plan"], defaultRuntime);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Media profile: windows11-enterprise-eval");
@@ -36,9 +38,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints profile-specific manual-download instructions with --manual", async () => {
-    const result = await runCrucibleCli(["media:plan", "--manual"], {
-      config: defaultCrucibleConfig,
-    });
+    const result = await runCrucibleCli(["media:plan", "--manual"], defaultRuntime);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Windows 11 Enterprise Evaluation page");
@@ -48,9 +48,10 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints alternate Windows Server media plan", async () => {
-    const result = await runCrucibleCli(["media:plan", "--profile", "windows-server-2025-eval"], {
-      config: defaultCrucibleConfig,
-    });
+    const result = await runCrucibleCli(
+      ["media:plan", "--profile", "windows-server-2025-eval"],
+      defaultRuntime,
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Media profile: windows-server-2025-eval");
@@ -125,33 +126,31 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("rejects unknown network plan options", async () => {
-    const result = await runCrucibleCli(["net:plan", "--backend", "pf"]);
+    const result = await runCrucibleCli(["net:plan", "--backend", "pf"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown firewall backend: pf");
   });
 
   it("rejects unknown network teardown options", async () => {
-    const result = await runCrucibleCli(["net:teardown", "--backend", "pf"]);
+    const result = await runCrucibleCli(["net:teardown", "--backend", "pf"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown firewall backend: pf");
   });
 
   it("rejects conflicting network teardown operation flags", async () => {
-    const result = await runCrucibleCli(["net:teardown", "--dry-run", "--apply"]);
+    const result = await runCrucibleCli(["net:teardown", "--dry-run", "--apply"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("net:teardown accepts only one of --dry-run or --apply");
   });
 
   it("prints alternate Windows Server manual-download instructions", async () => {
-    const result = await runCrucibleCli([
-      "media:plan",
-      "--manual",
-      "--profile",
-      "windows-server-2025-eval",
-    ]);
+    const result = await runCrucibleCli(
+      ["media:plan", "--manual", "--profile", "windows-server-2025-eval"],
+      defaultRuntime,
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Windows Server 2025 Evaluation page");
@@ -161,7 +160,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("rejects unknown media profile", async () => {
-    const result = await runCrucibleCli(["media:plan", "--profile", "windows-10"]);
+    const result = await runCrucibleCli(["media:plan", "--profile", "windows-10"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown media profile: windows-10");
@@ -204,7 +203,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("rejects unknown provision options", async () => {
-    const result = await runCrucibleCli(["provision", "--apply"]);
+    const result = await runCrucibleCli(["provision", "--apply"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown provision option: --apply");
@@ -309,14 +308,14 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reports the first invalid vm:stop option before extra arguments", async () => {
-    const result = await runCrucibleCli(["vm:stop", "--unknown", "--kill"]);
+    const result = await runCrucibleCli(["vm:stop", "--unknown", "--kill"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown vm:stop option: --unknown");
   });
 
   it("rejects extra vm:stop arguments after a valid option", async () => {
-    const result = await runCrucibleCli(["vm:stop", "--kill", "--extra"]);
+    const result = await runCrucibleCli(["vm:stop", "--kill", "--extra"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown vm:stop option: --extra");
@@ -435,14 +434,14 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("defaults snapshot commands to clean-base", async () => {
-    const result = await runCrucibleCli(["snapshot:restore", "--flag"]);
+    const result = await runCrucibleCli(["snapshot:restore", "--flag"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("snapshot:restore accepts at most one snapshot name");
   });
 
   it("reports unsafe snapshot names as argument validation errors", async () => {
-    const result = await runCrucibleCli(["snapshot:create", "../escape"]);
+    const result = await runCrucibleCli(["snapshot:create", "../escape"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Snapshot names must be 1-64 characters");
