@@ -120,19 +120,19 @@ Linux without requiring KVM or Windows media.
 
 **Deliverable checklist:**
 
-- [ ] Create TypeScript/pnpm workspace files: `package.json`, `pnpm-workspace.yaml`,
+- [x] Create TypeScript/pnpm workspace files: `package.json`, `pnpm-workspace.yaml`,
       `tsconfig.base.json`, `vitest.config.ts`.
-- [ ] Create minimal packages: `packages/core`, `packages/mcp-server`, `packages/cli` with buildable
+- [x] Create minimal packages: `packages/core`, `packages/mcp-server`, `packages/cli` with buildable
       entry points.
-- [ ] Add quality tooling: ESLint, Prettier, TypeScript build scripts, Vitest scripts.
-- [ ] Add `.github/workflows/test.yml` with pull-request trigger, workflow_dispatch, concurrency
+- [x] Add quality tooling: ESLint, Prettier, TypeScript build scripts, Vitest scripts.
+- [x] Add `.github/workflows/test.yml` with pull-request trigger, workflow_dispatch, concurrency
       cancellation, and stable `test` check.
-- [ ] Add `README.md`, `CONTRIBUTING.md`, `LICENSE`, `NOTES.md`, and ADR seed.
-- [ ] Add `.gitignore` for `references/`, node output, Go output, qcow2 images, ISO files, logs,
+- [x] Add `README.md`, `CONTRIBUTING.md`, `LICENSE`, `NOTES.md`, and ADR seed.
+- [x] Add `.gitignore` for `references/`, node output, Go output, qcow2 images, ISO files, logs,
       snapshots, secrets, and OS junk.
-- [ ] Add `scripts/check-host.sh` stub that reports missing Linux/KVM/QEMU prerequisites without
+- [x] Add `scripts/check-host.sh` stub that reports missing Linux/KVM/QEMU prerequisites without
       mutating the host.
-- [ ] Open Phase 1 issues for each worktree task after GitHub repo creation.
+- [x] Open Phase 1 issues for each worktree task after GitHub repo creation.
 
 **Parallel-work split table:**
 
