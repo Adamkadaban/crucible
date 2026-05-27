@@ -41,6 +41,8 @@ pnpm crucible --help
 pnpm crucible media:plan
 pnpm crucible media:plan --manual
 pnpm crucible media:plan --profile windows-server-2025-eval
+pnpm crucible vm:create --dry-run
+pnpm crucible vm:start --dry-run
 pnpm crucible provision
 pnpm crucible mcp
 ```
@@ -58,7 +60,8 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
     "name": "crucible-win11",
     "cpus": 4,
     "memoryMiB": 8192,
-    "diskGiB": 128
+    "diskGiB": 128,
+    "extraQemuArgs": []
   },
   "media": {
     "cacheDir": "media/cache",
@@ -66,6 +69,18 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
     "windowsIso": { "path": "/isos/Windows11EnterpriseEvaluation.iso" },
     "virtioIso": { "path": "/isos/virtio-win.iso" },
     "driverBundle": { "path": "/drivers/virtio-win-guest-tools.exe" }
+  },
+  "virtio": {
+    "diskBus": "virtio-scsi",
+    "networkDevice": "virtio-net-pci",
+    "balloon": true,
+    "rng": true
+  },
+  "qmp": {
+    "socketPath": "artifacts/qmp.sock"
+  },
+  "qga": {
+    "socketPath": "artifacts/qga.sock"
   },
   "network": {
     "mode": "isolated"
@@ -83,6 +98,19 @@ overrides must point to `.iso` files, case-insensitively. Driver bundle override
 `.iso`, `.exe`, `.zip`, or `.msi` files, also case-insensitively. If automated downloads are
 blocked, place manually downloaded files at the cache paths printed by
 `crucible media:plan --manual` or point `crucible.config.json` at operator-managed paths.
+
+## QEMU Dry Runs
+
+`crucible vm:create --dry-run` renders the planned qcow2 creation and QEMU command without launching
+a VM. `crucible vm:start --dry-run` renders only the QEMU command and sockets. The default plan uses
+`qemu-system-x86_64` with KVM acceleration, a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`,
+no network device in isolated mode, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at
+`artifacts/qmp.sock`, and a QGA virtserial channel backed by `artifacts/qga.sock`.
+
+Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the default
+`virtio-scsi-pci`/`scsi-hd` pair. `vm.extraQemuArgs` is appended at the end of the generated argv so
+operators can add explicit QEMU flags while keeping Crucible's required lifecycle devices visible in
+dry-run output.
 
 ## Hacking On It
 
