@@ -72,8 +72,8 @@ tag. The planner does not emit broad deletion commands such as nftables table fl
   unrestricted user-mode netdev, or a tap-backed netdev.
 - `ControlAddressAllocation` reserves the host-control address pair and guest API port used by later
   guest-service work.
-- `NetworkTeardownPlan` lists only project-owned firewall rule IDs and interface names that teardown
-  code may remove.
+- `NetworkTeardownPlan` lists only project-owned firewall teardown command identifiers and interface
+  names that teardown code may remove.
 - `NetworkTeardownOutputModel` separates dry-run and apply command models, marks missing resources
   as safe to ignore, and records refused resources instead of broadening deletion scope.
 

@@ -221,10 +221,7 @@ describe("core bootstrap exports", () => {
         vmName: "analysis-one",
         resourceId: "crucible-analysis-one-net0",
       },
-      firewallRuleIds: [
-        "crucible-analysis-one-net0-allow-host-control",
-        "crucible-analysis-one-net0-deny-guest-egress",
-      ],
+      firewallCommandIds: ["crucible-analysis-one-net0-table"],
       interfaceNames: [],
     });
   });

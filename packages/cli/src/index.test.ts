@@ -91,6 +91,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("Network teardown dry-run:");
     expect(result.stdout).toContain("Owner: crucible/test-win/crucible-test-win-net0");
     expect(result.stdout).toContain("Missing resources: ignored");
+    expect(result.stdout).toContain("Phase 2 print-only: no privileged host changes are executed.");
     expect(result.stdout).toContain("Dry-run commands:");
     expect(result.stdout).toContain("interface crucible-test-win-net0-tap");
     expect(result.stdout).toContain("printf");
@@ -107,6 +108,7 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Network teardown apply:");
+    expect(result.stdout).toContain("Phase 2 print-only: no privileged host changes are executed.");
     expect(result.stdout).toContain("Apply commands:");
     expect(result.stdout).toContain("iptables -D CRUCIBLE-CRUCIBLE-TEST-WIN-NET0");
     expect(result.stdout).toContain("ip link delete dev crucible-test-win-net0-tap");
@@ -125,6 +127,13 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown firewall backend: pf");
+  });
+
+  it("rejects conflicting network teardown operation flags", async () => {
+    const result = await runCrucibleCli(["net:teardown", "--dry-run", "--apply"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("net:teardown accepts only one of --dry-run or --apply");
   });
 
   it("prints alternate Windows Server manual-download instructions", async () => {

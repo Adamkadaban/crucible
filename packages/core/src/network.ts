@@ -94,7 +94,7 @@ export type QemuNetworkPlan = {
 
 export type NetworkTeardownPlan = {
   readonly owner: NetworkOwnerTag;
-  readonly firewallRuleIds: readonly string[];
+  readonly firewallCommandIds: readonly string[];
   readonly interfaceNames: readonly string[];
 };
 
@@ -180,7 +180,7 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
     firewall,
     teardown: {
       owner,
-      firewallRuleIds: firewall.rules.map((rule) => rule.id),
+      firewallCommandIds: firewall.teardown.map((command) => command.ruleId),
       interfaceNames: qemu.backend === "tap" ? [`${netdevId}-tap`] : [],
     },
     warnings: buildNetworkWarnings(mode),
@@ -213,17 +213,16 @@ export function buildNetworkTeardownOutputModel(
     owner: options.plan.teardown.owner,
     commands,
     refused,
-    warnings:
-      refused.length > 0 ? ["Skipped resources that were not owned by this Crucible plan"] : [],
+    warnings: refused.length > 0 ? ["Skipped resources outside this teardown contract"] : [],
   };
 }
 
 function buildExpectedTeardownResources(plan: NetworkPlan): readonly NetworkTeardownResource[] {
   return [
-    ...plan.firewall.teardown.map((command) => ({
+    ...plan.teardown.firewallCommandIds.map((ruleId) => ({
       kind: "firewall" as const,
-      ruleId: command.ruleId,
-      owner: command.owner,
+      ruleId,
+      owner: plan.teardown.owner,
     })),
     ...plan.teardown.interfaceNames.map((name) => ({
       kind: "interface" as const,

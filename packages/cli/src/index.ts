@@ -378,6 +378,7 @@ function renderNetTeardown(model: NetworkTeardownOutputModel): string {
     `Owner: ${model.owner.project}/${model.owner.vmName}/${model.owner.resourceId}`,
     "Missing resources: ignored",
     "Refuses resources outside this owner and teardown contract.",
+    "Phase 2 print-only: no privileged host changes are executed.",
     "",
     model.operation === "dry-run" ? "Dry-run commands:" : "Apply commands:",
     ...model.commands.map(formatNetworkTeardownCommand),
@@ -514,16 +515,28 @@ function parseNetTeardownArgs(
   let mode = defaultMode;
   let firewallBackend: FirewallBackend = "nftables";
   let operation: FirewallOperationMode = "dry-run";
+  let sawDryRun = false;
+  let sawApply = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
     if (arg === "--dry-run") {
+      if (sawApply) {
+        return { ok: false, message: "net:teardown accepts only one of --dry-run or --apply" };
+      }
+
+      sawDryRun = true;
       operation = "dry-run";
       continue;
     }
 
     if (arg === "--apply") {
+      if (sawDryRun) {
+        return { ok: false, message: "net:teardown accepts only one of --dry-run or --apply" };
+      }
+
+      sawApply = true;
       operation = "apply";
       continue;
     }
