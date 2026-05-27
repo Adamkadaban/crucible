@@ -7,10 +7,12 @@ import {
   buildMediaCachePlan,
   buildProvisioningPlan,
   buildQemuCommandPlan,
+  CrucibleError,
   FIREWALL_BACKENDS,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
   NETWORK_MODES,
+  normalizeSnapshotName,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
   SnapshotManager,
@@ -352,7 +354,7 @@ function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
     `clean: ${result.snapshot.clean ? "yes" : "no"}`,
     `mode: ${result.snapshot.mode ?? "unknown"}`,
     `base disk: ${result.snapshot.baseDiskPath}`,
-    `artifact manifest path: ${result.snapshot.path}`,
+    `snapshot artifact path: ${result.snapshot.path}`,
     `qmp commands: ${result.qmpCommands.length > 0 ? result.qmpCommands.join(", ") : "none"}`,
     `qcow2 commands: ${result.qcow2Commands.length > 0 ? result.qcow2Commands.map(formatCommandPlan).join("; ") : "none"}`,
   ].join("\n");
@@ -589,9 +591,16 @@ function parseSnapshotNameArgs(args: readonly string[], command: string): Snapsh
     return { ok: true, name: "clean-base" };
   }
 
-  const [name] = args;
-  if (args.length === 1 && name !== undefined && !name.startsWith("-")) {
-    return { ok: true, name };
+  const [candidate] = args;
+  if (args.length === 1 && candidate !== undefined && !candidate.startsWith("-")) {
+    try {
+      return { ok: true, name: normalizeSnapshotName(candidate) };
+    } catch (error) {
+      if (error instanceof CrucibleError && error.code === "CONFIG_INVALID") {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
   }
 
   return { ok: false, message: `${command} accepts at most one snapshot name` };

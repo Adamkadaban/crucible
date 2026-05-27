@@ -359,7 +359,7 @@ describe("crucible CLI bootstrap", () => {
           {
             kind: "snapshot",
             name: "clean-base",
-            path: path.join(root, "snapshots", "clean-base.qcow2-internal"),
+            path: path.join(root, "artifacts", "disks", "test-win.qcow2"),
             createdAt: "2026-05-27T00:00:00.000Z",
             baseDiskPath: path.join(root, "artifacts", "disks", "test-win.qcow2"),
             clean: true,
@@ -382,5 +382,12 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("snapshot:restore accepts at most one snapshot name");
+  });
+
+  it("reports unsafe snapshot names as argument validation errors", async () => {
+    const result = await runCrucibleCli(["snapshot:create", "../escape"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Snapshot names must be 1-64 characters");
   });
 });

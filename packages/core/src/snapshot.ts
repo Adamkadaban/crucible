@@ -106,6 +106,7 @@ export class SnapshotManager {
   async restore(name = CLEAN_BASE_SNAPSHOT_NAME): Promise<SnapshotRestoreResult> {
     const snapshotName = normalizeSnapshotName(name);
     const snapshot = await this.#findSnapshot(snapshotName);
+    this.#validateSnapshotDisk(snapshot);
     const qmpCommands: string[] = [];
     const qcow2Commands: ProcessCommand[] = [];
     const qmp = this.#qmpClientFactory(this.#paths.qmpSocket, this.#config.qmp.timeoutMs);
@@ -127,7 +128,7 @@ export class SnapshotManager {
           "snapshot",
           "-a",
           snapshotName,
-          this.#plan.disk.path,
+          snapshot.baseDiskPath,
         ]);
         qcow2Commands.push(command);
         await runChecked(this.#processRunner, command);
@@ -170,6 +171,20 @@ export class SnapshotManager {
     return snapshot;
   }
 
+  #validateSnapshotDisk(snapshot: SnapshotRecord): void {
+    if (path.resolve(snapshot.baseDiskPath) !== path.resolve(this.#plan.disk.path)) {
+      throw new CrucibleError(
+        "STATE_INVALID",
+        "Snapshot base disk does not match current VM disk",
+        {
+          snapshot: snapshot.name,
+          snapshotBaseDiskPath: snapshot.baseDiskPath,
+          currentDiskPath: this.#plan.disk.path,
+        },
+      );
+    }
+  }
+
   async #writeSnapshotRecord(
     name: string,
     mode: SnapshotMode = "offline-qcow2",
@@ -180,7 +195,7 @@ export class SnapshotManager {
     const snapshot: SnapshotRecord = {
       kind: "snapshot",
       name,
-      path: path.join(this.#config.artifacts.snapshotsDirectory, `${name}.qcow2-internal`),
+      path: this.#plan.disk.path,
       createdAt: restoredAt === undefined ? now : (findExistingCreatedAt(name, manifest) ?? now),
       baseDiskPath: this.#plan.disk.path,
       clean: name === CLEAN_BASE_SNAPSHOT_NAME,
@@ -338,8 +353,17 @@ function isSnapshotRecord(record: unknown): record is SnapshotRecord {
     record.kind === "snapshot" &&
     "name" in record &&
     typeof record.name === "string" &&
+    "path" in record &&
+    typeof record.path === "string" &&
+    "createdAt" in record &&
+    typeof record.createdAt === "string" &&
     "baseDiskPath" in record &&
-    typeof record.baseDiskPath === "string"
+    typeof record.baseDiskPath === "string" &&
+    "clean" in record &&
+    typeof record.clean === "boolean" &&
+    (!("mode" in record) || record.mode === "online-qmp" || record.mode === "offline-qcow2") &&
+    (!("qemuTag" in record) || typeof record.qemuTag === "string") &&
+    (!("restoredAt" in record) || typeof record.restoredAt === "string")
   );
 }
 

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { parseCrucibleConfig } from "./config.js";
 import type { VmQmpClientFactory, VmQmpSession } from "./lifecycle.js";
-import type { ArtifactManifest } from "./manifest.js";
+import type { ArtifactManifest, SnapshotRecord } from "./manifest.js";
 import type { ProcessCommand, ProcessRunner } from "./process.js";
 import { buildQemuCommandPlan } from "./qemu.js";
 import { CLEAN_BASE_SNAPSHOT_NAME, normalizeSnapshotName, SnapshotManager } from "./snapshot.js";
@@ -120,6 +120,41 @@ describe("SnapshotManager", () => {
     expect(harness.processCommands).toEqual(result.qcow2Commands);
   });
 
+  it("rejects restore when manifest snapshot disk does not match the current VM disk", async () => {
+    const harness = await createSnapshotHarness({ qmpConnectError: new Error("no qmp") });
+    await writeManifest(harness.config.artifacts.manifestPath, {
+      version: 1,
+      vmName: "snapshot-test",
+      artifacts: [
+        snapshotRecord({
+          kind: "snapshot",
+          name: "clean-base",
+          path: "/other/disk.qcow2",
+          createdAt: "2026-05-27T00:00:00.000Z",
+          baseDiskPath: "/other/disk.qcow2",
+          clean: true,
+          mode: "offline-qcow2",
+        }),
+      ],
+    });
+
+    await expect(harness.manager.restore("clean-base")).rejects.toMatchObject({
+      code: "STATE_INVALID",
+      message: "Snapshot base disk does not match current VM disk",
+    });
+  });
+
+  it("ignores malformed snapshot entries from the artifact manifest", async () => {
+    const harness = await createSnapshotHarness();
+    await writeManifest(harness.config.artifacts.manifestPath, {
+      version: 1,
+      vmName: "snapshot-test",
+      artifacts: [{ kind: "snapshot", name: "bad", baseDiskPath: harness.plan.disk.path } as never],
+    });
+
+    await expect(harness.manager.list()).resolves.toEqual([]);
+  });
+
   it("rejects unknown and unsafe snapshot names", async () => {
     const harness = await createSnapshotHarness();
 
@@ -227,4 +262,14 @@ async function createTempDir(): Promise<string> {
 
 async function readJson<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+async function writeManifest(filePath: string, manifest: ArtifactManifest): Promise<void> {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(manifest), "utf8");
+}
+
+function snapshotRecord(record: SnapshotRecord): SnapshotRecord {
+  return record;
 }
