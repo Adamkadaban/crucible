@@ -156,6 +156,33 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("does not attribute events received after a response in the same buffer", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", (request) => {
+        connection.sendMany([
+          { event: "STOP", data: { reason: "debug" } },
+          { return: { status: "paused" }, id: request.id },
+          { event: "RESUME" },
+        ]);
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("query-status")).resolves.toMatchObject({
+      events: [{ event: "STOP", data: { reason: "debug" } }],
+    });
+    expect(client.drainEvents()).toEqual([{ event: "RESUME" }]);
+
+    client.close();
+    await server.close();
+  });
+
   it("returns structured QMP command errors", async () => {
     const server = await createFakeQmpServer((connection) => {
       connection.send(capturedGreeting);
@@ -251,6 +278,28 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("allows many generated IDs without recording them as caller supplied IDs", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", (request) => {
+        connection.send({ return: { status: "running" }, id: request.id });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("query-status")).resolves.toMatchObject({ id: "crucible-2" });
+    await expect(client.execute("query-status")).resolves.toMatchObject({ id: "crucible-3" });
+    await expect(client.execute("query-status")).resolves.toMatchObject({ id: "crucible-4" });
+
+    client.close();
+    await server.close();
+  });
+
   it("serializes commands and attributes events to the active command", async () => {
     const queryBlockResponses: Array<() => void> = [];
     const server = await createFakeQmpServer((connection) => {
@@ -333,6 +382,10 @@ describe("QmpClient", () => {
     await expect(client.execute("quit")).rejects.toMatchObject({ code: "QMP_DISCONNECTED" });
     await expect(client.execute("query-status")).rejects.toMatchObject({
       code: "QMP_DISCONNECTED",
+    });
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+      message: "QMP socket closed",
     });
 
     client.close();
@@ -426,6 +479,7 @@ type QmpRequest = {
 
 type FakeQmpConnection = {
   readonly send: (message: Record<string, unknown>) => void;
+  readonly sendMany: (messages: readonly Record<string, unknown>[]) => void;
   readonly onCommand: (command: string, handler: (request: QmpRequest) => void) => void;
   readonly close: () => void;
   readonly destroyWithError: () => void;
@@ -451,6 +505,8 @@ async function createFakeQmpServer(
     const handlers = new Map<string, (request: QmpRequest) => void>();
     const connection: FakeQmpConnection = {
       send: (message) => socket.write(`${JSON.stringify(message)}\r\n`),
+      sendMany: (messages) =>
+        socket.write(messages.map((message) => JSON.stringify(message)).join("\r\n") + "\r\n"),
       onCommand: (command, handler) => handlers.set(command, handler),
       close: () => socket.end(),
       destroyWithError: () => {

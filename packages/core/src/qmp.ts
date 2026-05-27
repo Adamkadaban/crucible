@@ -35,7 +35,8 @@ export type QmpCommandResult<T = unknown> = {
 
 type PendingCommand = {
   readonly id: QmpRequestId;
-  readonly resolve: (message: QmpReturnMessage) => void;
+  readonly eventStart: number;
+  readonly resolve: (message: SettledQmpReturnMessage) => void;
   readonly reject: (error: unknown) => void;
   readonly timeout: NodeJS.Timeout;
 };
@@ -43,6 +44,10 @@ type PendingCommand = {
 type QmpReturnMessage = {
   readonly returnValue: unknown;
   readonly id?: QmpRequestId;
+};
+
+type SettledQmpReturnMessage = QmpReturnMessage & {
+  readonly events: readonly QmpEvent[];
 };
 
 type QmpErrorMessage = {
@@ -78,7 +83,7 @@ export class QmpClient {
       }
     | undefined;
   readonly #pending = new Map<QmpRequestId, PendingCommand>();
-  readonly #usedIds = new Set<QmpRequestId>();
+  readonly #usedCallerIds = new Set<QmpRequestId>();
   readonly #events: QmpEvent[] = [];
   #commandQueue = Promise.resolve();
 
@@ -89,9 +94,7 @@ export class QmpClient {
     this.#socket.setEncoding("utf8");
     this.#socket.on("data", (chunk) => this.#handleData(chunk));
     this.#socket.on("error", (error) => {
-      this.#connected = false;
-      this.#ready = false;
-      this.#failAll(
+      this.#disconnectPermanently(
         qmpError("QMP_DISCONNECTED", "QMP socket error", {
           cause: error.message,
           code: "code" in error ? error.code : undefined,
@@ -99,9 +102,7 @@ export class QmpClient {
       );
     });
     this.#socket.on("close", () => {
-      this.#connected = false;
-      this.#ready = false;
-      this.#failAll(qmpError("QMP_DISCONNECTED", "QMP socket closed"));
+      this.#disconnectPermanently(qmpError("QMP_DISCONNECTED", "QMP socket closed"));
     });
   }
 
@@ -179,17 +180,20 @@ export class QmpClient {
       throw qmpError("QMP_DISCONNECTED", "QMP socket is not connected");
     }
 
+    const callerSuppliedId = options.id !== undefined;
     const id = options.id ?? this.#nextRequestId();
-    if (this.#pending.has(id) || this.#usedIds.has(id)) {
+    if (this.#pending.has(id) || this.#usedCallerIds.has(id)) {
       throw qmpError("QMP_PROTOCOL_ERROR", `duplicate QMP request id: ${String(id)}`, { id });
     }
-    this.#usedIds.add(id);
+    if (callerSuppliedId) {
+      this.#usedCallerIds.add(id);
+    }
 
     const request =
       args === undefined ? { execute: command, id } : { execute: command, arguments: args, id };
     const eventStart = this.#events.length;
 
-    const response = await new Promise<QmpReturnMessage>((resolve, reject) => {
+    const response = await new Promise<SettledQmpReturnMessage>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.#pending.delete(id);
         reject(
@@ -200,15 +204,14 @@ export class QmpClient {
         );
       }, this.#timeoutFor(options));
 
-      this.#pending.set(id, { id, resolve, reject, timeout });
+      this.#pending.set(id, { id, eventStart, resolve, reject, timeout });
       this.#socket.write(`${JSON.stringify(request)}\r\n`);
     });
 
-    const pendingEvents = this.#events.splice(eventStart, this.#events.length - eventStart);
     return {
       id,
       returnValue: response.returnValue as T,
-      events: pendingEvents,
+      events: response.events,
     };
   }
 
@@ -221,6 +224,8 @@ export class QmpClient {
     this.#terminalError = error;
     this.#connected = false;
     this.#ready = false;
+    this.#greeting = undefined;
+    this.#usedCallerIds.clear();
     this.#failAll(error);
     this.#socket.destroy();
   }
@@ -388,11 +393,12 @@ export class QmpClient {
 
   #settlePendingReturn(response: QmpReturnMessage): void {
     const pending = this.#takePending(response.id);
-    pending.resolve(response);
+    pending.resolve({ ...response, events: this.#takePendingEvents(pending) });
   }
 
   #settlePendingError(id: QmpRequestId | undefined, error: unknown): void {
     const pending = this.#takePending(id);
+    this.#takePendingEvents(pending);
     pending.reject(error);
   }
 
@@ -414,16 +420,32 @@ export class QmpClient {
     return pending;
   }
 
+  #takePendingEvents(pending: PendingCommand): readonly QmpEvent[] {
+    return this.#events.splice(pending.eventStart, this.#events.length - pending.eventStart);
+  }
+
   #failAll(error: unknown): void {
     this.#greetingWaiter?.reject(error);
     this.#greetingWaiter = undefined;
     this.#greetingPromise = undefined;
+    this.#readyPromise = undefined;
 
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(error);
     }
     this.#pending.clear();
+  }
+
+  #disconnectPermanently(error: CrucibleError): void {
+    if (this.#terminalError === undefined) {
+      this.#terminalError = error;
+    }
+    this.#connected = false;
+    this.#ready = false;
+    this.#greeting = undefined;
+    this.#usedCallerIds.clear();
+    this.#failAll(error);
   }
 
   #destroyPermanently(error: CrucibleError): void {
@@ -434,6 +456,8 @@ export class QmpClient {
     });
     this.#connected = false;
     this.#ready = false;
+    this.#greeting = undefined;
+    this.#usedCallerIds.clear();
     this.#failAll(error);
     this.#socket.destroy();
   }
