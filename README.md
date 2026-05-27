@@ -99,6 +99,18 @@ overrides must point to `.iso` files, case-insensitively. Driver bundle override
 blocked, place manually downloaded files at the cache paths printed by
 `crucible media:plan --manual` or point `crucible.config.json` at operator-managed paths.
 
+## QMP Control
+
+Crucible controls QEMU through the local Unix socket at `qmp.socketPath`, defaulting to
+`artifacts/qmp.sock`. The QMP client waits for QEMU's greeting, sends `qmp_capabilities`, adds
+request IDs to commands, collects asynchronous events, and reports structured timeout, parse,
+protocol, connection, and command errors.
+
+The default QMP timeout is `5000` ms for connection, greeting negotiation, capabilities negotiation,
+and commands. The parser rejects malformed JSON and unknown top-level message fields conservatively
+while leaving command-specific payloads opaque for QEMU version compatibility. See
+[`docs/protocol.md`](./docs/protocol.md) for details.
+
 ## QEMU Dry Runs
 
 `crucible vm:create --dry-run` renders the planned qcow2 creation and QEMU command without launching

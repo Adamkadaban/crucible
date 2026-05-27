@@ -38,6 +38,20 @@ export type {
   ProcessResult,
   ProcessRunner,
 } from "./process.js";
+export {
+  DEFAULT_QMP_MAX_BUFFER_BYTES,
+  DEFAULT_QMP_TIMEOUT_MS,
+  parseQmpMessage,
+  QmpClient,
+} from "./qmp.js";
+export type {
+  QmpClientOptions,
+  QmpCommandOptions,
+  QmpCommandResult,
+  QmpEvent,
+  QmpGreeting,
+  QmpRequestId,
+} from "./qmp.js";
 export { buildQemuCommandPlan, renderQemuCreateDryRun, renderQemuStartDryRun } from "./qemu.js";
 export type { QemuCommandPlan, QemuDiskPlan, QemuPlanOptions, QemuSocketPlan } from "./qemu.js";
 

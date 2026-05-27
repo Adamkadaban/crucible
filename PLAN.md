@@ -165,7 +165,7 @@ real VM.
       override paths for custom ISOs.
 - [x] Implement QEMU command builder with KVM acceleration, qcow2 disks, virtio-net, virtio-blk or
       virtio-scsi, virtio-serial, QMP socket, and QGA channel.
-- [ ] Implement QMP client with greeting negotiation, request IDs, timeout handling, event
+- [x] Implement QMP client with greeting negotiation, request IDs, timeout handling, event
       collection, and structured errors.
 - [ ] Implement lifecycle manager for create, start, stop, poweroff, kill-after-timeout, status, and
       cleanup.

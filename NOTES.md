@@ -14,3 +14,9 @@ casing before comparison.
 
 **Resolution:** The local shell initially reported Node 20, but the project now pins `.nvmrc` to
 Node 24.16.0 so Vitest 4 and current tooling run cleanly. `.nvmrc:1` · PR #5
+
+## 2026-05-27 — Node socket write callback is not error-first
+
+**Resolution:** QMP socket writes must rely on socket `error` events rather than treating the
+`socket.write` callback as `(error) => void`; the callback receives no argument on successful flush.
+`packages/core/src/qmp.ts` · issue #11
