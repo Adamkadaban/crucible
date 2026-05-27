@@ -7,6 +7,25 @@ export {
 export type { CrucibleConfig, CrucibleConfigInput } from "./config.js";
 export { CrucibleError } from "./errors.js";
 export type { CrucibleErrorCode } from "./errors.js";
+export { buildLifecyclePaths, VmLifecycleManager } from "./lifecycle.js";
+export type {
+  SpawnedVmProcess,
+  VmCleanupResult,
+  VmLifecycleManagerOptions,
+  VmLifecyclePaths,
+  VmLifecycleState,
+  VmLifecycleStateManifest,
+  VmProcessController,
+  VmProcessSpawner,
+  VmQmpClientFactory,
+  VmQmpSession,
+  VmRuntimeStatus,
+  VmSpawnRequest,
+  VmStartResult,
+  VmStatus,
+  VmStopMode,
+  VmStopResult,
+} from "./lifecycle.js";
 export {
   buildMediaCachePlan,
   DEFAULT_MEDIA_CACHE_DIR,
