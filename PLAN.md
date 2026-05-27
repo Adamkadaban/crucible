@@ -159,7 +159,7 @@ real VM.
 - [x] Define `crucible.config.json` schema for VM name, CPU, memory, disk, default media cache,
       optional Windows ISO path or URL, optional virtio ISO path or URL, virtio device preferences,
       extra QEMU args, networking mode, QMP socket path, QGA socket path, and artifact directories.
-- [ ] Implement media cache planning for Windows 11 Enterprise Evaluation ISO and stable virtio-win
+- [x] Implement media cache planning for Windows 11 Enterprise Evaluation ISO and stable virtio-win
       ISO defaults, with Windows Server as an alternate profile, checksum metadata when available,
       manual-download instructions when automated downloads are blocked, and explicit operator
       override paths for custom ISOs.
