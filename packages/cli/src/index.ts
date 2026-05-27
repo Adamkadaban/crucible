@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   buildNetworkPlan,
+  buildNetworkTeardownOutputModel,
   buildMediaCachePlan,
   buildQemuCommandPlan,
   FIREWALL_BACKENDS,
@@ -14,9 +15,12 @@ import {
   type CrucibleConfig,
   type FirewallBackend,
   type FirewallCommandPlan,
+  type FirewallOperationMode,
   type MediaCacheEntry,
   type MediaProfileName,
   type NetworkMode,
+  type NetworkTeardownCommandPlan,
+  type NetworkTeardownOutputModel,
   type VmStatus,
   type VmStopResult,
   VmLifecycleManager,
@@ -45,6 +49,12 @@ type NetPlanArgs = {
   readonly includeApply: boolean;
 };
 
+type NetTeardownArgs = {
+  readonly mode: NetworkMode;
+  readonly firewallBackend: FirewallBackend;
+  readonly operation: FirewallOperationMode;
+};
+
 export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
@@ -61,6 +71,8 @@ export async function runCrucibleCli(
       return renderMediaPlanCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
+    case "net:teardown":
+      return renderNetTeardownCommand(rest, runtime);
     case "vm:create":
       return runVmCreateCommand(rest, runtime);
     case "vm:start":
@@ -300,6 +312,28 @@ function renderNetPlanCommand(args: readonly string[], runtime: CliRuntime): Com
   return { exitCode: 0, stdout: renderNetPlan(plan, parsed.args), stderr: "" };
 }
 
+function renderNetTeardownCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  const config = getRuntimeConfig(runtime);
+  const parsed = parseNetTeardownArgs(args, config.network.mode);
+
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const plan = buildNetworkPlan({
+    config: { ...config.network, mode: parsed.args.mode },
+    firewallBackend: parsed.args.firewallBackend,
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  const model = buildNetworkTeardownOutputModel({
+    operation: parsed.args.operation,
+    plan,
+  });
+
+  return { exitCode: 0, stdout: renderNetTeardown(model), stderr: "" };
+}
+
 function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanArgs): string {
   const lines = [
     `Network mode: ${plan.mode}`,
@@ -338,8 +372,47 @@ function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanA
   return lines.join("\n");
 }
 
+function renderNetTeardown(model: NetworkTeardownOutputModel): string {
+  const lines = [
+    `Network teardown ${model.operation}:`,
+    `Owner: ${model.owner.project}/${model.owner.vmName}/${model.owner.resourceId}`,
+    "Missing resources: ignored",
+    "Refuses resources outside this owner and teardown contract.",
+    "Phase 2 print-only: no privileged host changes are executed.",
+    "",
+    model.operation === "dry-run" ? "Dry-run commands:" : "Apply commands:",
+    ...model.commands.map(formatNetworkTeardownCommand),
+  ];
+
+  if (model.refused.length > 0) {
+    lines.push(
+      "",
+      "Refused resources:",
+      ...model.refused.map(
+        (refusal) => `- ${formatTeardownResource(refusal.resource)}: ${refusal.reason}`,
+      ),
+    );
+  }
+
+  if (model.warnings.length > 0) {
+    lines.push("", "Warnings:", ...model.warnings.map((warning) => `- ${warning}`));
+  }
+
+  return lines.join("\n");
+}
+
 function formatFirewallCommand(command: FirewallCommandPlan): string {
   return `- ${command.ruleId}: ${formatCommand(command.argv)}`;
+}
+
+function formatNetworkTeardownCommand(command: NetworkTeardownCommandPlan): string {
+  return `- ${formatTeardownResource(command.resource)}: ${formatCommand(command.argv)}`;
+}
+
+function formatTeardownResource(resource: NetworkTeardownCommandPlan["resource"]): string {
+  return resource.kind === "firewall"
+    ? `firewall ${resource.ruleId}`
+    : `interface ${resource.name}`;
 }
 
 function formatCommand(argv: readonly string[]): string {
@@ -378,6 +451,10 @@ type MediaPlanArgsResult =
 
 type NetPlanArgsResult =
   | { readonly ok: true; readonly args: NetPlanArgs }
+  | { readonly ok: false; readonly message: string };
+
+type NetTeardownArgsResult =
+  | { readonly ok: true; readonly args: NetTeardownArgs }
   | { readonly ok: false; readonly message: string };
 
 function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): NetPlanArgsResult {
@@ -429,6 +506,77 @@ function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): Ne
   }
 
   return { ok: true, args: { mode, firewallBackend, includeApply } };
+}
+
+function parseNetTeardownArgs(
+  args: readonly string[],
+  defaultMode: NetworkMode,
+): NetTeardownArgsResult {
+  let mode = defaultMode;
+  let firewallBackend: FirewallBackend = "nftables";
+  let operation: FirewallOperationMode = "dry-run";
+  let sawDryRun = false;
+  let sawApply = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--dry-run") {
+      if (sawApply) {
+        return { ok: false, message: "net:teardown accepts only one of --dry-run or --apply" };
+      }
+
+      sawDryRun = true;
+      operation = "dry-run";
+      continue;
+    }
+
+    if (arg === "--apply") {
+      if (sawDryRun) {
+        return { ok: false, message: "net:teardown accepts only one of --dry-run or --apply" };
+      }
+
+      sawApply = true;
+      operation = "apply";
+      continue;
+    }
+
+    if (arg === "--mode") {
+      const value = args[index + 1];
+
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --mode" };
+      }
+
+      if (!isNetworkMode(value)) {
+        return { ok: false, message: `Unknown network mode: ${value}` };
+      }
+
+      mode = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--backend") {
+      const value = args[index + 1];
+
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --backend" };
+      }
+
+      if (!isFirewallBackend(value)) {
+        return { ok: false, message: `Unknown firewall backend: ${value}` };
+      }
+
+      firewallBackend = value;
+      index += 1;
+      continue;
+    }
+
+    return { ok: false, message: `Unknown net:teardown option: ${arg}` };
+  }
+
+  return { ok: true, args: { mode, firewallBackend, operation } };
 }
 
 function isNetworkMode(value: string): value is NetworkMode {
@@ -500,6 +648,7 @@ function getHelpText(): string {
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
+    "  crucible net:teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
     "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
     "  crucible vm:start [--dry-run] Print or run the planned QEMU argv and sockets",
     "  crucible vm:stop [--poweroff|--kill]",

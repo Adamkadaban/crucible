@@ -25,3 +25,9 @@ Node 24.16.0 so Vitest 4 and current tooling run cleanly. `.nvmrc:1` · PR #5
 
 **Resolution:** Issue #10 is lifecycle CLI/docs and depends on the lifecycle manager; issue #12 is
 the owner-authored lifecycle manager scope implemented in this branch. `PLAN.md:170` · issue #12
+
+## 2026-05-27 — Copilot manual re-review can be unavailable
+
+**Resolution:** Initial Copilot review worked through PR auto-request, but manual re-request after
+fixes returned `requested:false` because Copilot is not enabled as a repo collaborator for manual
+requests; resolve initial threads and report the re-review blocker. `AGENTS.md:70` · PR #52

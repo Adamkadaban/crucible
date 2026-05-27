@@ -64,6 +64,7 @@ export type FirewallCommandPlan = {
   readonly operation: FirewallOperationMode;
   readonly argv: readonly string[];
   readonly description: string;
+  readonly missingResourceOk?: boolean;
   readonly owner: NetworkOwnerTag;
 };
 
@@ -93,8 +94,49 @@ export type QemuNetworkPlan = {
 
 export type NetworkTeardownPlan = {
   readonly owner: NetworkOwnerTag;
-  readonly firewallRuleIds: readonly string[];
+  readonly firewallCommandIds: readonly string[];
   readonly interfaceNames: readonly string[];
+};
+
+export type NetworkTeardownResource =
+  | {
+      readonly kind: "firewall";
+      readonly ruleId: string;
+      readonly owner: NetworkOwnerTag;
+    }
+  | {
+      readonly kind: "interface";
+      readonly name: string;
+      readonly owner: NetworkOwnerTag;
+    };
+
+export type NetworkTeardownRefusal = {
+  readonly resource: NetworkTeardownResource;
+  readonly reason: string;
+};
+
+export type NetworkTeardownCommandPlan = {
+  readonly id: string;
+  readonly operation: FirewallOperationMode;
+  readonly argv: readonly string[];
+  readonly description: string;
+  readonly missingResourceOk: true;
+  readonly owner: NetworkOwnerTag;
+  readonly resource: NetworkTeardownResource;
+};
+
+export type NetworkTeardownOutputModel = {
+  readonly operation: FirewallOperationMode;
+  readonly owner: NetworkOwnerTag;
+  readonly commands: readonly NetworkTeardownCommandPlan[];
+  readonly refused: readonly NetworkTeardownRefusal[];
+  readonly warnings: readonly string[];
+};
+
+export type NetworkTeardownOptions = {
+  readonly plan: NetworkPlan;
+  readonly operation?: FirewallOperationMode;
+  readonly discoveredResources?: readonly NetworkTeardownResource[];
 };
 
 export type NetworkPlan = {
@@ -138,10 +180,131 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
     firewall,
     teardown: {
       owner,
-      firewallRuleIds: firewall.rules.map((rule) => rule.id),
+      firewallCommandIds: firewall.teardown.map((command) => command.ruleId),
       interfaceNames: qemu.backend === "tap" ? [`${netdevId}-tap`] : [],
     },
     warnings: buildNetworkWarnings(mode),
+  };
+}
+
+export function buildNetworkTeardownOutputModel(
+  options: NetworkTeardownOptions,
+): NetworkTeardownOutputModel {
+  const operation = options.operation ?? "dry-run";
+  const expectedResources = buildExpectedTeardownResources(options.plan);
+  const resources = options.discoveredResources ?? expectedResources;
+  const expectedResourceKeys = new Set(expectedResources.map(teardownResourceKey));
+  const commands: NetworkTeardownCommandPlan[] = [];
+  const refused: NetworkTeardownRefusal[] = [];
+
+  for (const resource of resources) {
+    const refusal = teardownResourceRefusal(resource, options.plan, expectedResourceKeys);
+
+    if (refusal !== undefined) {
+      refused.push({ resource, reason: refusal });
+      continue;
+    }
+
+    commands.push(buildNetworkTeardownCommand(resource, options.plan, operation));
+  }
+
+  return {
+    operation,
+    owner: options.plan.teardown.owner,
+    commands,
+    refused,
+    warnings: refused.length > 0 ? ["Skipped resources outside this teardown contract"] : [],
+  };
+}
+
+function buildExpectedTeardownResources(plan: NetworkPlan): readonly NetworkTeardownResource[] {
+  return [
+    ...plan.teardown.firewallCommandIds.map((ruleId) => ({
+      kind: "firewall" as const,
+      ruleId,
+      owner: plan.teardown.owner,
+    })),
+    ...plan.teardown.interfaceNames.map((name) => ({
+      kind: "interface" as const,
+      name,
+      owner: plan.teardown.owner,
+    })),
+  ];
+}
+
+function teardownResourceRefusal(
+  resource: NetworkTeardownResource,
+  plan: NetworkPlan,
+  expectedResourceKeys: ReadonlySet<string>,
+): string | undefined {
+  if (!sameNetworkOwner(resource.owner, plan.teardown.owner)) {
+    return "owner tag does not match this network plan";
+  }
+
+  if (!expectedResourceKeys.has(teardownResourceKey(resource))) {
+    return "resource is not listed in this network plan teardown contract";
+  }
+
+  if (resource.kind === "interface" && resource.name !== `${plan.teardown.owner.resourceId}-tap`) {
+    return "interface name is broader than the project-owned tap name";
+  }
+
+  return undefined;
+}
+
+function sameNetworkOwner(left: NetworkOwnerTag, right: NetworkOwnerTag): boolean {
+  return (
+    left.project === right.project &&
+    left.vmName === right.vmName &&
+    left.resourceId === right.resourceId
+  );
+}
+
+function teardownResourceKey(resource: NetworkTeardownResource): string {
+  return resource.kind === "firewall"
+    ? `firewall:${resource.owner.project}:${resource.owner.vmName}:${resource.owner.resourceId}:${resource.ruleId}`
+    : `interface:${resource.owner.project}:${resource.owner.vmName}:${resource.owner.resourceId}:${resource.name}`;
+}
+
+function buildNetworkTeardownCommand(
+  resource: NetworkTeardownResource,
+  plan: NetworkPlan,
+  operation: FirewallOperationMode,
+): NetworkTeardownCommandPlan {
+  if (resource.kind === "firewall") {
+    const command = plan.firewall.teardown.find((entry) => entry.ruleId === resource.ruleId);
+
+    if (command === undefined) {
+      throw new CrucibleError(
+        "STATE_INVALID",
+        "Missing firewall teardown command for owned resource",
+        {
+          resource,
+        },
+      );
+    }
+
+    return {
+      id: `${command.id}-${operation}`,
+      operation,
+      argv: operation === "dry-run" ? previewFirewallCommand(command.argv) : command.argv,
+      description: command.description,
+      missingResourceOk: true,
+      owner: command.owner,
+      resource,
+    };
+  }
+
+  const argv = ["ip", "link", "delete", "dev", resource.name];
+
+  return {
+    id: `${resource.name}-interface-teardown-${operation}`,
+    operation,
+    argv: operation === "dry-run" ? previewFirewallCommand(argv) : argv,
+    description: `Remove project-owned tap interface ${resource.name}`,
+    missingResourceOk: true,
+    owner: resource.owner,
+    resource,
   };
 }
 
@@ -344,6 +507,7 @@ function buildFirewallTeardownCommandPlans(
         operation: "apply",
         argv: nftablesTeardownCommand(owner),
         description: "Remove project-owned nftables table and rules",
+        missingResourceOk: true,
         owner,
       },
     ];
@@ -356,6 +520,7 @@ function buildFirewallTeardownCommandPlans(
       operation: "apply" as const,
       argv: iptablesTeardownCommand(rule),
       description: `Remove project-owned rule: ${rule.description}`,
+      missingResourceOk: true,
       owner: rule.owner,
     })),
     ...iptablesSetupTeardownCommands(owner).map((argv, index) => ({
@@ -364,6 +529,7 @@ function buildFirewallTeardownCommandPlans(
       operation: "apply" as const,
       argv,
       description: "Remove project-owned iptables setup",
+      missingResourceOk: true,
       owner,
     })),
   ];

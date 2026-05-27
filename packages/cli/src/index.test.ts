@@ -82,11 +82,58 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("iptables -X FORWARD");
   });
 
+  it("prints network teardown dry-run by default", async () => {
+    const result = await runCrucibleCli(["net:teardown", "--mode", "capture"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network teardown dry-run:");
+    expect(result.stdout).toContain("Owner: crucible/test-win/crucible-test-win-net0");
+    expect(result.stdout).toContain("Missing resources: ignored");
+    expect(result.stdout).toContain("Phase 2 print-only: no privileged host changes are executed.");
+    expect(result.stdout).toContain("Dry-run commands:");
+    expect(result.stdout).toContain("interface crucible-test-win-net0-tap");
+    expect(result.stdout).toContain("printf");
+    expect(result.stdout).not.toContain("iptables -F");
+  });
+
+  it("prints network teardown apply model only when explicitly requested", async () => {
+    const result = await runCrucibleCli(
+      ["net:teardown", "--mode", "capture", "--backend", "iptables", "--apply"],
+      {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network teardown apply:");
+    expect(result.stdout).toContain("Phase 2 print-only: no privileged host changes are executed.");
+    expect(result.stdout).toContain("Apply commands:");
+    expect(result.stdout).toContain("iptables -D CRUCIBLE-CRUCIBLE-TEST-WIN-NET0");
+    expect(result.stdout).toContain("ip link delete dev crucible-test-win-net0-tap");
+    expect(result.stdout).not.toContain("iptables -X FORWARD");
+  });
+
   it("rejects unknown network plan options", async () => {
     const result = await runCrucibleCli(["net:plan", "--backend", "pf"]);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown firewall backend: pf");
+  });
+
+  it("rejects unknown network teardown options", async () => {
+    const result = await runCrucibleCli(["net:teardown", "--backend", "pf"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown firewall backend: pf");
+  });
+
+  it("rejects conflicting network teardown operation flags", async () => {
+    const result = await runCrucibleCli(["net:teardown", "--dry-run", "--apply"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("net:teardown accepts only one of --dry-run or --apply");
   });
 
   it("prints alternate Windows Server manual-download instructions", async () => {

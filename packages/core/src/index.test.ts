@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMediaCachePlan,
   buildNetworkPlan,
+  buildNetworkTeardownOutputModel,
   buildQemuCommandPlan,
   createEmptyArtifactManifest,
   CRUCIBLE_VERSION,
@@ -220,10 +221,7 @@ describe("core bootstrap exports", () => {
         vmName: "analysis-one",
         resourceId: "crucible-analysis-one-net0",
       },
-      firewallRuleIds: [
-        "crucible-analysis-one-net0-allow-host-control",
-        "crucible-analysis-one-net0-deny-guest-egress",
-      ],
+      firewallCommandIds: ["crucible-analysis-one-net0-table"],
       interfaceNames: [],
     });
   });
@@ -336,6 +334,73 @@ describe("core bootstrap exports", () => {
     ]);
     expect(plan.teardown.interfaceNames).toEqual(["crucible-analysis-one-net0-tap"]);
     expect(plan.firewall.rules.every((rule) => rule.owner.project === "crucible")).toBe(true);
+  });
+
+  it("builds idempotent network teardown dry-run and apply output models", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      firewallBackend: "iptables",
+      vmName: "analysis-one",
+    });
+
+    const dryRun = buildNetworkTeardownOutputModel({ plan });
+    const apply = buildNetworkTeardownOutputModel({ operation: "apply", plan });
+
+    expect(dryRun.operation).toBe("dry-run");
+    expect(apply.operation).toBe("apply");
+    expect(dryRun.commands.every((command) => command.missingResourceOk)).toBe(true);
+    expect(apply.commands.every((command) => command.missingResourceOk)).toBe(true);
+    expect(dryRun.commands.map((command) => command.resource)).toEqual(
+      apply.commands.map((command) => command.resource),
+    );
+    expect(dryRun.commands.map((command) => command.argv[0])).toEqual([
+      "printf",
+      "printf",
+      "printf",
+      "printf",
+      "printf",
+    ]);
+    expect(apply.commands.at(-1)).toMatchObject({
+      argv: ["ip", "link", "delete", "dev", "crucible-analysis-one-net0-tap"],
+      resource: {
+        kind: "interface",
+        name: "crucible-analysis-one-net0-tap",
+      },
+    });
+  });
+
+  it("refuses network teardown resources without exact project ownership", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "capture" }),
+      vmName: "analysis-one",
+    });
+    const model = buildNetworkTeardownOutputModel({
+      discoveredResources: [
+        {
+          kind: "interface",
+          name: "eth0",
+          owner: plan.teardown.owner,
+        },
+        {
+          kind: "firewall",
+          ruleId: plan.firewall.teardown[0]?.ruleId ?? "missing",
+          owner: {
+            project: "crucible",
+            vmName: "analysis-two",
+            resourceId: "crucible-analysis-two-net0",
+          },
+        },
+      ],
+      plan,
+    });
+
+    expect(model.commands).toEqual([]);
+    expect(model.refused).toEqual([
+      expect.objectContaining({
+        reason: "resource is not listed in this network plan teardown contract",
+      }),
+      expect.objectContaining({ reason: "owner tag does not match this network plan" }),
+    ]);
   });
 
   it("plans default isolated firewall as deny egress without broad deletion", () => {
