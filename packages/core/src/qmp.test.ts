@@ -849,13 +849,27 @@ async function createTempDir(): Promise<string> {
   return dir;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 1_000,
+  intervalMs = 10,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
+  while (true) {
     if (predicate()) {
       return;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
+    await sleep(Math.min(intervalMs, remainingMs));
   }
   throw new Error("condition was not met before timeout");
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
