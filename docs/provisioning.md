@@ -2,8 +2,8 @@
 
 Phase 3 provisioning is contract-first. The current implementation defines the machine-readable
 state, stage, script, result, and secret shapes that later work will execute against a real Windows
-VM. The WinDbg provisioning scripts now exist, but CI tests inspect them with host-only fakes
-instead of running a Windows VM.
+VM. WinDbg, account, and service provisioning scripts are present and fixture-tested, but CI tests
+inspect them with host-only fakes instead of running a Windows VM.
 
 ## State Machine
 
@@ -70,6 +70,12 @@ under the configured `artifacts.secretsDirectory`. Secret files are contractuall
 recorded as `credential` artifacts in the artifact manifest. Tool and script results must redact
 password, private-key, certificate PEM, and PFX password fields.
 
+`writeWindowsAccountSecrets` creates the standard and admin execution account JSON files under the
+host secrets root. The default account names are `CrucibleUser` and `CrucibleAdmin`. Passwords are
+generated on the host, meet Windows complexity requirements, and are not passed on PowerShell argv.
+The local-account script reads them from process environment variables named
+`CRUCIBLE_STANDARD_PASSWORD` and `CRUCIBLE_ADMIN_PASSWORD`.
+
 Defined secret kinds are:
 
 - `windows-standard-password`
@@ -81,8 +87,38 @@ Defined secret kinds are:
 - `mtls-guest-server-private-key`
 - `mtls-guest-server-certificate`
 
+## Local Accounts
+
+`guest/provision/create-local-accounts.ps1` creates or updates two local accounts:
+
+- `CrucibleUser` is a standard execution account and is removed from the local Administrators group
+  if it was previously elevated.
+- `CrucibleAdmin` is an admin execution account and is added to the local Administrators group.
+
+The script is idempotent and emits JSON with account names and privilege flags only. It does not
+print passwords. The provisioning executor must inject the two password environment variables from
+the matching host secret files and clear the environment after the QGA or guest-agent command exits.
+
+## Guest Agent Service
+
+`guest/provision/install-agent.ps1` registers `CrucibleGuestAgent` as an automatic Windows service
+after the guest agent executable and mTLS files have already been staged. It expects these files in
+`C:\ProgramData\Crucible\Agent\certs` by default:
+
+- `ca.cert.pem`
+- `guest-server.cert.pem`
+- `guest-server.key.pem`
+
+The service listener is bound to the configured guest control address and port. The Windows firewall
+rule is inbound TCP only, scoped to the configured local control address, local port, and the
+host-only source address. The script rejects wildcard host-only source addresses such as `0.0.0.0`
+or `::`.
+
+OpenSSH remains a bootstrap fallback for environments where QGA cannot complete early provisioning.
+It is not the steady-state control plane and is not opened by the account or service scripts.
+
 ## Not Implemented Yet
 
-The contracts intentionally stop before real provisioning execution. Later Phase 3 work will add the
-remaining PowerShell scripts, fake executors, real QGA and guest-service invocation, snapshot
-operations, health commands, and the real-VM phase exit test.
+The contracts and scripts intentionally stop before full provisioning execution. Later Phase 3 work
+will add the remaining PowerShell scripts, fake executors, real QGA and guest-service invocation,
+snapshot operations, health commands, and the real-VM phase exit test.

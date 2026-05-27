@@ -1,12 +1,18 @@
+import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  buildGuestAgentCertificateStagePlan,
   buildProvisioningPlan,
   buildProvisioningSecretStorageContract,
   canAdvanceProvisioningStage,
   createInitialProvisioningStateMachine,
   PROVISIONING_SECRET_KINDS,
   PROVISIONING_STAGE_IDS,
+  writeWindowsAccountSecrets,
 } from "./provisioning.js";
 
 describe("provisioning contracts", () => {
@@ -100,8 +106,12 @@ describe("provisioning contracts", () => {
       "Bypass",
       "-File",
       "guest/provision/install-agent.ps1",
+      "-ServiceName",
+      "CrucibleGuestAgent",
       "-ControlAddress",
       "192.0.2.2",
+      "-HostOnlySourceAddress",
+      "192.0.2.1",
       "-ControlPort",
       "9443",
     ]);
@@ -119,6 +129,12 @@ describe("provisioning contracts", () => {
       "windows-standard-password",
       "windows-admin-password",
     ]);
+    expect(localAccounts?.script?.environmentSecretRefs).toEqual([
+      "windows-standard-password",
+      "windows-admin-password",
+    ]);
+    expect(localAccounts?.script?.arguments).not.toContain("windows-standard-password");
+    expect(localAccounts?.script?.arguments).not.toContain("windows-admin-password");
 
     const snapshot = plan.stages.find((stage) => stage.id === "snapshot-prepared");
     expect(snapshot?.producesSnapshot).toBe(true);
@@ -165,4 +181,104 @@ describe("provisioning contracts", () => {
       true,
     );
   });
+
+  it("writes generated Windows account credentials only under host secrets", async () => {
+    const root = await mkdtempPath();
+    let counter = 0;
+    const result = await writeWindowsAccountSecrets({
+      vmName: "Analysis VM!",
+      secretsDirectory: path.join(root, "secrets"),
+      passwordLength: 24,
+      generatedAt: new Date("2026-05-27T00:00:00.000Z"),
+      randomBytes: (size) => Buffer.alloc(size, counter++),
+    });
+
+    expect(result.rootDirectory).toBe(path.join(root, "secrets", "analysis-vm"));
+    expect(result.accounts).toEqual([
+      expect.objectContaining({
+        username: "CrucibleUser",
+        principal: "standard",
+        path: path.join(root, "secrets", "analysis-vm", "windows", "standard-user.json"),
+        fileMode: "0600",
+      }),
+      expect.objectContaining({
+        username: "CrucibleAdmin",
+        principal: "admin",
+        path: path.join(root, "secrets", "analysis-vm", "windows", "admin-user.json"),
+        fileMode: "0600",
+      }),
+    ]);
+
+    const standard = JSON.parse(await readFile(result.accounts[0]?.path ?? "", "utf8")) as {
+      password: string;
+      principal: string;
+      generatedAt: string;
+    };
+    const admin = JSON.parse(await readFile(result.accounts[1]?.path ?? "", "utf8")) as {
+      password: string;
+      principal: string;
+      generatedAt: string;
+    };
+
+    expect(standard).toMatchObject({
+      principal: "standard",
+      generatedAt: "2026-05-27T00:00:00.000Z",
+    });
+    expect(admin).toMatchObject({ principal: "admin", generatedAt: "2026-05-27T00:00:00.000Z" });
+    expect(standard.password).toHaveLength(24);
+    expect(admin.password).toHaveLength(24);
+    expect(standard.password).not.toBe(admin.password);
+
+    const mode = (await stat(result.accounts[0]?.path ?? "")).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it("builds a deterministic guest certificate staging plan from host secrets", () => {
+    const plan = buildGuestAgentCertificateStagePlan({
+      vmName: "analysis one",
+      secretsDirectory: "/var/lib/crucible/secrets",
+    });
+
+    expect(plan).toEqual({
+      caCertificateSecretPath: "/var/lib/crucible/secrets/analysis-one/mtls/ca.cert.pem",
+      guestServerCertificateSecretPath:
+        "/var/lib/crucible/secrets/analysis-one/mtls/guest-server.cert.pem",
+      guestServerPrivateKeySecretPath:
+        "/var/lib/crucible/secrets/analysis-one/mtls/guest-server.key.pem",
+      guestStagingDirectory: "C:\\ProgramData\\Crucible\\Agent\\certs",
+      stagedCaCertificatePath: "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
+      stagedServerCertificatePath: "C:\\ProgramData\\Crucible\\Agent\\certs\\guest-server.cert.pem",
+      stagedServerPrivateKeyPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\guest-server.key.pem",
+    });
+  });
+
+  it("keeps account provisioning secrets out of PowerShell argv", async () => {
+    const script = await readFile("guest/provision/create-local-accounts.ps1", "utf8");
+
+    expect(script).toContain("CRUCIBLE_STANDARD_PASSWORD");
+    expect(script).toContain("CRUCIBLE_ADMIN_PASSWORD");
+    expect(script).toContain("-PasswordNeverExpires:$true");
+    expect(script).toContain("-UserMayChangePassword:$false");
+    expect(script).not.toContain(
+      "param(\n    [Parameter(Mandatory = $true)]\n    [string]$Password",
+    );
+    expect(script).not.toContain("-PasswordNeverExpires $true");
+    expect(script).not.toContain("-UserMayChangePassword $false");
+  });
+
+  it("limits guest agent firewall setup to the host-only source address", async () => {
+    const script = await readFile("guest/provision/install-agent.ps1", "utf8");
+
+    expect(script).toContain("HostOnlySourceAddress");
+    expect(script).toContain("[System.Net.IPAddress]::TryParse");
+    expect(script).toContain("[System.Net.IPAddress]::Any");
+    expect(script).toContain("[System.Net.IPAddress]::IPv6Any");
+    expect(script).toContain("-RemoteAddress $HostOnlySourceAddress");
+    expect(script).toContain("opensshBootstrapOnly = $true");
+    expect(script).not.toContain("-RemoteAddress Any");
+  });
 });
+
+async function mkdtempPath(): Promise<string> {
+  return mkdtemp(path.join(tmpdir(), "crucible-provisioning-"));
+}
