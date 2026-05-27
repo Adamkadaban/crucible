@@ -13,4 +13,4 @@ casing before comparison.
 ## 2026-05-26 — Bootstrap uses Node 24 through nvm
 
 **Resolution:** The local shell initially reported Node 20, but the project now pins `.nvmrc` to
-Node 24.16.0 so Vitest 4 and current tooling run cleanly. `.nvmrc:1` · abcfc5a
+Node 24.16.0 so Vitest 4 and current tooling run cleanly. `.nvmrc:1` · PR #5
