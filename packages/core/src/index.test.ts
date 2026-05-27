@@ -11,7 +11,8 @@ import {
   loadCrucibleConfigFile,
   MANUAL_DOWNLOADS,
   parseCrucibleConfig,
-  renderQemuDryRun,
+  renderQemuCreateDryRun,
+  renderQemuStartDryRun,
 } from "./index.js";
 
 describe("core bootstrap exports", () => {
@@ -96,7 +97,7 @@ describe("core bootstrap exports", () => {
     expect(plan.executable).toBe("qemu-system-x86_64");
     expect(plan.args).toContain("type=q35,accel=kvm");
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
-    expect(plan.args).toContain("scsi-hd,drive=crucible-disk0");
+    expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0");
     expect(plan.args).not.toContain("-netdev");
     expect(plan.args).not.toContain("virtio-net-pci,netdev=crucible-net0");
     expect(plan.args).toContain("virtio-serial-pci");
@@ -184,7 +185,15 @@ describe("core bootstrap exports", () => {
   it("rejects derived disk paths that QEMU drive suboptions would misparse", () => {
     const config = parseCrucibleConfig({ vm: { name: "bad,name" } });
 
-    expect(() => buildQemuCommandPlan({ config })).toThrow(/diskPath cannot contain/);
+    expect(() => buildQemuCommandPlan({ config })).toThrow(/vm\.name cannot contain/);
+  });
+
+  it("rejects VM names that QEMU name suboptions would misparse", () => {
+    const config = parseCrucibleConfig({ vm: { name: "bad\\name" } });
+
+    expect(() =>
+      buildQemuCommandPlan({ config, diskPath: "/var/lib/crucible/safe.qcow2" }),
+    ).toThrow(/vm\.name cannot contain/);
   });
 
   it("rejects QMP socket paths that QEMU suboptions would misparse", () => {
@@ -199,13 +208,22 @@ describe("core bootstrap exports", () => {
     expect(() => buildQemuCommandPlan({ config })).toThrow(/qga\.socketPath cannot contain/);
   });
 
-  it("renders dry-run output for CLI lifecycle commands", () => {
-    const output = renderQemuDryRun(buildQemuCommandPlan());
+  it("renders create dry-run output with disk creation", () => {
+    const output = renderQemuCreateDryRun(buildQemuCommandPlan());
 
     expect(output).toContain("QEMU dry run plan:");
     expect(output).toContain("create disk: qemu-img create -f qcow2");
     expect(output).toContain("qemu-system-x86_64");
     expect(output).toContain("qmp socket: artifacts/qmp.sock");
     expect(output).toContain("qga socket: artifacts/qga.sock");
+  });
+
+  it("renders start dry-run output without disk creation", () => {
+    const output = renderQemuStartDryRun(buildQemuCommandPlan());
+
+    expect(output).toContain("QEMU dry run plan:");
+    expect(output).not.toContain("create disk: qemu-img create -f qcow2");
+    expect(output).toContain("qemu-system-x86_64");
+    expect(output).toContain("qmp socket: artifacts/qmp.sock");
   });
 });

@@ -36,7 +36,7 @@ export type {
   ProcessResult,
   ProcessRunner,
 } from "./process.js";
-export { buildQemuCommandPlan, renderQemuDryRun } from "./qemu.js";
+export { buildQemuCommandPlan, renderQemuCreateDryRun, renderQemuStartDryRun } from "./qemu.js";
 export type { QemuCommandPlan, QemuDiskPlan, QemuPlanOptions, QemuSocketPlan } from "./qemu.js";
 
 export const CRUCIBLE_VERSION = "0.0.0";

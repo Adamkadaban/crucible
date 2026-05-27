@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { parseCrucibleConfig } from "@crucible/core";
+
 import { runCrucibleCli } from "./index.js";
 
 describe("crucible CLI bootstrap", () => {
@@ -20,23 +22,35 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints vm:create dry-run QEMU planning output", () => {
-    const result = runCrucibleCli(["vm:create", "--dry-run"]);
+    const result = runCrucibleCli(["vm:create", "--dry-run"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+    });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VM create dry run:");
     expect(result.stdout).toContain("qemu-img create -f qcow2");
     expect(result.stdout).toContain("qemu-system-x86_64");
-    expect(result.stdout).toContain("artifacts/disks/crucible-win11.qcow2");
+    expect(result.stdout).toContain("artifacts/disks/test-win.qcow2");
     expect(result.stdout).toContain("qmp socket: artifacts/qmp.sock");
   });
 
   it("prints vm:start dry-run QEMU planning output", () => {
-    const result = runCrucibleCli(["vm:start", "--dry-run"]);
+    const result = runCrucibleCli(["vm:start", "--dry-run"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+    });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VM start dry run:");
+    expect(result.stdout).not.toContain("qemu-img create -f qcow2");
     expect(result.stdout).toContain("type=q35,accel=kvm");
     expect(result.stdout).toContain("qga socket: artifacts/qga.sock");
+  });
+
+  it("uses default config instead of cwd config when tests do not inject runtime", () => {
+    const result = runCrucibleCli(["vm:start", "--dry-run"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("artifacts/disks/crucible-win11.qcow2");
   });
 
   it("rejects lifecycle commands without dry-run while launch behavior is not wired", () => {

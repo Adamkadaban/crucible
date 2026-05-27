@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import {
   buildQemuCommandPlan,
+  defaultCrucibleConfig,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
-  renderQemuDryRun,
+  renderQemuCreateDryRun,
+  renderQemuStartDryRun,
+  type CrucibleConfig,
 } from "@crucible/core";
 import { BOOTSTRAP_TOOLS, getMcpServerBanner } from "@crucible/mcp-server";
 
@@ -13,7 +16,12 @@ type CommandResult = {
   readonly stderr: string;
 };
 
-export function runCrucibleCli(args: readonly string[]): CommandResult {
+type CliRuntime = {
+  readonly config?: CrucibleConfig;
+  readonly configPath?: string;
+};
+
+export function runCrucibleCli(args: readonly string[], runtime: CliRuntime = {}): CommandResult {
   const [command] = args;
 
   switch (command) {
@@ -26,7 +34,7 @@ export function runCrucibleCli(args: readonly string[]): CommandResult {
       return { exitCode: 0, stdout: getManualDownloadInstructions(), stderr: "" };
     case "vm:create":
     case "vm:start":
-      return runVmDryRun(command, args.slice(1));
+      return runVmDryRun(command, args.slice(1), runtime);
     case "provision":
       return {
         exitCode: 0,
@@ -54,7 +62,11 @@ export function runCrucibleCli(args: readonly string[]): CommandResult {
   }
 }
 
-function runVmDryRun(command: "vm:create" | "vm:start", args: readonly string[]): CommandResult {
+function runVmDryRun(
+  command: "vm:create" | "vm:start",
+  args: readonly string[],
+  runtime: CliRuntime,
+): CommandResult {
   if (!args.includes("--dry-run")) {
     return {
       exitCode: 2,
@@ -63,14 +75,28 @@ function runVmDryRun(command: "vm:create" | "vm:start", args: readonly string[])
     };
   }
 
-  const plan = buildQemuCommandPlan({ config: loadCrucibleConfigFile() });
+  const plan = buildQemuCommandPlan({ config: getRuntimeConfig(runtime) });
   const action = command === "vm:create" ? "create" : "start";
+  const dryRun =
+    command === "vm:create" ? renderQemuCreateDryRun(plan) : renderQemuStartDryRun(plan);
 
   return {
     exitCode: 0,
-    stdout: [`VM ${action} dry run:`, renderQemuDryRun(plan)].join("\n"),
+    stdout: [`VM ${action} dry run:`, dryRun].join("\n"),
     stderr: "",
   };
+}
+
+function getRuntimeConfig(runtime: CliRuntime): CrucibleConfig {
+  if (runtime.config !== undefined) {
+    return runtime.config;
+  }
+
+  if (runtime.configPath !== undefined) {
+    return loadCrucibleConfigFile(runtime.configPath);
+  }
+
+  return defaultCrucibleConfig;
 }
 
 function formatTool(tool: (typeof BOOTSTRAP_TOOLS)[number]): string {

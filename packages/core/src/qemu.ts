@@ -38,6 +38,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
   const config = options.config ?? defaultCrucibleConfig;
   const executable = options.executable ?? DEFAULT_QEMU_EXECUTABLE;
   const diskPath = options.diskPath ?? getDefaultDiskPath(config);
+  validateQemuSuboptionValue("vm.name", config.vm.name);
   validateQemuSuboptionValue("diskPath", diskPath);
   validateQemuSuboptionValue("qmp.socketPath", config.qmp.socketPath);
   validateQemuSuboptionValue("qga.socketPath", config.qga.socketPath);
@@ -95,15 +96,25 @@ function getDefaultDiskPath(config: CrucibleConfig): string {
   return `${config.artifacts.directory}/disks/${config.vm.name}.qcow2`;
 }
 
-export function renderQemuDryRun(plan: QemuCommandPlan): string {
+export function renderQemuCreateDryRun(plan: QemuCommandPlan): string {
   return [
     "QEMU dry run plan:",
     `- create disk: ${plan.dryRunCreateDiskCommand}`,
+    ...renderQemuStartDryRunLines(plan),
+  ].join("\n");
+}
+
+export function renderQemuStartDryRun(plan: QemuCommandPlan): string {
+  return ["QEMU dry run plan:", ...renderQemuStartDryRunLines(plan)].join("\n");
+}
+
+function renderQemuStartDryRunLines(plan: QemuCommandPlan): readonly string[] {
+  return [
     `- command: ${plan.dryRunCommand}`,
     `- disk: ${plan.disk.path} (${plan.disk.format}, ${plan.disk.bus})`,
     `- qmp socket: ${plan.sockets.qmp}`,
     `- qga socket: ${plan.sockets.qga}`,
-  ].join("\n");
+  ];
 }
 
 function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly string[] {
@@ -119,7 +130,7 @@ function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly strin
     "-drive",
     drive,
     "-device",
-    `scsi-hd,drive=${DEFAULT_DISK_ID}`,
+    `scsi-hd,drive=${DEFAULT_DISK_ID},bus=scsi0.0`,
   ];
 }
 
