@@ -3,7 +3,9 @@ export type { CrucibleConfig, CrucibleConfigInput } from "./config.js";
 export { CrucibleError } from "./errors.js";
 export type { CrucibleErrorCode } from "./errors.js";
 export {
+  buildMediaCachePlan,
   DEFAULT_MEDIA_CACHE_DIR,
+  DEFAULT_MEDIA_SOURCES,
   getManualDownloadInstructions,
   MANUAL_DOWNLOADS,
 } from "./media.js";

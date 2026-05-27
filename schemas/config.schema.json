@@ -26,9 +26,9 @@
           "enum": ["windows11-enterprise-eval", "windows-server-2025-eval"],
           "default": "windows11-enterprise-eval"
         },
-        "windowsIso": { "$ref": "#/$defs/mediaOverride" },
-        "virtioIso": { "$ref": "#/$defs/mediaOverride" },
-        "virtioGuestTools": { "$ref": "#/$defs/mediaOverride" }
+        "windowsIso": { "$ref": "#/$defs/isoMediaOverride" },
+        "virtioIso": { "$ref": "#/$defs/isoMediaOverride" },
+        "driverBundle": { "$ref": "#/$defs/driverBundleOverride" }
       }
     },
     "virtio": {
@@ -86,13 +86,27 @@
     }
   },
   "$defs": {
-    "mediaOverride": {
+    "isoMediaOverride": {
       "type": "object",
       "additionalProperties": false,
       "anyOf": [{ "required": ["path"] }, { "required": ["url"] }],
       "properties": {
-        "path": { "type": "string", "minLength": 1 },
-        "url": { "type": "string", "format": "uri" },
+        "path": { "type": "string", "minLength": 1, "pattern": "\\.iso$" },
+        "url": { "type": "string", "format": "uri", "pattern": "\\.iso(?:[?#].*)?$" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "driverBundleOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["path"] }, { "required": ["url"] }],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "pattern": "\\.(?:iso|exe|zip|msi)$" },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "\\.(?:iso|exe|zip|msi)(?:[?#].*)?$"
+        },
         "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
       }
     }
