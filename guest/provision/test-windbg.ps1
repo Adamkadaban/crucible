@@ -31,23 +31,27 @@ function Find-DebuggerExecutable {
         }
     }
 
-    $roots = @(
+    $candidateDirectories = @(
         "$env:ProgramFiles\Windows Kits\10\Debuggers\x64",
         "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64",
-        "$env:LOCALAPPDATA\Microsoft\WindowsApps",
-        "$env:ProgramFiles\WindowsApps"
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps"
     )
 
-    foreach ($root in $roots) {
-        if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root)) {
+    $windowsApps = "$env:ProgramFiles\WindowsApps"
+    if (-not [string]::IsNullOrWhiteSpace($windowsApps) -and (Test-Path -LiteralPath $windowsApps)) {
+        $candidateDirectories += Get-ChildItem -LiteralPath $windowsApps -Directory -Filter "Microsoft.WinDbg_*" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName
+    }
+
+    foreach ($directory in $candidateDirectories) {
+        if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path -LiteralPath $directory)) {
             continue
         }
 
         foreach ($fileName in $FileNames) {
-            $match = Get-ChildItem -LiteralPath $root -Filter $fileName -Recurse -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-            if ($null -ne $match) {
-                return $match.FullName
+            $candidate = Join-Path -Path $directory -ChildPath $fileName
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
             }
         }
     }

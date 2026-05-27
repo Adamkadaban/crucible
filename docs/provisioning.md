@@ -44,11 +44,12 @@ exit code, captured stdout/stderr, timestamps, and duration.
 debugger use:
 
 - It first looks for existing `cdb.exe`, classic `windbg.exe`, and modern `WinDbgX.exe` in `PATH`,
-  Windows Kits debugger folders, and WindowsApps locations.
+  known Windows Kits debugger folders, the WindowsApps alias directory, and non-recursive
+  `Microsoft.WinDbg_*` package directories.
 - If either debugger is missing and `winget.exe` is available, it runs
   `winget install --id Microsoft.WinDbg --exact --accept-package-agreements --accept-source-agreements --disable-interactivity`.
-- If winget is unavailable, or if CDB is still absent after a winget install, it downloads the
-  Windows SDK bootstrapper and installs only `OptionId.WindowsDesktopDebuggers`.
+- If winget is unavailable, or if CDB/WinDbg tooling is still incomplete after a winget install, it
+  downloads the Windows SDK bootstrapper and installs only `OptionId.WindowsDesktopDebuggers`.
 - It sets machine-wide `_NT_SYMBOL_PATH` to
   `srv*C:\Symbols*https://msdl.microsoft.com/download/symbols` by default and records
   `_NT_ALT_SYMBOL_PATH` as the local cache directory.

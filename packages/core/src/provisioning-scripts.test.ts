@@ -27,6 +27,7 @@ describe("WinDbg provisioning scripts", () => {
     expect(script).toContain("OptionId.WindowsDesktopDebuggers");
     expect(script).toContain("Invoke-WebRequest");
     expect(script).toContain("winsdksetup.exe");
+    expect(script).toContain("Test-DebuggerToolingPresent");
   });
 
   it("configures the machine symbol path and debugger readiness checks", () => {
@@ -38,13 +39,25 @@ describe("WinDbg provisioning scripts", () => {
       expect(script).toContain("windbg.exe");
       expect(script).toContain("WinDbgX.exe");
       expect(script).toContain("_NT_SYMBOL_PATH");
+      expect(script).toContain("_NT_ALT_SYMBOL_PATH");
       expect(script).toContain("https://msdl.microsoft.com/download/symbols");
       expect(script).toContain("ConvertTo-Json -Compress");
     }
 
     expect(installScript).toContain("SetEnvironmentVariable");
-    expect(installScript).toContain("CDB is still missing after winget");
+    expect(installScript).toContain("debugger tooling is still incomplete after winget");
     expect(detectionScript).toContain("healthy =");
+  });
+
+  it("uses bounded debugger executable searches", () => {
+    const installScript = readProvisionScript("install-windbg.ps1");
+    const detectionScript = readProvisionScript("test-windbg.ps1");
+
+    for (const script of [installScript, detectionScript]) {
+      expect(script).toContain('Filter "Microsoft.WinDbg_*"');
+      expect(script).toContain("Join-Path");
+      expect(script).not.toContain("-Recurse");
+    }
   });
 
   it("supports dry-run coverage without a Windows VM", () => {

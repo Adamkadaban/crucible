@@ -13,7 +13,7 @@ function Write-Status {
         [string]$Message
     )
 
-    Write-Host "[crucible] $Message"
+    [Console]::Error.WriteLine("[crucible] $Message")
 }
 
 function Find-CommandPath {
@@ -43,23 +43,27 @@ function Find-DebuggerExecutable {
         }
     }
 
-    $roots = @(
+    $candidateDirectories = @(
         "$env:ProgramFiles\Windows Kits\10\Debuggers\x64",
         "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64",
-        "$env:LOCALAPPDATA\Microsoft\WindowsApps",
-        "$env:ProgramFiles\WindowsApps"
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps"
     )
 
-    foreach ($root in $roots) {
-        if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root)) {
+    $windowsApps = "$env:ProgramFiles\WindowsApps"
+    if (-not [string]::IsNullOrWhiteSpace($windowsApps) -and (Test-Path -LiteralPath $windowsApps)) {
+        $candidateDirectories += Get-ChildItem -LiteralPath $windowsApps -Directory -Filter "Microsoft.WinDbg_*" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName
+    }
+
+    foreach ($directory in $candidateDirectories) {
+        if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path -LiteralPath $directory)) {
             continue
         }
 
         foreach ($fileName in $FileNames) {
-            $match = Get-ChildItem -LiteralPath $root -Filter $fileName -Recurse -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-            if ($null -ne $match) {
-                return $match.FullName
+            $candidate = Join-Path -Path $directory -ChildPath $fileName
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
             }
         }
     }
@@ -135,7 +139,10 @@ function Set-SymbolPath {
 function Test-WinDbgReadiness {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ExpectedSymbolPath
+        [string]$ExpectedSymbolPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedAltSymbolPath
     )
 
     $cdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
@@ -152,23 +159,32 @@ function Test-WinDbgReadiness {
     if ($machineSymbolPath -ne $ExpectedSymbolPath) {
         throw "machine _NT_SYMBOL_PATH is not configured as expected"
     }
+    $machineAltSymbolPath = [Environment]::GetEnvironmentVariable("_NT_ALT_SYMBOL_PATH", "Machine")
+    if ($machineAltSymbolPath -ne $ExpectedAltSymbolPath) {
+        throw "machine _NT_ALT_SYMBOL_PATH is not configured as expected"
+    }
 
     return [ordered]@{
         cdbPath = $cdb
         windbgPath = $windbg
         symbolPath = $machineSymbolPath
+        altSymbolPath = $machineAltSymbolPath
     }
 }
 
-$beforeCdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
-$beforeWinDbg = Find-DebuggerExecutable -FileNames @("windbg.exe", "WinDbgX.exe")
+function Test-DebuggerToolingPresent {
+    $cdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
+    $windbg = Find-DebuggerExecutable -FileNames @("windbg.exe", "WinDbgX.exe")
 
-if ($null -eq $beforeCdb -or $null -eq $beforeWinDbg) {
+    return ($null -ne $cdb) -and ($null -ne $windbg)
+}
+
+if (-not (Test-DebuggerToolingPresent)) {
     if (-not (Install-WithWinget)) {
         Install-WithSdkDebuggingTools
     }
-    if (-not $DryRun -and $null -eq (Find-DebuggerExecutable -FileNames @("cdb.exe"))) {
-        Write-Status "CDB is still missing after winget; installing SDK Debugging Tools"
+    if (-not $DryRun -and -not (Test-DebuggerToolingPresent)) {
+        Write-Status "debugger tooling is still incomplete after winget; installing SDK Debugging Tools"
         Install-WithSdkDebuggingTools
     }
 } else {
@@ -182,5 +198,5 @@ if ($DryRun) {
     exit 0
 }
 
-$readiness = Test-WinDbgReadiness -ExpectedSymbolPath $configuredSymbolPath
+$readiness = Test-WinDbgReadiness -ExpectedSymbolPath $configuredSymbolPath -ExpectedAltSymbolPath $SymbolCache
 $readiness | ConvertTo-Json -Compress
