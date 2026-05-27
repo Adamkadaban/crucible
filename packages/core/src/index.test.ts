@@ -4,6 +4,7 @@ import {
   buildMediaCachePlan,
   buildNetworkPlan,
   buildNetworkTeardownOutputModel,
+  buildAnalysisVmPolicyReadiness,
   buildQemuCommandPlan,
   createEmptyArtifactManifest,
   CRUCIBLE_VERSION,
@@ -17,6 +18,7 @@ import {
   MANUAL_DOWNLOADS,
   NETWORK_MODES,
   parseCrucibleConfig,
+  parseAnalysisVmPolicyAudit,
   parseNetworkConfig,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
@@ -149,6 +151,7 @@ describe("core bootstrap exports", () => {
     expect(defaultCrucibleConfig.vm.name).toBe("crucible-win11");
     expect(defaultCrucibleConfig.media.profile).toBe("windows11-enterprise-eval");
     expect(defaultCrucibleConfig.network.mode).toBe("isolated");
+    expect(defaultCrucibleConfig.analysisPolicy.requireTestSigningDisabled).toBe(true);
     expect(defaultCrucibleConfig.virtio.diskBus).toBe("virtio-scsi");
     expect(defaultCrucibleConfig.qmp.timeoutMs).toBe(DEFAULT_QMP_TIMEOUT_MS);
   });
@@ -161,6 +164,52 @@ describe("core bootstrap exports", () => {
   it("rejects unknown network modes and invalid control ports", () => {
     expect(() => parseNetworkConfig({ mode: "bridge" })).toThrow(/Invalid option/);
     expect(() => parseNetworkConfig({ controlPort: 0 })).toThrow(/Too small/);
+  });
+
+  it("parses analysis VM policy config and audit readiness helpers", () => {
+    const config = parseCrucibleConfig({
+      analysisPolicy: {
+        profile: {
+          hostname: "DESKTOP-7F3K9Q2",
+          username: "analyst",
+          commonAnalysisLabCamouflage: true,
+        },
+      },
+    });
+    const audit = parseAnalysisVmPolicyAudit({
+      schemaVersion: 1,
+      mode: "isolated-analysis",
+      generatedAt: "2026-05-27T00:00:00.000Z",
+      defender: {
+        disabled: true,
+        realTimeProtectionDisabled: true,
+        serviceStatus: "Running",
+        preferencesRecorded: true,
+      },
+      codeIntegrity: {
+        stateRecorded: true,
+        enforcementDisabled: true,
+        hypervisorEnforcedCodeIntegrityDisabled: true,
+        bootOptions: ["nointegritychecks"],
+      },
+      testSigning: { enabled: false, requiredDisabled: true },
+      profile: {
+        locale: "en-US",
+        screenSize: "1920x1080",
+        disableSleep: true,
+        showFileExtensions: true,
+        showHiddenFiles: true,
+        showExplorerRibbon: true,
+        clearRecentExplorerHistory: true,
+        commonAnalysisLabCamouflage: true,
+        appliedSettings: ["defender-disabled"],
+      },
+      warnings: [],
+    });
+
+    expect(config.analysisPolicy.profile.hostname).toBe("DESKTOP-7F3K9Q2");
+    expect(config.analysisPolicy.profile.username).toBe("analyst");
+    expect(buildAnalysisVmPolicyReadiness(audit).every((check) => check.passed)).toBe(true);
   });
 
   it("plans isolated networking with restricted host-only QEMU control mapping", () => {

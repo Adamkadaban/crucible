@@ -31,3 +31,9 @@ the owner-authored lifecycle manager scope implemented in this branch. `PLAN.md:
 **Resolution:** Initial Copilot review worked through PR auto-request, but manual re-request after
 fixes returned `requested:false` because Copilot is not enabled as a repo collaborator for manual
 requests; resolve initial threads and report the re-review blocker. `AGENTS.md:70` · PR #52
+
+## 2026-05-27 — Analysis policy is contract-tested without Windows
+
+**Resolution:** The policy script emits JSON that host tests validate from fixtures, keeping
+Defender/code-integrity/test-signing readiness CI-safe until the real-VM provisioning worktree wires
+execution. `packages/core/src/analysis-policy.ts` · issue #59

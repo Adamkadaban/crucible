@@ -1,5 +1,11 @@
 import path from "node:path";
 
+import {
+  buildAnalysisVmPolicyScriptArguments,
+  defaultAnalysisVmPolicyConfig,
+  type AnalysisVmPolicyConfig,
+} from "./analysis-policy.js";
+
 export const PROVISIONING_STAGE_IDS = [
   "media-ready",
   "vm-booted",
@@ -127,6 +133,7 @@ export type ProvisioningPlanOptions = {
   readonly controlPort: number;
   readonly guestAddress: string;
   readonly snapshotName?: string;
+  readonly analysisPolicy?: AnalysisVmPolicyConfig;
 };
 
 const POWERSHELL = "powershell.exe";
@@ -303,6 +310,9 @@ function buildProvisioningStageContracts(
         "guest-agent-powershell",
         "guest/provision/configure-policy.ps1",
         {
+          scriptArguments: buildAnalysisVmPolicyScriptArguments(
+            options.analysisPolicy ?? defaultAnalysisVmPolicyConfig,
+          ),
           elevated: true,
         },
       ),

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { ZodType } from "zod";
 import { ZodError, z } from "zod";
 
+import { analysisVmPolicyConfigSchema } from "./analysis-policy.js";
 import { CrucibleError } from "./errors.js";
 import { DEFAULT_MEDIA_CACHE_DIR } from "./media.js";
 import { networkConfigSchema } from "./network.js";
@@ -113,6 +114,7 @@ export const crucibleConfigSchema = z
     media: z.preprocess((value) => value ?? {}, mediaConfigSchema),
     virtio: z.preprocess((value) => value ?? {}, virtioConfigSchema),
     network: z.preprocess((value) => value ?? {}, networkConfigSchema),
+    analysisPolicy: z.preprocess((value) => value ?? {}, analysisVmPolicyConfigSchema),
     qmp: z.preprocess((value) => value ?? {}, qmpConfigSchema),
     qga: z.preprocess((value) => value ?? {}, qgaConfigSchema),
     artifacts: z.preprocess((value) => value ?? {}, artifactsConfigSchema),

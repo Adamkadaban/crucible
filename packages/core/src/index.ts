@@ -1,4 +1,20 @@
 export {
+  analysisVmPolicyConfigSchema,
+  analysisVmPolicyProfileSchema,
+  buildAnalysisVmPolicyReadiness,
+  buildAnalysisVmPolicyScriptArguments,
+  defaultAnalysisVmPolicyConfig,
+  parseAnalysisVmPolicyAudit,
+  parseAnalysisVmPolicyConfig,
+} from "./analysis-policy.js";
+export type {
+  AnalysisVmPolicyAudit,
+  AnalysisVmPolicyConfig,
+  AnalysisVmPolicyConfigInput,
+  AnalysisVmPolicyProfile,
+  AnalysisVmPolicyReadiness,
+} from "./analysis-policy.js";
+export {
   defaultCrucibleConfig,
   loadCrucibleConfigFile,
   parseCrucibleConfig,

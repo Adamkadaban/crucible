@@ -114,6 +114,23 @@ describe("provisioning contracts", () => {
       "mtls-guest-server-certificate",
     ]);
 
+    const policy = plan.stages.find((stage) => stage.id === "policy-configured");
+    expect(policy?.script).toEqual(
+      expect.objectContaining({
+        id: "configure-analysis-policy",
+        runner: "guest-agent-powershell",
+        scriptPath: "guest/provision/configure-policy.ps1",
+        elevated: true,
+      }),
+    );
+    expect(policy?.script?.arguments).toContain("-RequireTestSigningDisabled");
+    expect(policy?.script?.arguments).toContain("-CommonAnalysisLabCamouflage");
+    expect(policy?.readinessChecks.map((check) => check.id)).toEqual([
+      "defender-disabled",
+      "code-integrity-recorded",
+      "test-signing-disabled",
+    ]);
+
     const localAccounts = plan.stages.find((stage) => stage.id === "local-accounts-created");
     expect(localAccounts?.producesSecrets).toEqual([
       "windows-standard-password",
@@ -123,6 +140,50 @@ describe("provisioning contracts", () => {
     const snapshot = plan.stages.find((stage) => stage.id === "snapshot-prepared");
     expect(snapshot?.producesSnapshot).toBe(true);
     expect(snapshot?.script?.arguments).toContain("baseline");
+  });
+
+  it("passes optional analysis profile settings to policy provisioning", () => {
+    const plan = buildProvisioningPlan({
+      vmName: "analysis one",
+      secretsDirectory: "secrets",
+      controlPort: 9443,
+      guestAddress: "192.0.2.2",
+      analysisPolicy: {
+        isolatedAnalysisVm: true,
+        disableDefender: true,
+        disableCodeIntegrity: true,
+        requireTestSigningDisabled: true,
+        profile: {
+          hostname: "DESKTOP-7F3K9Q2",
+          username: "analyst",
+          locale: "en-GB",
+          screenSize: "1366x768",
+          disableSleep: true,
+          showFileExtensions: true,
+          showHiddenFiles: true,
+          showExplorerRibbon: true,
+          clearRecentExplorerHistory: true,
+          commonAnalysisLabCamouflage: true,
+        },
+      },
+    });
+
+    expect(
+      plan.stages.find((stage) => stage.id === "policy-configured")?.script?.arguments,
+    ).toEqual(
+      expect.arrayContaining([
+        "-Hostname",
+        "DESKTOP-7F3K9Q2",
+        "-ProfileUsername",
+        "analyst",
+        "-Locale",
+        "en-GB",
+        "-ScreenSize",
+        "1366x768",
+        "-CommonAnalysisLabCamouflage",
+        "$true",
+      ]),
+    );
   });
 
   it("defines host-only secret references for Windows credentials and mTLS material", () => {

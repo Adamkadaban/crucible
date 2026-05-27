@@ -54,9 +54,14 @@ shows the launch argv only. Neither command downloads media, creates disks, or s
 
 ## Provisioning Outline
 
-Windows provisioning is currently contract-only. The planned flow is media readiness, VM boot, QGA
+Windows provisioning is currently contract-first. The planned flow is media readiness, VM boot, QGA
 readiness, WinDbg/CDB installation, guest agent installation, analysis policy changes, local account
 creation, health checks, and clean snapshot preparation. Generated Windows account credentials and
 mTLS files are host-only secrets under `artifacts.secretsDirectory`, not repository files or guest
-shared-folder contents. See [`provisioning.md`](./provisioning.md) for the stage and script contract
-details.
+shared-folder contents.
+
+The analysis policy stage disables Defender policy, records code-integrity policy state, confirms
+test signing is disabled, and can apply optional malware-reversing profile settings such as
+hostname, username, locale, screen size, sleep behavior, Explorer visibility, and low-risk lab
+camouflage. See [`provisioning.md`](./provisioning.md) for the stage, script contract, config, and
+audit details.

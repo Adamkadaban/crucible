@@ -167,13 +167,21 @@ while leaving command-specific payloads opaque for QEMU version compatibility. S
 
 ## Provisioning Contracts
 
-Phase 3 currently defines the Windows provisioning contracts without executing them. The core
-package models the ordered stages for media readiness, VM boot, QGA readiness, WinDbg/CDB
-installation, guest agent installation, policy changes, local accounts, health checks, and clean
-snapshot preparation. Script contracts describe the runner, PowerShell argv, timeout, elevation, and
-redaction behavior, while secret contracts keep generated Windows credentials and mTLS material
-under the configured `artifacts.secretsDirectory` as host-only `0600` files. See
-[`docs/provisioning.md`](./docs/provisioning.md) for the outline.
+Phase 3 currently defines the Windows provisioning contracts without running a real VM in CI. The
+core package models the ordered stages for media readiness, VM boot, QGA readiness, WinDbg/CDB
+installation, guest agent installation, analysis policy changes, local accounts, health checks, and
+clean snapshot preparation. Script contracts describe the runner, PowerShell argv, timeout,
+elevation, and redaction behavior, while secret contracts keep generated Windows credentials and
+mTLS material under the configured `artifacts.secretsDirectory` as host-only `0600` files.
+
+The analysis policy stage uses `guest/provision/configure-policy.ps1` for isolated analysis VMs. It
+disables Windows Defender policy, applies and records code-integrity policy changes, forces test
+signing off, and emits JSON audit output for readiness checks. Test signing has no enablement flag
+in malware-analysis mode; any future driver-lab mode must add an explicit separate policy.
+
+Optional `analysisPolicy.profile` settings can set `hostname`, `username`, `locale`, `screenSize`,
+sleep behavior, Explorer visibility, recent-history clearing, and common analysis-lab camouflage.
+See [`docs/provisioning.md`](./docs/provisioning.md) for the config shape and audit fields.
 
 ## VM Lifecycle State
 
