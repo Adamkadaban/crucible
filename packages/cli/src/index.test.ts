@@ -49,6 +49,45 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("Windows 11 Enterprise Evaluation page");
   });
 
+  it("prints isolated network dry-run plan without guest egress", async () => {
+    const result = await runCrucibleCli(["net:plan", "--mode", "isolated"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network mode: isolated");
+    expect(result.stdout).toContain("QEMU backend: none");
+    expect(result.stdout).toContain("(none; no guest NIC egress path)");
+    expect(result.stdout).toContain("crucible-test-win-net0-deny-guest-egress");
+    expect(result.stdout).toContain("drop");
+    expect(result.stdout).toContain("Apply commands are hidden by default");
+  });
+
+  it("prints apply model only when explicitly requested", async () => {
+    const result = await runCrucibleCli(
+      ["net:plan", "--mode", "capture", "--backend", "iptables", "--apply"],
+      {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network mode: capture");
+    expect(result.stdout).toContain("Firewall backend: iptables");
+    expect(result.stdout).toContain("Firewall apply commands (not executed by net:plan):");
+    expect(result.stdout).toContain("Firewall teardown commands (project-owned rules only):");
+    expect(result.stdout).toContain("CRUCIBLE-CRUCIBLE-TEST-WIN-NET0");
+    expect(result.stdout).not.toContain(" -F ");
+    expect(result.stdout).not.toContain(" -X ");
+  });
+
+  it("rejects unknown network plan options", async () => {
+    const result = await runCrucibleCli(["net:plan", "--backend", "pf"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown firewall backend: pf");
+  });
+
   it("prints alternate Windows Server manual-download instructions", async () => {
     const result = await runCrucibleCli([
       "media:plan",

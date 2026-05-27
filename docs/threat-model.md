@@ -16,6 +16,9 @@ to narrow control paths, no shared folders, and no accidental guest Internet egr
 - `nat` mode is operator opt-in because it grants guest Internet egress.
 - `capture` mode is operator opt-in and must store packet captures as artifacts, not source files.
 - The guest control channel is modeled as host-only and bound to an explicit guest API port.
+- Firewall plans default to dry-run output and project-owned nftables/iptables chains and comments.
+- Apply and teardown models must not delete broad host firewall state; they may target only the
+  rules generated for the same Crucible VM owner tag.
 
 ## Host Exposure
 
@@ -36,6 +39,5 @@ to narrow control paths, no shared folders, and no accidental guest Internet egr
 
 ## Open Updates
 
-- Document concrete nftables or iptables rules after the firewall planner lands.
 - Document guest-service authentication and file staging constraints after Phase 4 contracts land.
 - Document operator warnings and safe artifact directory policy as Phase 2 continues.

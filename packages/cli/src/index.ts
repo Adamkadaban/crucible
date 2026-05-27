@@ -2,15 +2,21 @@
 import { readFile } from "node:fs/promises";
 
 import {
+  buildNetworkPlan,
   buildMediaCachePlan,
   buildQemuCommandPlan,
+  FIREWALL_BACKENDS,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
+  NETWORK_MODES,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
   type CrucibleConfig,
+  type FirewallBackend,
+  type FirewallCommandPlan,
   type MediaCacheEntry,
   type MediaProfileName,
+  type NetworkMode,
   type VmStatus,
   type VmStopResult,
   VmLifecycleManager,
@@ -33,6 +39,12 @@ type MediaPlanArgs = {
   readonly includeManualInstructions: boolean;
 };
 
+type NetPlanArgs = {
+  readonly mode: NetworkMode;
+  readonly firewallBackend: FirewallBackend;
+  readonly includeApply: boolean;
+};
+
 export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
@@ -47,6 +59,8 @@ export async function runCrucibleCli(
       return { exitCode: 0, stdout: getHelpText(), stderr: "" };
     case "media:plan":
       return renderMediaPlanCommand(rest, runtime);
+    case "net:plan":
+      return renderNetPlanCommand(rest, runtime);
     case "vm:create":
       return runVmCreateCommand(rest, runtime);
     case "vm:start":
@@ -268,6 +282,74 @@ function renderMediaPlanCommand(args: readonly string[], runtime: CliRuntime): C
   return { exitCode: 0, stdout: renderMediaPlan(parsed.args, config), stderr: "" };
 }
 
+function renderNetPlanCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  const config = getRuntimeConfig(runtime);
+  const parsed = parseNetPlanArgs(args, config.network.mode);
+
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const plan = buildNetworkPlan({
+    config: { ...config.network, mode: parsed.args.mode },
+    firewallBackend: parsed.args.firewallBackend,
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+
+  return { exitCode: 0, stdout: renderNetPlan(plan, parsed.args), stderr: "" };
+}
+
+function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanArgs): string {
+  const lines = [
+    `Network mode: ${plan.mode}`,
+    `QEMU backend: ${plan.qemu.backend}`,
+    `Firewall backend: ${plan.firewall.backend}`,
+    `Default operation: ${plan.firewall.defaultOperation}`,
+    `Owner: ${plan.firewall.owner.project}/${plan.firewall.owner.vmName}/${plan.firewall.owner.resourceId}`,
+    "",
+    "QEMU network args:",
+    plan.qemu.args.length > 0 ? formatCommand(plan.qemu.args) : "(none; no guest NIC egress path)",
+    "",
+    "Firewall dry run commands:",
+    ...plan.firewall.dryRun.map(formatFirewallCommand),
+  ];
+
+  if (args.includeApply) {
+    lines.push(
+      "",
+      "Firewall apply commands (not executed by net:plan):",
+      ...plan.firewall.apply.map(formatFirewallCommand),
+      "",
+      "Firewall teardown commands (project-owned rules only):",
+      ...plan.firewall.teardown.map(formatFirewallCommand),
+    );
+  } else {
+    lines.push(
+      "",
+      "Apply commands are hidden by default; pass --apply to print them after dry-run commands.",
+    );
+  }
+
+  if (plan.warnings.length > 0) {
+    lines.push("", "Warnings:", ...plan.warnings.map((warning) => `- ${warning}`));
+  }
+
+  return lines.join("\n");
+}
+
+function formatFirewallCommand(command: FirewallCommandPlan): string {
+  return `- ${command.ruleId}: ${formatCommand(command.argv)}`;
+}
+
+function formatCommand(argv: readonly string[]): string {
+  return argv.map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function renderMediaPlan(args: MediaPlanArgs, config: CrucibleConfig): string {
   const plan = buildMediaCachePlan({ ...config.media, profile: args.profile });
   const lines = [
@@ -293,6 +375,69 @@ function renderMediaPlan(args: MediaPlanArgs, config: CrucibleConfig): string {
 type MediaPlanArgsResult =
   | { readonly ok: true; readonly args: MediaPlanArgs }
   | { readonly ok: false; readonly message: string };
+
+type NetPlanArgsResult =
+  | { readonly ok: true; readonly args: NetPlanArgs }
+  | { readonly ok: false; readonly message: string };
+
+function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): NetPlanArgsResult {
+  let mode = defaultMode;
+  let firewallBackend: FirewallBackend = "nftables";
+  let includeApply = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--apply") {
+      includeApply = true;
+      continue;
+    }
+
+    if (arg === "--mode") {
+      const value = args[index + 1];
+
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --mode" };
+      }
+
+      if (!isNetworkMode(value)) {
+        return { ok: false, message: `Unknown network mode: ${value}` };
+      }
+
+      mode = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--backend") {
+      const value = args[index + 1];
+
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --backend" };
+      }
+
+      if (!isFirewallBackend(value)) {
+        return { ok: false, message: `Unknown firewall backend: ${value}` };
+      }
+
+      firewallBackend = value;
+      index += 1;
+      continue;
+    }
+
+    return { ok: false, message: `Unknown net:plan option: ${arg}` };
+  }
+
+  return { ok: true, args: { mode, firewallBackend, includeApply } };
+}
+
+function isNetworkMode(value: string): value is NetworkMode {
+  return NETWORK_MODES.includes(value as NetworkMode);
+}
+
+function isFirewallBackend(value: string): value is FirewallBackend {
+  return FIREWALL_BACKENDS.includes(value as FirewallBackend);
+}
 
 function parseMediaPlanArgs(
   args: readonly string[],
@@ -354,6 +499,7 @@ function getHelpText(): string {
     "  crucible provision   Provision a Windows analysis VM (scaffolded)",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
+    "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
     "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
     "  crucible vm:start [--dry-run] Print or run the planned QEMU argv and sockets",
     "  crucible vm:stop [--poweroff|--kill]",

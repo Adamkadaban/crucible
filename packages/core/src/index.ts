@@ -43,6 +43,8 @@ export type {
   MediaProfileName,
 } from "./media.js";
 export {
+  FIREWALL_BACKENDS,
+  FIREWALL_OPERATION_MODES,
   buildNetworkPlan,
   NETWORK_MODES,
   networkConfigSchema,
@@ -51,6 +53,9 @@ export {
 } from "./network.js";
 export type {
   ControlAddressAllocation,
+  FirewallBackend,
+  FirewallCommandPlan,
+  FirewallOperationMode,
   FirewallPlan,
   FirewallRuleIntent,
   FirewallRulePlan,

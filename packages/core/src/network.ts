@@ -3,8 +3,12 @@ import { z } from "zod";
 import { CrucibleError } from "./errors.js";
 
 export const NETWORK_MODES = ["isolated", "nat", "capture"] as const;
+export const FIREWALL_BACKENDS = ["nftables", "iptables"] as const;
+export const FIREWALL_OPERATION_MODES = ["dry-run", "apply"] as const;
 
 export type NetworkMode = (typeof NETWORK_MODES)[number];
+export type FirewallBackend = (typeof FIREWALL_BACKENDS)[number];
+export type FirewallOperationMode = (typeof FIREWALL_OPERATION_MODES)[number];
 
 export const networkModeSchema = z.enum(NETWORK_MODES);
 
@@ -46,10 +50,23 @@ export type FirewallRulePlan = {
   readonly owner: NetworkOwnerTag;
 };
 
+export type FirewallCommandPlan = {
+  readonly id: string;
+  readonly ruleId: string;
+  readonly operation: FirewallOperationMode;
+  readonly argv: readonly string[];
+  readonly description: string;
+  readonly owner: NetworkOwnerTag;
+};
+
 export type FirewallPlan = {
   readonly mode: NetworkMode;
-  readonly dryRunOnly: boolean;
+  readonly backend: FirewallBackend;
+  readonly defaultOperation: "dry-run";
   readonly rules: readonly FirewallRulePlan[];
+  readonly dryRun: readonly FirewallCommandPlan[];
+  readonly apply: readonly FirewallCommandPlan[];
+  readonly teardown: readonly FirewallCommandPlan[];
   readonly owner: NetworkOwnerTag;
 };
 
@@ -82,6 +99,7 @@ export type NetworkPlan = {
 export type NetworkPlanOptions = {
   readonly config: NetworkConfig;
   readonly vmName: string;
+  readonly firewallBackend?: FirewallBackend;
   readonly networkDevice?: "virtio-net-pci";
   readonly netdevId?: string;
 };
@@ -103,7 +121,7 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
     networkDevice: options.networkDevice ?? "virtio-net-pci",
     owner,
   });
-  const firewall = buildFirewallPlan(mode, owner);
+  const firewall = buildFirewallPlan(mode, owner, options.firewallBackend ?? "nftables");
 
   return {
     mode,
@@ -200,20 +218,247 @@ function qemuNetdevValue(mode: NetworkMode, netdevId: string): string {
   return `user,id=${netdevId}`;
 }
 
-function buildFirewallPlan(mode: NetworkMode, owner: NetworkOwnerTag): FirewallPlan {
+function buildFirewallPlan(
+  mode: NetworkMode,
+  owner: NetworkOwnerTag,
+  backend: FirewallBackend,
+): FirewallPlan {
+  const rules = firewallRuleIntents(mode).map((intent) => ({
+    id: `${owner.resourceId}-${intent}`,
+    intent,
+    action: "add" as const,
+    table: backend,
+    description: firewallRuleDescription(intent),
+    owner,
+  }));
+
   return {
     mode,
-    dryRunOnly: true,
-    rules: firewallRuleIntents(mode).map((intent) => ({
-      id: `${owner.resourceId}-${intent}`,
-      intent,
-      action: "add",
-      table: "nftables",
-      description: firewallRuleDescription(intent),
-      owner,
-    })),
+    backend,
+    defaultOperation: "dry-run",
+    rules,
+    dryRun: [
+      ...buildFirewallSetupCommandPlans(backend, owner, "dry-run"),
+      ...rules.map((rule) => buildFirewallCommandPlan(rule, "dry-run")),
+    ],
+    apply: [
+      ...buildFirewallSetupCommandPlans(backend, owner, "apply"),
+      ...rules.map((rule) => buildFirewallCommandPlan(rule, "apply")),
+    ],
+    teardown: rules.map((rule) => buildFirewallTeardownCommandPlan(rule)),
     owner,
   };
+}
+
+function buildFirewallSetupCommandPlans(
+  backend: FirewallBackend,
+  owner: NetworkOwnerTag,
+  operation: FirewallOperationMode,
+): readonly FirewallCommandPlan[] {
+  const commands =
+    backend === "nftables" ? nftablesSetupCommands(owner) : iptablesSetupCommands(owner);
+
+  return commands.map((argv, index) => ({
+    id: `${owner.resourceId}-setup-${index}-${operation}`,
+    ruleId: `${owner.resourceId}-setup-${index}`,
+    operation,
+    argv: operation === "dry-run" ? dryRunSetupCommand(backend, argv) : argv,
+    description: `${operation === "dry-run" ? "Validate" : "Apply"}: project-owned firewall setup`,
+    owner,
+  }));
+}
+
+function buildFirewallCommandPlan(
+  rule: FirewallRulePlan,
+  operation: FirewallOperationMode,
+): FirewallCommandPlan {
+  const argv = rule.table === "nftables" ? nftablesRuleCommand(rule) : iptablesRuleCommand(rule);
+
+  return {
+    id: `${rule.id}-${operation}`,
+    ruleId: rule.id,
+    operation,
+    argv: operation === "dry-run" ? dryRunFirewallCommand(rule.table, argv) : argv,
+    description: `${operation === "dry-run" ? "Validate" : "Apply"}: ${rule.description}`,
+    owner: rule.owner,
+  };
+}
+
+function buildFirewallTeardownCommandPlan(rule: FirewallRulePlan): FirewallCommandPlan {
+  const argv =
+    rule.table === "nftables" ? nftablesTeardownCommand(rule) : iptablesTeardownCommand(rule);
+
+  return {
+    id: `${rule.id}-teardown`,
+    ruleId: rule.id,
+    operation: "apply",
+    argv,
+    description: `Remove project-owned rule: ${rule.description}`,
+    owner: rule.owner,
+  };
+}
+
+function dryRunFirewallCommand(
+  backend: FirewallBackend,
+  argv: readonly string[],
+): readonly string[] {
+  if (backend === "nftables") {
+    return ["nft", "--check", ...argv.slice(1)];
+  }
+
+  return ["iptables", "-C", ...argv.slice(2)];
+}
+
+function dryRunSetupCommand(backend: FirewallBackend, argv: readonly string[]): readonly string[] {
+  if (backend === "nftables") {
+    return ["nft", "--check", ...argv.slice(1)];
+  }
+
+  return argv[1] === "-N"
+    ? ["iptables", "-S", argv[2] ?? ""]
+    : ["iptables", "-C", ...argv.slice(2)];
+}
+
+function nftablesSetupCommands(owner: NetworkOwnerTag): readonly (readonly string[])[] {
+  return [
+    ["nft", "add", "table", "inet", nftablesTable(owner)],
+    [
+      "nft",
+      "add",
+      "chain",
+      "inet",
+      nftablesTable(owner),
+      nftablesChain(owner),
+      "{",
+      "type",
+      "filter",
+      "hook",
+      "forward",
+      "priority",
+      "0",
+      ";",
+      "policy",
+      "accept",
+      ";",
+      "}",
+    ],
+  ];
+}
+
+function iptablesSetupCommands(owner: NetworkOwnerTag): readonly (readonly string[])[] {
+  return [
+    ["iptables", "-N", iptablesChain(owner)],
+    [
+      "iptables",
+      "-A",
+      "FORWARD",
+      "-m",
+      "comment",
+      "--comment",
+      `crucible:${owner.vmName}:${owner.resourceId}:jump`,
+      "-j",
+      iptablesChain(owner),
+    ],
+  ];
+}
+
+function nftablesRuleCommand(rule: FirewallRulePlan): readonly string[] {
+  const chain = nftablesChain(rule.owner);
+  const comment = firewallRuleComment(rule);
+  const expression = nftablesRuleExpression(rule.intent);
+
+  return [
+    "nft",
+    "add",
+    "rule",
+    "inet",
+    nftablesTable(rule.owner),
+    chain,
+    ...expression,
+    "comment",
+    comment,
+  ];
+}
+
+function nftablesTeardownCommand(rule: FirewallRulePlan): readonly string[] {
+  return [
+    "nft",
+    "delete",
+    "rule",
+    "inet",
+    nftablesTable(rule.owner),
+    nftablesChain(rule.owner),
+    "comment",
+    firewallRuleComment(rule),
+  ];
+}
+
+function iptablesRuleCommand(rule: FirewallRulePlan): readonly string[] {
+  return [
+    "iptables",
+    "-A",
+    iptablesChain(rule.owner),
+    ...iptablesRuleExpression(rule.intent),
+    "-m",
+    "comment",
+    "--comment",
+    firewallRuleComment(rule),
+  ];
+}
+
+function iptablesTeardownCommand(rule: FirewallRulePlan): readonly string[] {
+  return [
+    "iptables",
+    "-D",
+    iptablesChain(rule.owner),
+    ...iptablesRuleExpression(rule.intent),
+    "-m",
+    "comment",
+    "--comment",
+    firewallRuleComment(rule),
+  ];
+}
+
+function nftablesTable(owner: NetworkOwnerTag): string {
+  return `crucible_${owner.resourceId.replaceAll("-", "_")}`;
+}
+
+function nftablesChain(owner: NetworkOwnerTag): string {
+  return `crucible_${owner.resourceId.replaceAll("-", "_")}_forward`;
+}
+
+function iptablesChain(owner: NetworkOwnerTag): string {
+  return `CRUCIBLE-${owner.resourceId.toUpperCase().replaceAll(/[^A-Z0-9]/g, "-")}`;
+}
+
+function firewallRuleComment(rule: FirewallRulePlan): string {
+  return `crucible:${rule.owner.vmName}:${rule.owner.resourceId}:${rule.intent}`;
+}
+
+function nftablesRuleExpression(intent: FirewallRuleIntent): readonly string[] {
+  switch (intent) {
+    case "allow-host-control":
+      return ["ip", "saddr", "192.0.2.1", "ip", "daddr", "192.0.2.2", "accept"];
+    case "allow-nat-egress":
+      return ["ip", "saddr", "192.0.2.2", "accept"];
+    case "capture-guest-traffic":
+      return ["ip", "saddr", "192.0.2.2", "counter", "accept"];
+    case "deny-guest-egress":
+      return ["ip", "saddr", "192.0.2.2", "drop"];
+  }
+}
+
+function iptablesRuleExpression(intent: FirewallRuleIntent): readonly string[] {
+  switch (intent) {
+    case "allow-host-control":
+      return ["-s", "192.0.2.1", "-d", "192.0.2.2", "-j", "ACCEPT"];
+    case "allow-nat-egress":
+      return ["-s", "192.0.2.2", "-j", "ACCEPT"];
+    case "capture-guest-traffic":
+      return ["-s", "192.0.2.2", "-j", "ACCEPT"];
+    case "deny-guest-egress":
+      return ["-s", "192.0.2.2", "-j", "DROP"];
+  }
 }
 
 function firewallRuleIntents(mode: NetworkMode): readonly FirewallRuleIntent[] {
