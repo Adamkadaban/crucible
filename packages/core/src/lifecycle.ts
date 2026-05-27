@@ -175,12 +175,20 @@ export class VmLifecycleManager {
     await this.#writeStateManifest(starting);
     await this.#writeArtifactManifest();
 
-    const spawned = await this.#spawner.spawn({
-      executable: this.#plan.executable,
-      args: this.#plan.args,
-      stdoutLog: this.paths.stdoutLog,
-      stderrLog: this.paths.stderrLog,
-    });
+    let spawned: SpawnedVmProcess;
+    try {
+      spawned = await this.#spawner.spawn({
+        executable: this.#plan.executable,
+        args: this.#plan.args,
+        stdoutLog: this.paths.stdoutLog,
+        stderrLog: this.paths.stderrLog,
+      });
+    } catch (error) {
+      await this.#writeStateManifest(
+        this.#buildStateManifest("stopped", { stoppedAt: this.#nowIso() }),
+      );
+      throw error;
+    }
 
     await writeFile(this.paths.pidFile, `${spawned.pid}\n`, "utf8");
     await this.#writeStateManifest(
@@ -214,11 +222,12 @@ export class VmLifecycleManager {
     }
 
     this.#signal(current.pid, "SIGKILL");
-    await this.#processController.waitForExit(
+    const exited = await this.#processController.waitForExit(
       current.pid,
       this.#killTimeoutMs,
       this.#pollIntervalMs,
     );
+    this.#assertExitedAfterKill(current.pid, exited);
     const status = await this.#markStopped("stopped");
     return {
       status,
@@ -333,11 +342,12 @@ export class VmLifecycleManager {
       killedAfterTimeout = true;
       signalSent = "SIGKILL";
       this.#signal(current.pid, signalSent);
-      await this.#processController.waitForExit(
+      const exitedAfterKill = await this.#processController.waitForExit(
         current.pid,
         this.#killTimeoutMs,
         this.#pollIntervalMs,
       );
+      this.#assertExitedAfterKill(current.pid, exitedAfterKill);
     }
 
     return {
@@ -373,6 +383,15 @@ export class VmLifecycleManager {
       if (!isMissingProcessError(error)) {
         throw error;
       }
+    }
+  }
+
+  #assertExitedAfterKill(pid: number, exited: boolean): void {
+    if (!exited && this.#processController.isAlive(pid)) {
+      throw new CrucibleError("PROCESS_TIMEOUT", "VM process survived SIGKILL timeout", {
+        pid,
+        timeoutMs: this.#killTimeoutMs,
+      });
     }
   }
 

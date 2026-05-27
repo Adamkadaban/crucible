@@ -72,6 +72,16 @@ describe("VmLifecycleManager", () => {
     });
   });
 
+  it("restores stopped state when QEMU spawn fails", async () => {
+    const harness = await createLifecycleHarness({ spawnError: new Error("spawn failed") });
+
+    await expect(harness.manager.start()).rejects.toThrow("spawn failed");
+    await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
+      state: "stopped",
+      stoppedAt: "2026-05-27T00:00:00.000Z",
+    });
+  });
+
   it("uses QMP quit for graceful stop and marks the VM stopped", async () => {
     const harness = await createLifecycleHarness();
     await harness.manager.start();
@@ -133,6 +143,36 @@ describe("VmLifecycleManager", () => {
     ]);
   });
 
+  it("does not mark stopped when SIGKILL fails to terminate the VM", async () => {
+    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+    harness.deleteOnKill = false;
+    await harness.manager.start();
+
+    await expect(harness.manager.stop()).rejects.toMatchObject({
+      code: "PROCESS_TIMEOUT",
+      message: "VM process survived SIGKILL timeout",
+    });
+    await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
+      state: "stopping",
+      pid: 4242,
+    });
+  });
+
+  it("does not mark stopped when explicit kill cannot terminate the VM", async () => {
+    const harness = await createLifecycleHarness();
+    harness.deleteOnKill = false;
+    await harness.manager.start();
+
+    await expect(harness.manager.kill()).rejects.toMatchObject({
+      code: "PROCESS_TIMEOUT",
+      message: "VM process survived SIGKILL timeout",
+    });
+    await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
+      state: "running",
+      pid: 4242,
+    });
+  });
+
   it("reports QMP status when the VM is alive", async () => {
     const harness = await createLifecycleHarness();
     await harness.manager.start();
@@ -173,6 +213,7 @@ describe("VmLifecycleManager", () => {
 
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
+  readonly spawnError?: Error;
 };
 
 async function createLifecycleHarness(options: HarnessOptions = {}) {
@@ -194,13 +235,14 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
   const processes = new Set<number>();
   const spawnRequests: VmSpawnRequest[] = [];
   const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
+  const harnessState = { deleteOnKill: true };
   const qmp = new FakeQmpSession(options.qmpConnectError);
   const qmpClientFactory: VmQmpClientFactory = () => qmp;
   const processController: VmProcessController = {
     isAlive: (pid) => processes.has(pid),
     signal: (pid, signal) => {
       signals.push({ pid, signal });
-      if (signal === "SIGKILL") {
+      if (signal === "SIGKILL" && harnessState.deleteOnKill) {
         processes.delete(pid);
       }
     },
@@ -211,6 +253,9 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
     plan,
     spawner: {
       spawn(request) {
+        if (options.spawnError !== undefined) {
+          return Promise.reject(options.spawnError);
+        }
         spawnRequests.push(request);
         processes.add(4242);
         return Promise.resolve({ pid: 4242 });
@@ -224,7 +269,22 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
     now: () => new Date("2026-05-27T00:00:00.000Z"),
   });
 
-  return { config, manager, paths, plan, processes, qmp, signals, spawnRequests };
+  return {
+    config,
+    get deleteOnKill() {
+      return harnessState.deleteOnKill;
+    },
+    set deleteOnKill(value: boolean) {
+      harnessState.deleteOnKill = value;
+    },
+    manager,
+    paths,
+    plan,
+    processes,
+    qmp,
+    signals,
+    spawnRequests,
+  };
 }
 
 class FakeQmpSession implements VmQmpSession {

@@ -167,7 +167,7 @@ real VM.
       virtio-scsi, virtio-serial, QMP socket, and QGA channel.
 - [x] Implement QMP client with greeting negotiation, request IDs, timeout handling, event
       collection, and structured errors.
-- [x] Implement lifecycle manager for create, start, stop, poweroff, kill-after-timeout, status, and
+- [x] Implement lifecycle manager for start, stop, poweroff, kill-after-timeout, status, and
       cleanup.
 - [ ] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
       generated credentials.
