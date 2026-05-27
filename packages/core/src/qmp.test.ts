@@ -134,6 +134,79 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("rejects reused request IDs after a timeout", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-block", () => undefined);
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(
+      client.execute("query-block", undefined, { id: "reused", timeoutMs: 20 }),
+    ).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
+    await expect(client.execute("query-status", undefined, { id: "reused" })).rejects.toMatchObject(
+      {
+        code: "QMP_PROTOCOL_ERROR",
+      },
+    );
+
+    client.close();
+    await server.close();
+  });
+
+  it("serializes commands and attributes events to the active command", async () => {
+    const queryBlockResponses: Array<() => void> = [];
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-block", (request) => {
+        queryBlockResponses.push(() => {
+          connection.send({ event: "BLOCK_IO_ERROR", data: { device: "disk0" } });
+          connection.send({ return: [], id: request.id });
+        });
+      });
+      connection.onCommand("query-status", (request) => {
+        connection.send({ event: "STOP", data: { reason: "debug" } });
+        connection.send({ return: { status: "paused" }, id: request.id });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    const firstCommand = client.execute("query-block");
+    const secondCommand = client.execute("query-status");
+
+    await waitFor(() => queryBlockResponses.length === 1);
+    expect(server.requests.map((request) => request.execute)).toEqual([
+      "qmp_capabilities",
+      "query-block",
+    ]);
+    queryBlockResponses[0]?.();
+
+    await expect(firstCommand).resolves.toMatchObject({
+      events: [{ event: "BLOCK_IO_ERROR", data: { device: "disk0" } }],
+    });
+    await expect(secondCommand).resolves.toMatchObject({
+      events: [{ event: "STOP", data: { reason: "debug" } }],
+    });
+    expect(server.requests.map((request) => request.execute)).toEqual([
+      "qmp_capabilities",
+      "query-block",
+      "query-status",
+    ]);
+
+    client.close();
+    await server.close();
+  });
+
   it("fails conservatively on unknown top-level response fields", async () => {
     const server = await createFakeQmpServer((connection) => {
       connection.send(capturedGreeting);
@@ -149,6 +222,39 @@ describe("QmpClient", () => {
     await client.connect();
 
     await expect(client.execute("query-status")).rejects.toMatchObject({ code: "QMP_PARSE_ERROR" });
+
+    client.close();
+    await server.close();
+  });
+
+  it("fails fast after the peer closes the socket", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("quit", () => connection.close());
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+    await expect(client.execute("quit")).rejects.toMatchObject({ code: "QMP_DISCONNECTED" });
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+    });
+
+    client.close();
+    await server.close();
+  });
+
+  it("cleans up a missing greeting by closing the socket", async () => {
+    const server = await createFakeQmpServer(() => undefined);
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 20 });
+
+    await expect(client.connect()).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+    });
 
     client.close();
     await server.close();
@@ -183,6 +289,7 @@ type QmpRequest = {
 type FakeQmpConnection = {
   readonly send: (message: Record<string, unknown>) => void;
   readonly onCommand: (command: string, handler: (request: QmpRequest) => void) => void;
+  readonly close: () => void;
 };
 
 type FakeQmpServer = {
@@ -203,6 +310,7 @@ async function createFakeQmpServer(
     const connection: FakeQmpConnection = {
       send: (message) => socket.write(`${JSON.stringify(message)}\r\n`),
       onCommand: (command, handler) => handlers.set(command, handler),
+      close: () => socket.end(),
     };
 
     setup(connection);
@@ -251,4 +359,14 @@ async function createFakeQmpServer(
         });
       }),
   };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("condition was not met before timeout");
 }
