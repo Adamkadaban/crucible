@@ -171,10 +171,10 @@ real VM.
       cleanup.
 - [ ] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
       generated credentials.
-- [ ] Add CLI commands for `vm:create`, `vm:start`, `vm:stop`, `vm:status`, and `vm:logs`.
+- [x] Add CLI commands for `vm:create`, `vm:start`, `vm:stop`, `vm:status`, and `vm:logs`.
 - [x] Add host-only fake tests for QEMU command generation, QMP parsing, lifecycle state
       transitions, and timeout behavior.
-- [ ] Document required host packages and manual Windows ISO/virtio ISO inputs.
+- [x] Document required host packages and manual Windows ISO/virtio ISO inputs.
 
 **Parallel-work split table:**
 

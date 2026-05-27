@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc -b packages/core packages/mcp-server packages/cli",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "crucible": "tsx packages/cli/src/index.ts",
+    "crucible": "tsx --conditions=development packages/cli/src/index.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

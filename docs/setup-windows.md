@@ -1,5 +1,21 @@
 # Windows Media Setup
 
+## Host Packages
+
+Crucible's host lifecycle commands run only on Linux with KVM. Install packages that provide
+`qemu-system-x86_64`, `qemu-img`, firmware, and `/dev/kvm` access before provisioning media or
+starting a VM. On Debian or Ubuntu hosts:
+
+```sh
+sudo apt-get install qemu-system-x86 qemu-utils ovmf
+scripts/check-host.sh
+```
+
+Other distributions may split these packages differently. The host check reports the exact missing
+binaries or KVM device without changing the host.
+
+## Installation Media
+
 `crucible media:plan` describes the installation media needed before provisioning a VM. The default
 profile uses Windows 11 Enterprise Evaluation and the stable virtio-win ISO. The alternate
 `windows-server-2025-eval` profile uses Windows Server Evaluation with the same virtio defaults.
@@ -24,3 +40,14 @@ paths, or configure explicit overrides in `crucible.config.json`.
 `windowsIso` and `virtioIso` overrides must be `.iso` files, case-insensitively. `driverBundle`
 overrides may be `.iso`, `.exe`, `.zip`, or `.msi` files, also case-insensitively. Each override may
 include a `sha256` field for later verification.
+
+Dry-run the full host-side Phase 1 plan before provisioning:
+
+```sh
+pnpm crucible media:plan --manual
+pnpm crucible vm:create --dry-run
+pnpm crucible vm:start --dry-run
+```
+
+`vm:create --dry-run` shows the qcow2 creation command and QEMU launch argv. `vm:start --dry-run`
+shows the launch argv only. Neither command downloads media, creates disks, or starts a VM.

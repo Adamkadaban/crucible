@@ -6,6 +6,10 @@ socket paths that later lifecycle code will execute.
 ```sh
 pnpm crucible vm:create --dry-run
 pnpm crucible vm:start --dry-run
+pnpm crucible vm:status
+pnpm crucible vm:start
+pnpm crucible vm:logs
+pnpm crucible vm:stop
 ```
 
 The default QEMU plan uses:
@@ -69,3 +73,14 @@ QMP is unavailable, or when QEMU does not exit before the stop timeout, lifecycl
 bounded host signals and escalates to `SIGKILL` after timeout. Stale pid and socket cleanup is
 limited to project-owned paths and does not delete disks, snapshots, Windows ISOs, virtio media, or
 operator sample directories.
+
+CLI lifecycle commands map directly onto the core lifecycle manager:
+
+- `vm:create --dry-run` prints the qcow2 creation command and QEMU launch plan without touching disk
+  state.
+- `vm:start --dry-run` prints the QEMU launch plan without starting QEMU.
+- `vm:start` launches QEMU detached and records pid, log, state, and artifact manifests.
+- `vm:status` reports process liveness and QMP status when the VM is running.
+- `vm:logs` prints the QEMU stdout and stderr logs, using `(missing)` before a log file exists.
+- `vm:stop` requests graceful QMP `quit`, `vm:stop --poweroff` requests guest powerdown, and
+  `vm:stop --kill` force-kills the recorded process.
