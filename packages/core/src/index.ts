@@ -111,16 +111,25 @@ export {
   buildGuestAgentCertificateStagePlan,
   buildProvisioningPlan,
   buildProvisioningSecretStorageContract,
+  buildGuestHealthReport,
   canAdvanceProvisioningStage,
   createInitialProvisioningStateMachine,
   PROVISIONING_SCRIPT_RUNNERS,
   PROVISIONING_SECRET_KINDS,
   PROVISIONING_STAGE_IDS,
   PROVISIONING_STAGE_TRANSITIONS,
+  runProvisioningCommand,
   writeWindowsAccountSecrets,
 } from "./provisioning.js";
 export type {
+  GuestHealthCheckResult,
+  GuestHealthReport,
+  GuestHealthStatus,
   GuestAgentCertificateStagePlan,
+  ProvisioningCommandResult,
+  ProvisioningCommandRunnerOptions,
+  ProvisioningCommandStep,
+  ProvisioningExecutor,
   ProvisioningPlan,
   ProvisioningPlanOptions,
   ProvisioningReadinessCheck,
@@ -159,5 +168,11 @@ export type {
 } from "./qmp.js";
 export { buildQemuCommandPlan, renderQemuCreateDryRun, renderQemuStartDryRun } from "./qemu.js";
 export type { QemuCommandPlan, QemuDiskPlan, QemuPlanOptions, QemuSocketPlan } from "./qemu.js";
+export { SnapshotManager } from "./snapshot.js";
+export type {
+  SnapshotCommandResult,
+  SnapshotManagerOptions,
+  SnapshotOperation,
+} from "./snapshot.js";
 
 export const CRUCIBLE_VERSION = "0.0.0";

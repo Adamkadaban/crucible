@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseCrucibleConfig } from "@crucible/core";
+import { buildLifecyclePaths, parseCrucibleConfig, type VmStatus } from "@crucible/core";
 
 import { runCrucibleCli } from "./index.js";
 
@@ -158,26 +158,40 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Unknown media profile: windows-10");
   });
 
-  it("prints the scaffolded provisioning policy audit plan", async () => {
-    const result = await runCrucibleCli(["provision"], {
-      config: parseCrucibleConfig({
-        vm: { name: "test-win" },
-        analysisPolicy: {
-          profile: {
-            hostname: "DESKTOP-7F3K9Q2",
-            username: "analyst",
-            commonAnalysisLabCamouflage: true,
-          },
+  it("runs provision through fake lifecycle, stage, snapshot, and health contracts", async () => {
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      analysisPolicy: {
+        profile: {
+          hostname: "DESKTOP-7F3K9Q2",
+          username: "analyst",
+          commonAnalysisLabCamouflage: true,
         },
-      }),
+      },
+    });
+    const result = await runCrucibleCli(["provision"], {
+      config,
+      lifecycleManager: fakeLifecycleManager(config, { processAlive: true, qmpAvailable: true }),
+      provisioningExecutor: {
+        runStage(stage) {
+          return Promise.resolve({
+            id: stage.id,
+            title: stage.title,
+            status: "succeeded",
+            detail: stage.script?.scriptPath ?? "readiness contract",
+          });
+        },
+      },
+      snapshotManager: fakeSnapshotManager(config),
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Analysis policy script: guest/provision/configure-policy.ps1");
-    expect(result.stdout).toContain("-RequireTestSigningDisabled '$true'");
-    expect(result.stdout).toContain("-CommonAnalysisLabCamouflage '$true'");
-    expect(result.stdout).toContain("-Hostname DESKTOP-7F3K9Q2");
-    expect(result.stdout).toContain("Defender disabled, code-integrity state recorded");
+    expect(result.stdout).toContain("Provisioning status: complete");
+    expect(result.stdout).toContain("policy-configured: succeeded");
+    expect(result.stdout).toContain("guest/provision/configure-policy.ps1");
+    expect(result.stdout).toContain("Snapshot create: clean-base");
+    expect(result.stdout).toContain("Guest health: degraded");
+    expect(result.stdout).toContain("debugger-health: unknown");
   });
 
   it("rejects unknown provision options", async () => {
@@ -185,6 +199,40 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown provision option: --apply");
+  });
+
+  it("prints snapshot create and restore results", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const snapshotManager = fakeSnapshotManager(config);
+
+    const create = await runCrucibleCli(["snapshot:create", "clean-base"], {
+      config,
+      snapshotManager,
+    });
+    const restore = await runCrucibleCli(["snapshot:restore", "clean-base"], {
+      config,
+      snapshotManager,
+    });
+
+    expect(create.exitCode).toBe(0);
+    expect(create.stdout).toContain("Snapshot create: clean-base");
+    expect(create.stdout).toContain("human-monitor-command savevm clean-base");
+    expect(restore.exitCode).toBe(0);
+    expect(restore.stdout).toContain("Snapshot restore: clean-base");
+    expect(restore.stdout).toContain("human-monitor-command loadvm clean-base");
+  });
+
+  it("reports guest health from lifecycle and provisioning contracts", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const result = await runCrucibleCli(["guest:health"], {
+      config,
+      lifecycleManager: fakeLifecycleManager(config, { processAlive: false, qmpAvailable: false }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("Guest health: unavailable");
+    expect(result.stdout).toContain("debugger-health: fail");
+    expect(result.stdout).toContain("QMP is unavailable");
   });
 
   it("prints vm:create dry-run QEMU planning output", async () => {
@@ -335,3 +383,74 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("err");
   });
 });
+
+function fakeLifecycleManager(
+  config: ReturnType<typeof parseCrucibleConfig>,
+  options: { readonly processAlive: boolean; readonly qmpAvailable: boolean },
+) {
+  const paths = buildLifecyclePaths(config);
+  const status: VmStatus = {
+    status: options.processAlive ? "running" : "stopped",
+    processAlive: options.processAlive,
+    qmpAvailable: options.qmpAvailable,
+    qmpStatus: options.qmpAvailable ? "running" : undefined,
+    paths,
+    warnings: [],
+  };
+
+  return {
+    paths,
+    start: () => Promise.resolve({ pid: 1234, status }),
+    stop: () =>
+      Promise.resolve({
+        status,
+        mode: "stop" as const,
+        qmpCommandSent: true,
+        killedAfterTimeout: false,
+      }),
+    poweroff: () =>
+      Promise.resolve({
+        status,
+        mode: "poweroff" as const,
+        qmpCommandSent: true,
+        killedAfterTimeout: false,
+      }),
+    kill: () =>
+      Promise.resolve({
+        status,
+        mode: "stop" as const,
+        qmpCommandSent: false,
+        killedAfterTimeout: true,
+      }),
+    status: () => Promise.resolve(status),
+  };
+}
+
+function fakeSnapshotManager(config: ReturnType<typeof parseCrucibleConfig>) {
+  return {
+    create: (snapshotName: string) =>
+      Promise.resolve(fakeSnapshotResult(config, "create", snapshotName)),
+    restore: (snapshotName: string) =>
+      Promise.resolve(fakeSnapshotResult(config, "restore", snapshotName)),
+  };
+}
+
+function fakeSnapshotResult(
+  config: ReturnType<typeof parseCrucibleConfig>,
+  operation: "create" | "restore",
+  snapshotName: string,
+) {
+  return {
+    operation,
+    snapshotName,
+    qmpCommand: operation === "create" ? ("savevm" as const) : ("loadvm" as const),
+    baseDiskPath: path.join(config.artifacts.directory, "disks", `${config.vm.name}.qcow2`),
+    metadataPath: path.join(
+      config.artifacts.snapshotsDirectory,
+      config.vm.name,
+      `${snapshotName}.json`,
+    ),
+    artifactManifestPath: config.artifacts.manifestPath,
+    clean: snapshotName === "clean-base",
+  };
+}

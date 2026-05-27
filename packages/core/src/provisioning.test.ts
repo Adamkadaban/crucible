@@ -4,14 +4,18 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { parseCrucibleConfig } from "./config.js";
+import { buildLifecyclePaths, type VmStatus } from "./lifecycle.js";
 import {
   buildGuestAgentCertificateStagePlan,
+  buildGuestHealthReport,
   buildProvisioningPlan,
   buildProvisioningSecretStorageContract,
   canAdvanceProvisioningStage,
   createInitialProvisioningStateMachine,
   PROVISIONING_SECRET_KINDS,
   PROVISIONING_STAGE_IDS,
+  runProvisioningCommand,
   writeWindowsAccountSecrets,
 } from "./provisioning.js";
 
@@ -314,6 +318,95 @@ describe("provisioning contracts", () => {
     });
   });
 
+  it("runs the provision command workflow with fake real-VM adapters", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "analysis-one" } });
+    const stages: string[] = [];
+    const result = await runProvisioningCommand({
+      config,
+      lifecycleManager: {
+        start: () => Promise.resolve({ pid: 1234, status: fakeVmStatus(config, true) }),
+        status: () => Promise.resolve(fakeVmStatus(config, true)),
+      },
+      executor: {
+        runStage(stage) {
+          stages.push(stage.id);
+          return Promise.resolve({
+            id: stage.id,
+            title: stage.title,
+            status: "succeeded",
+            detail: stage.script?.scriptPath ?? "readiness contract",
+          });
+        },
+      },
+      snapshotManager: {
+        create: (snapshotName) =>
+          Promise.resolve({
+            operation: "create",
+            snapshotName,
+            qmpCommand: "savevm",
+            baseDiskPath: "artifacts/disks/analysis-one.qcow2",
+            metadataPath: "snapshots/analysis-one/clean-base.json",
+            artifactManifestPath: "artifacts/manifest.json",
+            clean: true,
+          }),
+      },
+      now: () => new Date("2026-05-27T00:00:00.000Z"),
+    });
+
+    expect(result.status).toBe("complete");
+    expect(stages).toEqual(PROVISIONING_STAGE_IDS);
+    expect(result.snapshot?.snapshotName).toBe("clean-base");
+    expect(result.health.status).toBe("degraded");
+    expect(result.health.checks.map((check) => check.id)).toEqual([
+      "debugger-health",
+      "service-health",
+      "execution-contexts",
+      "policy-health",
+    ]);
+  });
+
+  it("blocks provision command workflow when real adapters are not configured", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "analysis-one" } });
+    const result = await runProvisioningCommand({
+      config,
+      lifecycleManager: {
+        start: () => Promise.resolve({ pid: 1234, status: fakeVmStatus(config, false) }),
+        status: () => Promise.resolve(fakeVmStatus(config, false)),
+      },
+      snapshotManager: {
+        create: () => {
+          throw new Error("snapshot should not run after blocked stage");
+        },
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toEqual(
+      expect.objectContaining({ id: "media-ready", status: "blocked" }),
+    );
+    expect(result.health.status).toBe("unavailable");
+  });
+
+  it("builds guest health reports from provisioning readiness contracts", () => {
+    const config = parseCrucibleConfig({ vm: { name: "analysis-one" } });
+    const report = buildGuestHealthReport({
+      config,
+      lifecycleStatus: fakeVmStatus(config, false),
+      now: () => new Date("2026-05-27T00:00:00.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      vmName: "analysis-one",
+      status: "unavailable",
+      generatedAt: "2026-05-27T00:00:00.000Z",
+      qmpAvailable: false,
+      qgaAvailable: false,
+      controlEndpoint: "127.0.0.1:8443",
+    });
+    expect(report.checks.map((check) => check.status)).toEqual(["fail", "fail", "fail", "fail"]);
+  });
+
   it("keeps account provisioning secrets out of PowerShell argv", async () => {
     const script = await readFile("guest/provision/create-local-accounts.ps1", "utf8");
 
@@ -343,4 +436,18 @@ describe("provisioning contracts", () => {
 
 async function mkdtempPath(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "crucible-provisioning-"));
+}
+
+function fakeVmStatus(
+  config: ReturnType<typeof parseCrucibleConfig>,
+  qmpAvailable: boolean,
+): VmStatus {
+  return {
+    status: qmpAvailable ? "running" : "stopped",
+    processAlive: qmpAvailable,
+    qmpAvailable,
+    qmpStatus: qmpAvailable ? "running" : undefined,
+    paths: buildLifecyclePaths(config),
+    warnings: [],
+  };
 }

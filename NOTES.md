@@ -49,3 +49,9 @@ stage contracts do not carry plaintext credentials. `packages/core/src/provision
 **Resolution:** Keep `winget install Microsoft.WinDbg` as the preferred WinDbg path, but verify both
 CDB and a WinDbg executable after winget and use SDK Debugging Tools as a backstop when tooling is
 incomplete. `guest/provision/install-windbg.ps1:176` · PR #62
+
+## 2026-05-27 — Phase 3 real-VM exit remains externally blocked
+
+**Resolution:** Provision, snapshot, restore, and guest health commands are wired through fakeable
+contracts, but the real exit test still needs a configured Windows VM with QGA and guest-service
+adapters. `PLAN.md:272` · issue #60
