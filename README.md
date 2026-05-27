@@ -128,6 +128,11 @@ capture contract for later firewall and packet-capture work. See
 [`docs/threat-model.md`](./docs/threat-model.md) for the Phase 2 network contracts and containment
 boundaries.
 
+`crucible net:plan --mode isolated` prints QEMU networking and firewall commands without mutating
+the host. It defaults to nftables dry-run commands and project-owned chains/rules only. Pass
+`--backend iptables` to render iptables commands, and pass `--apply` to also print the apply and
+teardown command models after the dry-run commands. `net:plan` never executes the apply model.
+
 `crucible media:plan` reads `crucible.config.json` when present and prints the default Windows 11
 Enterprise Evaluation ISO, stable virtio-win ISO, optional virtio guest tools bundle, and their
 expected cache paths. Pass `--manual` to include profile-specific manual download URLs. Use

@@ -87,6 +87,9 @@ default is containment, repeatability, and narrow host exposure rather than conv
 
 - Network rules must be project-owned and VM-scoped. Teardown may remove only matching Crucible
   owner tags and must not flush broad firewall tables or unrelated host interfaces.
+- Firewall plans default to dry-run output and project-owned nftables/iptables chains and comments.
+  Apply and teardown command models may target only firewall state generated for the same Crucible
+  VM owner tag.
 - The default control mapping listens on host loopback `127.0.0.1:8443` and forwards to guest
   address `192.0.2.2:8443`; QEMU user networking uses `192.0.2.1/30` as the QEMU-side gateway and
   `192.0.2.2/30` as the guest address.
@@ -100,3 +103,8 @@ default is containment, repeatability, and narrow host exposure rather than conv
 Crucible reduces accidental exposure, but it cannot guarantee containment against hypervisor
 escapes, kernel vulnerabilities, malicious media, supply-chain compromise, operator-added QEMU
 flags, or host misconfiguration. Run it on a dedicated analysis host when handling real malware.
+
+## Open Updates
+
+- Document guest-service authentication and file staging constraints after Phase 4 contracts land.
+- Document operator warnings and safe artifact directory policy as Phase 2 continues.

@@ -203,7 +203,7 @@ nftables/QEMU network actions with no guest egress route by default and all netw
 - [x] Define network modes: `isolated`, `nat`, and `capture`, with `isolated` as default.
 - [ ] Implement network plan generator for QEMU user/slirp or tap-backed host-only network choices
       with explicit firewall rules.
-- [ ] Add nftables or iptables rule generation with dry-run and apply modes, bounded to
+- [x] Add nftables or iptables rule generation with dry-run and apply modes, bounded to
       project-specific chains.
 - [ ] Add host-only control address allocation and guest API port mapping rules.
 - [ ] Add teardown logic that removes only project-owned network rules and interfaces.

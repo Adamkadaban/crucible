@@ -195,11 +195,25 @@ describe("core bootstrap exports", () => {
         },
       ],
     });
-    expect(plan.firewall.dryRunOnly).toBe(true);
+    expect(plan.firewall.defaultOperation).toBe("dry-run");
+    expect(plan.firewall.backend).toBe("nftables");
     expect(plan.firewall.rules.map((rule) => rule.intent)).toEqual([
       "allow-host-control",
       "deny-guest-egress",
     ]);
+    expect(plan.firewall.dryRun.map((command) => command.argv[0])).toEqual([
+      "printf",
+      "printf",
+      "printf",
+      "printf",
+    ]);
+    expect(plan.firewall.apply.map((command) => command.argv[0])).toEqual([
+      "nft",
+      "nft",
+      "nft",
+      "nft",
+    ]);
+    expect(plan.firewall.apply.at(-1)?.argv).toContain("drop");
     expect(plan.teardown).toEqual({
       owner: {
         project: "crucible",
@@ -274,6 +288,24 @@ describe("core bootstrap exports", () => {
     ]);
   });
 
+  it("can generate iptables firewall plans", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "nat" }),
+      firewallBackend: "iptables",
+      vmName: "analysis-one",
+    });
+
+    expect(plan.firewall.backend).toBe("iptables");
+    expect(plan.firewall.rules.map((rule) => rule.table)).toEqual(["iptables", "iptables"]);
+    expect(plan.firewall.apply.map((command) => command.argv[0])).toEqual([
+      "iptables",
+      "iptables",
+      "iptables",
+      "iptables",
+    ]);
+    expect(plan.firewall.apply.at(-1)?.argv).toContain("ACCEPT");
+  });
+
   it("plans capture networking with owned tap teardown contract", () => {
     const plan = buildNetworkPlan({
       config: parseNetworkConfig({ mode: "capture" }),
@@ -304,6 +336,29 @@ describe("core bootstrap exports", () => {
     ]);
     expect(plan.teardown.interfaceNames).toEqual(["crucible-analysis-one-net0-tap"]);
     expect(plan.firewall.rules.every((rule) => rule.owner.project === "crucible")).toBe(true);
+  });
+
+  it("plans default isolated firewall as deny egress without broad deletion", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({}),
+      vmName: "analysis-one",
+    });
+
+    const renderedCommands = [
+      ...plan.firewall.apply.map((command) => command.argv.join(" ")),
+      ...plan.firewall.teardown.map((command) => command.argv.join(" ")),
+    ].join("\n");
+
+    expect(plan.mode).toBe("isolated");
+    expect(renderedCommands).toContain("drop");
+    expect(renderedCommands).toContain(
+      "crucible:analysis-one:crucible-analysis-one-net0:deny-guest-egress",
+    );
+    expect(renderedCommands).not.toMatch(/\bflush\b/);
+    expect(renderedCommands).not.toContain("delete table inet filter");
+    expect(renderedCommands).not.toContain("delete table ip filter");
+    expect(renderedCommands).not.toMatch(/\b-F\b/);
+    expect(renderedCommands).not.toContain("iptables -X FORWARD");
   });
 
   it("accepts custom media overrides and qemu args", () => {
