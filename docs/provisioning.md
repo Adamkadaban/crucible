@@ -1,9 +1,10 @@
 # Windows Provisioning Contracts
 
 Phase 3 provisioning is contract-first. The current implementation defines the machine-readable
-state, stage, script, result, and secret shapes that later work will execute against a real Windows
-VM. WinDbg, account, and service provisioning scripts are present and fixture-tested, but CI tests
-inspect them with host-only fakes instead of running a Windows VM.
+state, stage, script, result, policy-audit, and secret shapes that later work will execute against a
+real Windows VM. WinDbg, account, service, and analysis policy scripts are present and
+fixture-tested, but CI tests inspect them with host-only fakes and JSON fixtures instead of running
+a Windows VM.
 
 ## State Machine
 
@@ -16,7 +17,8 @@ Provisioning advances in this order:
 4. `windbg-installed` verifies CDB, WinDbg, and the default symbol path.
 5. `guest-agent-installed` verifies the Crucible guest service, its firewall rule, and mTLS
    material.
-6. `policy-configured` verifies Defender, code-integrity, and test-signing states are recorded.
+6. `policy-configured` disables Defender policy, records code-integrity policy state, confirms test
+   signing is disabled, and records optional environment profile settings.
 7. `local-accounts-created` verifies standard and admin execution accounts.
 8. `health-checked` verifies debugger, service, execution-context, and policy health outputs.
 9. `snapshot-prepared` verifies the guest is quiesced and clean snapshot metadata is ready.
@@ -86,6 +88,36 @@ Defined secret kinds are:
 - `mtls-host-client-certificate`
 - `mtls-guest-server-private-key`
 - `mtls-guest-server-certificate`
+
+## Analysis VM Policy
+
+`guest/provision/configure-policy.ps1` is the policy stage script for isolated analysis VMs. Its
+contract keeps malware-analysis defaults intentionally unsafe inside the guest but visible in audit
+output:
+
+- Windows Defender policy and real-time monitoring are disabled for isolated analysis VMs.
+- Code-integrity and HVCI policy state is changed and recorded.
+- Test signing is forced off and must remain disabled by default. There is no config switch for
+  enabling it; a future driver-lab mode must add an explicit separate policy.
+- The script emits JSON with observed Defender, code-integrity, test-signing, profile, and warning
+  fields.
+
+The optional `analysisPolicy.profile` config section controls malware-reversing lab profile details:
+
+- `hostname`, which is applied with `Rename-Computer` when it differs from the current computer
+  name.
+- `username`, which is recorded as a profile label for the later account-provisioning stage.
+- `locale`, defaulting to `en-US`.
+- `screenSize`, defaulting to `1920x1080`, which is recorded as a profile label for later display
+  provisioning.
+- `disableSleep`, `showFileExtensions`, `showHiddenFiles`, `showExplorerRibbon`, and
+  `clearRecentExplorerHistory`, all defaulting to `true`.
+- `commonAnalysisLabCamouflage`, defaulting to `false`, which applies low-risk Explorer and desktop
+  camouflage settings.
+
+Host-side helpers parse the JSON audit output and produce readiness checks for `defender-disabled`,
+`code-integrity-recorded`, `test-signing-disabled`, and `analysis-profile-audited`. These checks are
+fixture-tested and do not require a real Windows VM in CI.
 
 ## Local Accounts
 

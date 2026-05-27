@@ -63,6 +63,36 @@
         }
       }
     },
+    "analysisPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "isolatedAnalysisVm": { "const": true, "default": true },
+        "disableDefender": { "type": "boolean", "default": true },
+        "disableCodeIntegrity": { "type": "boolean", "default": true },
+        "requireTestSigningDisabled": { "const": true, "default": true },
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hostname": { "type": "string", "minLength": 1 },
+            "username": { "type": "string", "minLength": 1 },
+            "locale": { "type": "string", "minLength": 1, "default": "en-US" },
+            "screenSize": {
+              "type": "string",
+              "pattern": "^\\d{3,5}x\\d{3,5}$",
+              "default": "1920x1080"
+            },
+            "disableSleep": { "type": "boolean", "default": true },
+            "showFileExtensions": { "type": "boolean", "default": true },
+            "showHiddenFiles": { "type": "boolean", "default": true },
+            "showExplorerRibbon": { "type": "boolean", "default": true },
+            "clearRecentExplorerHistory": { "type": "boolean", "default": true },
+            "commonAnalysisLabCamouflage": { "type": "boolean", "default": false }
+          }
+        }
+      }
+    },
     "qmp": {
       "type": "object",
       "additionalProperties": false,

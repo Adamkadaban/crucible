@@ -158,6 +158,35 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Unknown media profile: windows-10");
   });
 
+  it("prints the scaffolded provisioning policy audit plan", async () => {
+    const result = await runCrucibleCli(["provision"], {
+      config: parseCrucibleConfig({
+        vm: { name: "test-win" },
+        analysisPolicy: {
+          profile: {
+            hostname: "DESKTOP-7F3K9Q2",
+            username: "analyst",
+            commonAnalysisLabCamouflage: true,
+          },
+        },
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Analysis policy script: guest/provision/configure-policy.ps1");
+    expect(result.stdout).toContain("-RequireTestSigningDisabled '$true'");
+    expect(result.stdout).toContain("-CommonAnalysisLabCamouflage '$true'");
+    expect(result.stdout).toContain("-Hostname DESKTOP-7F3K9Q2");
+    expect(result.stdout).toContain("Defender disabled, code-integrity state recorded");
+  });
+
+  it("rejects unknown provision options", async () => {
+    const result = await runCrucibleCli(["provision", "--apply"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown provision option: --apply");
+  });
+
   it("prints vm:create dry-run QEMU planning output", async () => {
     const result = await runCrucibleCli(["vm:create", "--dry-run"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),

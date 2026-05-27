@@ -2,6 +2,12 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  buildAnalysisVmPolicyScriptArguments,
+  defaultAnalysisVmPolicyConfig,
+  type AnalysisVmPolicyConfig,
+} from "./analysis-policy.js";
+
 export const PROVISIONING_STAGE_IDS = [
   "media-ready",
   "vm-booted",
@@ -171,6 +177,7 @@ export type ProvisioningPlanOptions = {
   readonly controlPort: number;
   readonly guestAddress: string;
   readonly snapshotName?: string;
+  readonly analysisPolicy?: AnalysisVmPolicyConfig;
 };
 
 const POWERSHELL = "powershell.exe";
@@ -350,12 +357,19 @@ function buildProvisioningStageContracts(
           "test-signing-disabled",
           "Test signing is disabled unless explicitly overridden",
         ),
+        requiredCheck(
+          "analysis-profile-audited",
+          "Analysis VM environment profile settings are recorded",
+        ),
       ],
       script: script(
         "configure-analysis-policy",
         "guest-agent-powershell",
         "guest/provision/configure-policy.ps1",
         {
+          scriptArguments: buildAnalysisVmPolicyScriptArguments(
+            options.analysisPolicy ?? defaultAnalysisVmPolicyConfig,
+          ),
           elevated: true,
         },
       ),

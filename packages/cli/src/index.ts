@@ -5,6 +5,7 @@ import {
   buildNetworkPlan,
   buildNetworkTeardownOutputModel,
   buildMediaCachePlan,
+  buildProvisioningPlan,
   buildQemuCommandPlan,
   FIREWALL_BACKENDS,
   getManualDownloadInstructions,
@@ -84,15 +85,7 @@ export async function runCrucibleCli(
     case "vm:logs":
       return runVmLogsCommand(rest, runtime);
     case "provision":
-      return {
-        exitCode: 0,
-        stdout: [
-          "crucible provision is scaffolded.",
-          "Future phases will fetch media, build the VM, install WinDbg, and install the guest service.",
-          getManualDownloadInstructions(),
-        ].join("\n"),
-        stderr: "",
-      };
+      return renderProvisionCommand(rest, runtime);
     case "mcp":
       return {
         exitCode: 0,
@@ -227,6 +220,37 @@ async function runVmLogsCommand(
 
 function getLifecycleManager(runtime: CliRuntime): VmLifecycleManager {
   return new VmLifecycleManager({ config: getRuntimeConfig(runtime) });
+}
+
+function renderProvisionCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown provision option: ${args[0]}` };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const plan = buildProvisioningPlan({
+    vmName: config.vm.name,
+    secretsDirectory: config.artifacts.secretsDirectory,
+    controlPort: config.network.controlPort,
+    guestAddress: "192.0.2.2",
+    analysisPolicy: config.analysisPolicy,
+  });
+  const policyStage = plan.stages.find((stage) => stage.id === "policy-configured");
+
+  return {
+    exitCode: 0,
+    stdout: [
+      "crucible provision is scaffolded.",
+      "Provisioning plan includes analysis VM policy configuration and CI-safe readiness contracts.",
+      `VM: ${plan.vmName}`,
+      `Analysis policy script: ${policyStage?.script?.scriptPath ?? "missing"}`,
+      `Analysis policy argv: ${policyStage?.script?.arguments.map(shellQuote).join(" ") ?? "missing"}`,
+      "Audit checks: Defender disabled, code-integrity state recorded, test signing disabled, environment profile recorded.",
+      "Real Windows VM execution is deferred to the Phase 3 provision-real-vm worktree.",
+      getManualDownloadInstructions(),
+    ].join("\n"),
+    stderr: "",
+  };
 }
 
 function getRuntimeConfig(runtime: CliRuntime): CrucibleConfig {
