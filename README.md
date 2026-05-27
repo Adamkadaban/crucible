@@ -67,6 +67,8 @@ pnpm crucible --help
 pnpm crucible media:plan
 pnpm crucible media:plan --manual
 pnpm crucible media:plan --profile windows-server-2025-eval
+pnpm crucible net:plan --mode isolated
+pnpm crucible net:teardown --dry-run
 pnpm crucible vm:create --dry-run
 pnpm crucible vm:start --dry-run
 pnpm crucible vm:status
@@ -132,6 +134,12 @@ boundaries.
 the host. It defaults to nftables dry-run commands and project-owned chains/rules only. Pass
 `--backend iptables` to render iptables commands, and pass `--apply` to also print the apply and
 teardown command models after the dry-run commands. `net:plan` never executes the apply model.
+
+`crucible net:teardown --dry-run` prints the idempotent teardown model for project-owned firewall
+rules and tap interfaces. Missing resources are ignored, and teardown refuses resources that do not
+match the current Crucible owner tag and teardown contract. Pass `--apply` to print the privileged
+apply model after reviewing the dry run; the CLI still does not execute host firewall or interface
+commands in Phase 2.
 
 `crucible media:plan` reads `crucible.config.json` when present and prints the default Windows 11
 Enterprise Evaluation ISO, stable virtio-win ISO, optional virtio guest tools bundle, and their

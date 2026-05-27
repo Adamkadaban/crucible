@@ -206,10 +206,10 @@ nftables/QEMU network actions with no guest egress route by default and all netw
 - [x] Add nftables or iptables rule generation with dry-run and apply modes, bounded to
       project-specific chains.
 - [ ] Add host-only control address allocation and guest API port mapping rules.
-- [ ] Add teardown logic that removes only project-owned network rules and interfaces.
+- [x] Add teardown logic that removes only project-owned network rules and interfaces.
 - [x] Add threat model documentation covering malware escape assumptions, host file exposure,
       credentials, snapshots, and Internet egress.
-- [ ] Add tests for default-deny egress, teardown idempotence, and no broad firewall deletion.
+- [x] Add tests for default-deny egress, teardown idempotence, and no broad firewall deletion.
 - [ ] Add operator warnings for running samples and a safe default artifact directory outside shared
       home directories.
 
