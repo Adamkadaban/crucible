@@ -54,10 +54,12 @@ shows the launch argv only. Neither command downloads media, creates disks, or s
 
 ## Provisioning Outline
 
-Windows provisioning currently has contracts plus fixture-tested account and service scripts. The
-planned flow is media readiness, VM boot, QGA readiness, WinDbg/CDB installation, guest agent
-installation, analysis policy changes, local account creation, health checks, and clean snapshot
-preparation.
+Windows provisioning currently has contracts plus fixture-tested WinDbg, account, and service
+scripts. The planned flow is media readiness, VM boot, QGA readiness, WinDbg/CDB installation, guest
+agent installation, analysis policy changes, local account creation, health checks, and clean
+snapshot preparation. The WinDbg stage has PowerShell scripts for installing debugger tooling with
+`winget install Microsoft.WinDbg` or a Windows SDK Debugging Tools fallback, configuring
+`_NT_SYMBOL_PATH`, and detecting `cdb.exe`/`windbg.exe` readiness.
 
 Generated Windows account credentials and mTLS files are host-only secrets under
 `artifacts.secretsDirectory`, not repository files or guest shared-folder contents. The local

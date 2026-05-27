@@ -37,3 +37,9 @@ requests; resolve initial threads and report the re-review blocker. `AGENTS.md:7
 **Resolution:** Windows execution account passwords are generated into host-only secret JSON files
 and injected into the account script through process environment variables so PowerShell argv and
 stage contracts do not carry plaintext credentials. `packages/core/src/provisioning.ts` · issue #57
+
+## 2026-05-27 — WinDbg winget package may not provide CDB
+
+**Resolution:** Keep `winget install Microsoft.WinDbg` as the preferred WinDbg path, but verify both
+CDB and a WinDbg executable after winget and use SDK Debugging Tools as a backstop when tooling is
+incomplete. `guest/provision/install-windbg.ps1:176` · PR #62
