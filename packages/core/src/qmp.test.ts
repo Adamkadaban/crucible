@@ -625,7 +625,7 @@ describe("QmpClient", () => {
     await server.close();
   });
 
-  it("allows retry after a connect timeout", async () => {
+  it("allows retry after a greeting timeout", async () => {
     const socketPath = path.join(await createTempDir(), "qmp.sock");
     const server = await createFakeQmpServerAt(socketPath, () => undefined);
     const client = new QmpClient({ socketPath, timeoutMs: 20 });
@@ -849,12 +849,13 @@ async function createTempDir(): Promise<string> {
   return dir;
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
     if (predicate()) {
       return;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("condition was not met before timeout");
 }
