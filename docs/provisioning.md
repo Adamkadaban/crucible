@@ -119,6 +119,17 @@ Host-side helpers parse the JSON audit output and produce readiness checks for `
 `code-integrity-recorded`, `test-signing-disabled`, and `analysis-profile-audited`. These checks are
 fixture-tested and do not require a real Windows VM in CI.
 
+## Clean-Base Snapshot
+
+The provisioning exit flow uses `snapshot:create clean-base` after the guest is healthy and
+`snapshot:restore clean-base` before the final health check. The snapshot manager stores the
+`clean-base` record in the artifact manifest with the base qcow2 disk path, QEMU snapshot tag, clean
+flag, snapshot mode, and last restore timestamp.
+
+QMP-backed snapshots pause the VM, save or load the snapshot, and resume the VM. Offline qcow2
+fallback uses `qemu-img snapshot` only when QMP is unavailable before any snapshot command starts.
+Host-only tests cover both paths without launching QEMU or a Windows guest.
+
 ## Local Accounts
 
 `guest/provision/create-local-accounts.ps1` creates or updates two local accounts:
@@ -153,4 +164,4 @@ It is not the steady-state control plane and is not opened by the account or ser
 
 The contracts and scripts intentionally stop before full provisioning execution. Later Phase 3 work
 will add the remaining PowerShell scripts, fake executors, real QGA and guest-service invocation,
-snapshot operations, health commands, and the real-VM phase exit test.
+health commands, and the real-VM phase exit test.

@@ -49,3 +49,10 @@ stage contracts do not carry plaintext credentials. `packages/core/src/provision
 **Resolution:** Keep `winget install Microsoft.WinDbg` as the preferred WinDbg path, but verify both
 CDB and a WinDbg executable after winget and use SDK Debugging Tools as a backstop when tooling is
 incomplete. `guest/provision/install-windbg.ps1:176` · PR #62
+
+## 2026-05-27 — Snapshot fallback only before QMP mutation
+
+**Resolution:** The snapshot manager falls back to `qemu-img snapshot` only when QMP is unavailable
+before a snapshot command is sent; after a QMP pause/save/load attempt starts, errors are surfaced
+so restore semantics do not silently mix online and offline modes. `packages/core/src/snapshot.ts` ·
+issue #58

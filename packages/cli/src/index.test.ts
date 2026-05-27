@@ -334,4 +334,53 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("out");
     expect(result.stdout).toContain("err");
   });
+
+  it("prints snapshot list from the artifact manifest", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+    await mkdir(path.join(root, "artifacts"), { recursive: true });
+    await writeFile(
+      config.artifacts.manifestPath,
+      JSON.stringify({
+        version: 1,
+        vmName: "test-win",
+        artifacts: [
+          {
+            kind: "snapshot",
+            name: "clean-base",
+            path: path.join(root, "snapshots", "clean-base.qcow2-internal"),
+            createdAt: "2026-05-27T00:00:00.000Z",
+            baseDiskPath: path.join(root, "artifacts", "disks", "test-win.qcow2"),
+            clean: true,
+            mode: "offline-qcow2",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await runCrucibleCli(["snapshot:list"], { config });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Snapshots:");
+    expect(result.stdout).toContain("clean-base: clean, offline-qcow2");
+  });
+
+  it("defaults snapshot commands to clean-base", async () => {
+    const result = await runCrucibleCli(["snapshot:restore", "--flag"]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("snapshot:restore accepts at most one snapshot name");
+  });
 });

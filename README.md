@@ -76,6 +76,9 @@ pnpm crucible vm:start
 pnpm crucible vm:logs
 pnpm crucible vm:stop
 pnpm crucible provision
+pnpm crucible snapshot:create clean-base
+pnpm crucible snapshot:list
+pnpm crucible snapshot:restore clean-base
 pnpm crucible mcp
 ```
 
@@ -224,6 +227,20 @@ paths and only when the recorded process is no longer alive. Disk images, Window
 sample directories, and other operator-provided artifacts are not deleted by lifecycle cleanup. For
 real malware work, prefer artifact and sample directories on a dedicated analysis volume rather than
 under a shared home directory or cloud-synced path.
+
+## Snapshots
+
+`crucible snapshot:create [name]`, `crucible snapshot:list`, and `crucible snapshot:restore [name]`
+manage QEMU/qcow2 snapshots and record their metadata in `artifacts/manifest.json`. The default name
+is `clean-base`, matching the Phase 3 provisioning baseline and later malware workflow restore
+point.
+
+When QMP is available, snapshot creation and restore pause the VM, use QMP snapshot commands, and
+resume execution. When QMP is unavailable before any snapshot command is sent, creation and restore
+fall back to `qemu-img snapshot -c` and `qemu-img snapshot -a` against the configured qcow2 disk.
+The manifest records the snapshot name, clean-base flag, base disk path, QEMU tag, mode, and last
+restore time. Snapshot names are limited to short alphanumeric, `.`, `_`, and `-` names so they are
+safe as QEMU tags and manifest keys.
 
 ## QEMU Dry Runs
 
