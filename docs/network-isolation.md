@@ -17,16 +17,18 @@ commands.
 
 `isolated` is still the secure default. Its QEMU netdev uses `restrict=on`, which leaves the guest
 without a general egress route while allowing the planned guest control service to be reached
-through one TCP forward. The default control mapping is:
+through one TCP forward bound to host loopback. The default control mapping is:
 
 ```text
-192.0.2.1:8443 -> 192.0.2.2:8443
+127.0.0.1:8443 -> 192.0.2.2:8443
 ```
 
-The port comes from `network.controlPort`. `nat` uses the same address allocation and port mapping
-with `restrict=off`, making guest egress explicit in the dry-run command. `capture` uses a
-project-owned tap name, `<netdev-id>-tap`, so later firewall and capture setup can bind traffic to a
-specific Crucible VM.
+The port comes from `network.controlPort`. QEMU user networking is assigned `192.0.2.0/30` with
+`192.0.2.1` as the QEMU-side gateway and `192.0.2.2` as the guest DHCP start address; the host
+listener remains `127.0.0.1` so no unconfigured host interface address is required. `nat` uses the
+same address allocation and port mapping with `restrict=off`, making guest egress explicit in the
+dry-run command. `capture` uses a project-owned tap name, `<netdev-id>-tap`, so later firewall and
+capture setup can bind traffic to a specific Crucible VM.
 
 ## Contract Surfaces
 

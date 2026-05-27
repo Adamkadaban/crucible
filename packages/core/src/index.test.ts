@@ -175,7 +175,7 @@ describe("core bootstrap exports", () => {
       deviceModel: "virtio-net-pci",
       args: [
         "-netdev",
-        "user,id=crucible-analysis-one-net0,restrict=on,hostfwd=tcp:192.0.2.1:9443-192.0.2.2:9443",
+        "user,id=crucible-analysis-one-net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:9443-192.0.2.2:9443",
         "-device",
         "virtio-net-pci,netdev=crucible-analysis-one-net0",
       ],
@@ -188,7 +188,7 @@ describe("core bootstrap exports", () => {
       portForwards: [
         {
           protocol: "tcp",
-          hostAddress: "192.0.2.1",
+          hostListenAddress: "127.0.0.1",
           hostPort: 9443,
           guestAddress: "192.0.2.2",
           guestPort: 9443,
@@ -260,7 +260,7 @@ describe("core bootstrap exports", () => {
       deviceModel: "virtio-net-pci",
       args: [
         "-netdev",
-        "user,id=crucible-analysis-one-net0,restrict=off,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+        "user,id=crucible-analysis-one-net0,restrict=off,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
         "-device",
         "virtio-net-pci,netdev=crucible-analysis-one-net0",
       ],
@@ -285,7 +285,7 @@ describe("core bootstrap exports", () => {
       portForwards: [
         {
           protocol: "tcp",
-          hostAddress: "192.0.2.1",
+          hostListenAddress: "127.0.0.1",
           hostPort: 8443,
           guestAddress: "192.0.2.2",
           guestPort: 8443,
@@ -384,7 +384,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0");
     expect(plan.args).toContain(
-      "user,id=crucible-win11-net0,restrict=on,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+      "user,id=crucible-win11-net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
     expect(plan.args).toContain("virtio-net-pci,netdev=crucible-win11-net0");
     expect(plan.network.backend).toBe("user");
@@ -454,7 +454,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
     expect(plan.args).toContain(
-      "user,id=crucible-custom-lab-net0,restrict=off,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+      "user,id=crucible-custom-lab-net0,restrict=off,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
     expect(plan.args).toContain("virtio-net-pci,netdev=crucible-custom-lab-net0");
     expect(plan.network).toMatchObject({ backend: "user", mode: "nat" });
@@ -506,7 +506,7 @@ describe("core bootstrap exports", () => {
     expect(output).toContain("create disk: qemu-img create -f qcow2");
     expect(output).toContain("qemu-system-x86_64");
     expect(output).toContain("network mode: isolated (user)");
-    expect(output).toContain("guest control: 192.0.2.1:8443 -> 192.0.2.2:8443");
+    expect(output).toContain("guest control: 127.0.0.1:8443 -> 192.0.2.2:8443");
     expect(output).toContain("qmp socket: artifacts/qmp.sock");
     expect(output).toContain("qga socket: artifacts/qga.sock");
   });

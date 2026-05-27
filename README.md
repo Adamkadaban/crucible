@@ -105,8 +105,8 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
 ```
 
 `network.mode` accepts `isolated`, `nat`, or `capture`. `isolated` is the default and emits a
-restricted QEMU user-mode NIC only for host control traffic, mapping the configured `controlPort`
-from `192.0.2.1` on the host to `192.0.2.2` in the guest. `nat` is explicit guest egress through
+restricted QEMU user-mode NIC only for host control traffic, listening on `127.0.0.1:<controlPort>`
+and forwarding to `192.0.2.2:<controlPort>` in the guest. `nat` is explicit guest egress through
 unrestricted QEMU user networking with the same control-port mapping, and `capture` is a tap-backed
 capture contract for later firewall and packet-capture work. See
 [`docs/network-isolation.md`](./docs/network-isolation.md) and
@@ -167,9 +167,9 @@ sample directories, and other operator-provided artifacts are not deleted by lif
 `crucible vm:create --dry-run` renders the planned qcow2 creation and QEMU command without launching
 a VM. `crucible vm:start --dry-run` renders only the QEMU command and sockets. The default plan uses
 `qemu-system-x86_64` with KVM acceleration, a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`,
-restricted isolated networking with `restrict=on` and `hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443`,
-`virtio-scsi`, `virtio-serial`, a QMP Unix socket at `artifacts/qmp.sock`, and a QGA virtserial
-channel backed by `artifacts/qga.sock`.
+restricted isolated networking with `restrict=on`, `net=192.0.2.0/30`, and
+`hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443`, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at
+`artifacts/qmp.sock`, and a QGA virtserial channel backed by `artifacts/qga.sock`.
 
 Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the default
 `virtio-scsi-pci`/`scsi-hd` pair. `vm.extraQemuArgs` is appended at the end of the generated argv so

@@ -52,12 +52,13 @@ Extra arguments are appended after Crucible's required lifecycle devices so dry-
 shows both the managed baseline and operator overrides.
 
 When `network.mode` is `isolated`, the planner emits `virtio-net-pci` connected to a QEMU user-mode
-netdev with `restrict=on` plus a host-control `hostfwd` from `192.0.2.1:<controlPort>` to
-`192.0.2.2:<controlPort>`. This keeps the guest NIC present for the control plane without granting
-general egress. When `network.mode` is `nat`, the planner uses the same QEMU user-mode netdev with
-`restrict=off` so egress is an explicit operator choice. When `network.mode` is `capture`, it emits
-a tap-backed netdev contract for later packet-capture work. See `docs/network-isolation.md` for the
-network model contracts.
+netdev with `restrict=on`, `net=192.0.2.0/30`, `dhcpstart=192.0.2.2`, and a host-control `hostfwd`
+from `127.0.0.1:<controlPort>` to `192.0.2.2:<controlPort>`. This keeps the guest NIC present for
+the control plane without granting general egress or requiring a host interface with `192.0.2.1`.
+When `network.mode` is `nat`, the planner uses the same QEMU user-mode netdev with `restrict=off` so
+egress is an explicit operator choice. When `network.mode` is `capture`, it emits a tap-backed
+netdev contract for later packet-capture work. See `docs/network-isolation.md` for the network model
+contracts.
 
 ## Lifecycle State
 

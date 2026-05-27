@@ -33,7 +33,7 @@ export type ControlAddressAllocation = {
 
 export type QemuNetworkPortForward = {
   readonly protocol: "tcp";
-  readonly hostAddress: string;
+  readonly hostListenAddress: string;
   readonly hostPort: number;
   readonly guestAddress: string;
   readonly guestPort: number;
@@ -184,7 +184,7 @@ function buildQemuNetworkPlan(options: {
     deviceModel: options.networkDevice,
     args: [
       "-netdev",
-      qemuNetdevValue(options.mode, options.netdevId, portForwards),
+      qemuNetdevValue(options.mode, options.netdevId, options.controlAddress, portForwards),
       "-device",
       `${options.networkDevice},netdev=${options.netdevId}`,
     ],
@@ -200,7 +200,7 @@ function buildQemuPortForwards(
   return [
     {
       protocol: "tcp",
-      hostAddress: controlAddress.hostAddress,
+      hostListenAddress: "127.0.0.1",
       hostPort: controlAddress.guestApiPort,
       guestAddress: controlAddress.guestAddress,
       guestPort: controlAddress.guestApiPort,
@@ -211,6 +211,7 @@ function buildQemuPortForwards(
 function qemuNetdevValue(
   mode: NetworkMode,
   netdevId: string,
+  controlAddress: ControlAddressAllocation,
   portForwards: readonly QemuNetworkPortForward[],
 ): string {
   if (mode === "capture") {
@@ -222,12 +223,20 @@ function qemuNetdevValue(
     "user",
     `id=${netdevId}`,
     `restrict=${restrict}`,
+    `net=${qemuUserNetworkCidr(controlAddress)}`,
+    `host=${controlAddress.hostAddress}`,
+    `dhcpstart=${controlAddress.guestAddress}`,
     ...portForwards.map(formatQemuHostForward),
   ].join(",");
 }
 
+function qemuUserNetworkCidr(controlAddress: ControlAddressAllocation): string {
+  const networkAddress = controlAddress.hostAddress.replace(/\.\d+$/, ".0");
+  return `${networkAddress}/${controlAddress.prefixLength}`;
+}
+
 function formatQemuHostForward(forward: QemuNetworkPortForward): string {
-  return `hostfwd=${forward.protocol}:${forward.hostAddress}:${forward.hostPort}-${forward.guestAddress}:${forward.guestPort}`;
+  return `hostfwd=${forward.protocol}:${forward.hostListenAddress}:${forward.hostPort}-${forward.guestAddress}:${forward.guestPort}`;
 }
 
 function buildFirewallPlan(mode: NetworkMode, owner: NetworkOwnerTag): FirewallPlan {

@@ -82,7 +82,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("qemu-system-x86_64");
     expect(result.stdout).toContain("artifacts/disks/test-win.qcow2");
     expect(result.stdout).toContain("network mode: isolated (user)");
-    expect(result.stdout).toContain("guest control: 192.0.2.1:8443 -> 192.0.2.2:8443");
+    expect(result.stdout).toContain("guest control: 127.0.0.1:8443 -> 192.0.2.2:8443");
     expect(result.stdout).toContain("qmp socket: artifacts/qmp.sock");
   });
 
@@ -96,7 +96,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("qemu-img create -f qcow2");
     expect(result.stdout).toContain("type=q35,accel=kvm");
     expect(result.stdout).toContain(
-      "user,id=crucible-test-win-net0,restrict=on,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+      "user,id=crucible-test-win-net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
     expect(result.stdout).toContain("qga socket: artifacts/qga.sock");
   });
@@ -109,7 +109,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("network mode: nat (user)");
     expect(result.stdout).toContain(
-      "user,id=crucible-test-win-net0,restrict=off,hostfwd=tcp:192.0.2.1:8443-192.0.2.2:8443",
+      "user,id=crucible-test-win-net0,restrict=off,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
   });
 
