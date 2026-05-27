@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "$schema": { "type": "string" },
     "vm": {
       "type": "object",
       "additionalProperties": false,

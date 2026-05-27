@@ -156,6 +156,15 @@ describe("core bootstrap exports", () => {
     expect(defaultCrucibleConfig.qmp.timeoutMs).toBe(DEFAULT_QMP_TIMEOUT_MS);
   });
 
+  it("allows JSON schema markers in config files", () => {
+    const config = parseCrucibleConfig({
+      $schema: "./schemas/config.schema.json",
+      vm: { name: "schema-marked" },
+    });
+
+    expect(config.vm.name).toBe("schema-marked");
+  });
+
   it("defines the supported network modes", () => {
     expect(NETWORK_MODES).toEqual(["isolated", "nat", "capture"]);
     expect(parseNetworkConfig({})).toEqual({ mode: "isolated", controlPort: 8443 });

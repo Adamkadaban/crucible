@@ -4,13 +4,18 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildLifecyclePaths, parseCrucibleConfig, type VmStatus } from "@crucible/core";
+import {
+  buildLifecyclePaths,
+  defaultCrucibleConfig,
+  parseCrucibleConfig,
+  type VmStatus,
+} from "@crucible/core";
 
 import { runCrucibleCli } from "./index.js";
 
 describe("crucible CLI bootstrap", () => {
   it("prints help", async () => {
-    const result = await runCrucibleCli(["--help"]);
+    const result = await runCrucibleCli(["--help"], { config: defaultCrucibleConfig });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
@@ -18,7 +23,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints media plan without manual links by default", async () => {
-    const result = await runCrucibleCli(["media:plan"]);
+    const result = await runCrucibleCli(["media:plan"], { config: defaultCrucibleConfig });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Media profile: windows11-enterprise-eval");
@@ -31,7 +36,9 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints profile-specific manual-download instructions with --manual", async () => {
-    const result = await runCrucibleCli(["media:plan", "--manual"]);
+    const result = await runCrucibleCli(["media:plan", "--manual"], {
+      config: defaultCrucibleConfig,
+    });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Windows 11 Enterprise Evaluation page");
@@ -41,7 +48,9 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints alternate Windows Server media plan", async () => {
-    const result = await runCrucibleCli(["media:plan", "--profile", "windows-server-2025-eval"]);
+    const result = await runCrucibleCli(["media:plan", "--profile", "windows-server-2025-eval"], {
+      config: defaultCrucibleConfig,
+    });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Media profile: windows-server-2025-eval");
