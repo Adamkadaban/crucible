@@ -169,7 +169,7 @@ real VM.
       collection, and structured errors.
 - [ ] Implement lifecycle manager for create, start, stop, poweroff, kill-after-timeout, status, and
       cleanup.
-- [x] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
+- [ ] Implement artifact manifest storage for disks, sockets, pid files, logs, snapshots, and
       generated credentials.
 - [ ] Add CLI commands for `vm:create`, `vm:start`, `vm:stop`, `vm:status`, and `vm:logs`.
 - [ ] Add host-only fake tests for QEMU command generation, QMP parsing, lifecycle state
