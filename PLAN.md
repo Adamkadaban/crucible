@@ -201,27 +201,30 @@ nftables/QEMU network actions with no guest egress route by default and all netw
 **Deliverable checklist:**
 
 - [x] Define network modes: `isolated`, `nat`, and `capture`, with `isolated` as default.
-- [ ] Implement network plan generator for QEMU user/slirp or tap-backed host-only network choices
+- [x] Implement network plan generator for QEMU user/slirp or tap-backed host-only network choices
       with explicit firewall rules.
 - [x] Add nftables or iptables rule generation with dry-run and apply modes, bounded to
       project-specific chains.
-- [ ] Add host-only control address allocation and guest API port mapping rules.
+- [x] Add host-only control address allocation and guest API port mapping rules.
 - [x] Add teardown logic that removes only project-owned network rules and interfaces.
 - [x] Add threat model documentation covering malware escape assumptions, host file exposure,
       credentials, snapshots, and Internet egress.
 - [x] Add tests for default-deny egress, teardown idempotence, and no broad firewall deletion.
-- [ ] Add operator warnings for running samples and a safe default artifact directory outside shared
+- [x] Add operator warnings for running samples and a safe default artifact directory outside shared
       home directories.
 
 **Parallel-work split table:**
 
-| Wave            | Worktree slug     | Depends on | Tasks                                                                |
-| --------------- | ----------------- | ---------- | -------------------------------------------------------------------- |
-| 1 (solo)        | network-model     | Phase 1    | Network mode schema, interface contracts, docs outline               |
-| 2 (parallel x3) | firewall-planner  | wave 1     | nftables/iptables plan generator, dry-run/apply models, tests        |
-| 2 (parallel x3) | qemu-networking   | wave 1     | QEMU network argv integration, control address allocation, tests     |
-| 2 (parallel x3) | threat-model-docs | wave 1     | `docs/threat-model.md`, `docs/network-isolation.md`, README warnings |
-| 3 (solo)        | network-teardown  | wave 2     | Teardown command, idempotence tests, phase exit command              |
+| Wave            | Worktree slug     | Depends on | Tasks                                                                                     |
+| --------------- | ----------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| 1 (solo)        | network-model     | Phase 1    | Completed in PR #48: network mode schema, interface contracts, docs outline               |
+| 2 (parallel x3) | firewall-planner  | wave 1     | Completed in PR #51: nftables/iptables plan generator, dry-run/apply models, tests        |
+| 2 (parallel x3) | qemu-networking   | wave 1     | Completed in PR #49: QEMU network argv integration, control address allocation, tests     |
+| 2 (parallel x3) | threat-model-docs | wave 1     | Completed in PR #50: `docs/threat-model.md`, `docs/network-isolation.md`, README warnings |
+| 3 (solo)        | network-teardown  | wave 2     | Completed in PR #52: teardown command, idempotence tests, phase exit command              |
+
+Phase 2 exit test passed on 2026-05-27:
+`pnpm crucible net:plan --mode isolated && pnpm test -- --run network`.
 
 ### Phase 3 — Windows Guest Provisioning
 
