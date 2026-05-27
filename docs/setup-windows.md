@@ -54,9 +54,18 @@ shows the launch argv only. Neither command downloads media, creates disks, or s
 
 ## Provisioning Outline
 
-Windows provisioning is currently contract-only. The planned flow is media readiness, VM boot, QGA
-readiness, WinDbg/CDB installation, guest agent installation, analysis policy changes, local account
-creation, health checks, and clean snapshot preparation. Generated Windows account credentials and
-mTLS files are host-only secrets under `artifacts.secretsDirectory`, not repository files or guest
-shared-folder contents. See [`provisioning.md`](./provisioning.md) for the stage and script contract
-details.
+Windows provisioning currently has contracts plus fixture-tested account and service scripts. The
+planned flow is media readiness, VM boot, QGA readiness, WinDbg/CDB installation, guest agent
+installation, analysis policy changes, local account creation, health checks, and clean snapshot
+preparation.
+
+Generated Windows account credentials and mTLS files are host-only secrets under
+`artifacts.secretsDirectory`, not repository files or guest shared-folder contents. The local
+account script consumes generated passwords from process environment variables rather than
+command-line arguments. The guest service script expects mTLS material staged under
+`C:\ProgramData\Crucible\Agent\certs`, registers `CrucibleGuestAgent`, and creates a Windows
+firewall rule scoped to the host-only source address and configured control port.
+
+OpenSSH is reserved for bootstrap fallback only. Do not treat SSH as the steady-state control plane;
+normal post-bootstrap execution must go through the mTLS guest service. See
+[`provisioning.md`](./provisioning.md) for the stage and script contract details.

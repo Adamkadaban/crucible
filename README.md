@@ -167,12 +167,19 @@ while leaving command-specific payloads opaque for QEMU version compatibility. S
 
 ## Provisioning Contracts
 
-Phase 3 currently defines the Windows provisioning contracts without executing them. The core
-package models the ordered stages for media readiness, VM boot, QGA readiness, WinDbg/CDB
-installation, guest agent installation, policy changes, local accounts, health checks, and clean
-snapshot preparation. Script contracts describe the runner, PowerShell argv, timeout, elevation, and
-redaction behavior, while secret contracts keep generated Windows credentials and mTLS material
-under the configured `artifacts.secretsDirectory` as host-only `0600` files. See
+Phase 3 currently defines the Windows provisioning contracts and fixture-tested account/service
+scripts without executing a real VM in CI. The core package models the ordered stages for media
+readiness, VM boot, QGA readiness, WinDbg/CDB installation, guest agent installation, policy
+changes, local accounts, health checks, and clean snapshot preparation. Script contracts describe
+the runner, PowerShell argv, timeout, elevation, environment-backed secret injection, and redaction
+behavior. Secret contracts keep generated Windows credentials and mTLS material under the configured
+`artifacts.secretsDirectory` as host-only `0600` files.
+
+The Windows account script creates a standard `CrucibleUser` context and an admin `CrucibleAdmin`
+context from host-generated passwords that are not placed on command lines. The guest-agent service
+script registers `CrucibleGuestAgent`, verifies staged mTLS files, and creates an inbound firewall
+rule limited to the host-only source address and configured control port. OpenSSH remains a
+bootstrap fallback only, not the steady-state control channel. See
 [`docs/provisioning.md`](./docs/provisioning.md) for the outline.
 
 ## VM Lifecycle State

@@ -92,6 +92,7 @@ export type {
   ProcessRunner,
 } from "./process.js";
 export {
+  buildGuestAgentCertificateStagePlan,
   buildProvisioningPlan,
   buildProvisioningSecretStorageContract,
   canAdvanceProvisioningStage,
@@ -100,8 +101,10 @@ export {
   PROVISIONING_SECRET_KINDS,
   PROVISIONING_STAGE_IDS,
   PROVISIONING_STAGE_TRANSITIONS,
+  writeWindowsAccountSecrets,
 } from "./provisioning.js";
 export type {
+  GuestAgentCertificateStagePlan,
   ProvisioningPlan,
   ProvisioningPlanOptions,
   ProvisioningReadinessCheck,
@@ -118,6 +121,11 @@ export type {
   ProvisioningStageStatus,
   ProvisioningStageTransition,
   ProvisioningStateMachine,
+  WindowsAccountSecret,
+  WindowsAccountSecretOptions,
+  WindowsAccountSecretSummary,
+  WindowsAccountSecretWriteResult,
+  WindowsExecutionPrincipal,
 } from "./provisioning.js";
 export {
   DEFAULT_QMP_MAX_BUFFER_BYTES,

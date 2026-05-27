@@ -247,9 +247,9 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 - [ ] Add optional malware-reversing environment profile flags for hostname, username, locale,
       screen size, sleep settings, Explorer visibility, and other common analysis-lab camouflage
       settings.
-- [ ] Add Windows local account setup for standard and admin execution contexts with generated
+- [x] Add Windows local account setup for standard and admin execution contexts with generated
       credentials stored only in host project secrets.
-- [ ] Add guest agent installation script that registers the service, firewall rule limited to
+- [x] Add guest agent installation script that registers the service, firewall rule limited to
       host-only control network, and mTLS certificate material.
 - [ ] Add readiness checks for CDB/WinDbg, symbol path configuration, PowerShell version, service
       status, admin/non-admin accounts, Defender state, code-integrity state, and test-signing
