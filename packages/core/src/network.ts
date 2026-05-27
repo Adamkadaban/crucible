@@ -31,6 +31,14 @@ export type ControlAddressAllocation = {
   readonly guestApiPort: number;
 };
 
+export type QemuNetworkPortForward = {
+  readonly protocol: "tcp";
+  readonly hostListenAddress: string;
+  readonly hostPort: number;
+  readonly guestAddress: string;
+  readonly guestPort: number;
+};
+
 export type FirewallRuleIntent =
   | "allow-host-control"
   | "deny-guest-egress"
@@ -62,6 +70,7 @@ export type QemuNetworkPlan = {
   readonly deviceModel?: "virtio-net-pci";
   readonly args: readonly string[];
   readonly controlAddress: ControlAddressAllocation;
+  readonly portForwards: readonly QemuNetworkPortForward[];
   readonly owner: NetworkOwnerTag;
 };
 
@@ -166,38 +175,68 @@ function buildQemuNetworkPlan(options: {
   readonly networkDevice: "virtio-net-pci";
   readonly owner: NetworkOwnerTag;
 }): QemuNetworkPlan {
-  if (options.mode === "isolated") {
-    return {
-      mode: options.mode,
-      backend: "none",
-      args: [],
-      controlAddress: options.controlAddress,
-      owner: options.owner,
-    };
-  }
+  const portForwards = buildQemuPortForwards(options.controlAddress);
 
   return {
     mode: options.mode,
-    backend: options.mode === "nat" ? "user" : "tap",
+    backend: options.mode === "capture" ? "tap" : "user",
     netdevId: options.netdevId,
     deviceModel: options.networkDevice,
     args: [
       "-netdev",
-      qemuNetdevValue(options.mode, options.netdevId),
+      qemuNetdevValue(options.mode, options.netdevId, options.controlAddress, portForwards),
       "-device",
       `${options.networkDevice},netdev=${options.netdevId}`,
     ],
     controlAddress: options.controlAddress,
+    portForwards,
     owner: options.owner,
   };
 }
 
-function qemuNetdevValue(mode: NetworkMode, netdevId: string): string {
+function buildQemuPortForwards(
+  controlAddress: ControlAddressAllocation,
+): readonly QemuNetworkPortForward[] {
+  return [
+    {
+      protocol: "tcp",
+      hostListenAddress: "127.0.0.1",
+      hostPort: controlAddress.guestApiPort,
+      guestAddress: controlAddress.guestAddress,
+      guestPort: controlAddress.guestApiPort,
+    },
+  ];
+}
+
+function qemuNetdevValue(
+  mode: NetworkMode,
+  netdevId: string,
+  controlAddress: ControlAddressAllocation,
+  portForwards: readonly QemuNetworkPortForward[],
+): string {
   if (mode === "capture") {
     return `tap,id=${netdevId},ifname=${netdevId}-tap,script=no,downscript=no`;
   }
 
-  return `user,id=${netdevId}`;
+  const restrict = mode === "isolated" ? "on" : "off";
+  return [
+    "user",
+    `id=${netdevId}`,
+    `restrict=${restrict}`,
+    `net=${qemuUserNetworkCidr(controlAddress)}`,
+    `host=${controlAddress.hostAddress}`,
+    `dhcpstart=${controlAddress.guestAddress}`,
+    ...portForwards.map(formatQemuHostForward),
+  ].join(",");
+}
+
+function qemuUserNetworkCidr(controlAddress: ControlAddressAllocation): string {
+  const networkAddress = controlAddress.hostAddress.replace(/\.\d+$/, ".0");
+  return `${networkAddress}/${controlAddress.prefixLength}`;
+}
+
+function formatQemuHostForward(forward: QemuNetworkPortForward): string {
+  return `hostfwd=${forward.protocol}:${forward.hostListenAddress}:${forward.hostPort}-${forward.guestAddress}:${forward.guestPort}`;
 }
 
 function buildFirewallPlan(mode: NetworkMode, owner: NetworkOwnerTag): FirewallPlan {

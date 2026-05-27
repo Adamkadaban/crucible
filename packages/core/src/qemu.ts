@@ -116,9 +116,16 @@ export function renderQemuStartDryRun(plan: QemuCommandPlan): string {
 }
 
 function renderQemuStartDryRunLines(plan: QemuCommandPlan): readonly string[] {
+  const controlMappings = plan.network.portForwards.map(
+    (forward) =>
+      `- guest control: ${forward.hostListenAddress}:${forward.hostPort} -> ${forward.guestAddress}:${forward.guestPort}`,
+  );
+
   return [
     `- command: ${plan.dryRunCommand}`,
     `- disk: ${plan.disk.path} (${plan.disk.format}, ${plan.disk.bus})`,
+    `- network mode: ${plan.network.mode} (${plan.network.backend})`,
+    ...controlMappings,
     `- qmp socket: ${plan.sockets.qmp}`,
     `- qga socket: ${plan.sockets.qga}`,
   ];

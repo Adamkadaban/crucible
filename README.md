@@ -119,12 +119,12 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
 }
 ```
 
-`network.mode` accepts `isolated`, `nat`, or `capture`. `isolated` is the default malware-analysis
-posture: the current model plans QEMU backend `none`, emits no guest NIC arguments, and records
-`deny-guest-egress` firewall intent. `nat` is explicit guest Internet egress through QEMU user
-networking and emits an operator warning. `capture` is an explicit tap-backed capture contract that
-uses a project-owned `<netdevId>-tap` interface and requires packet captures to stay outside
-repo-controlled paths. See [`docs/network-isolation.md`](./docs/network-isolation.md) and
+`network.mode` accepts `isolated`, `nat`, or `capture`. `isolated` is the default and emits a
+restricted QEMU user-mode NIC only for host control traffic, listening on `127.0.0.1:<controlPort>`
+and forwarding to `192.0.2.2:<controlPort>` in the guest. `nat` is explicit guest egress through
+unrestricted QEMU user networking with the same control-port mapping, and `capture` is a tap-backed
+capture contract for later firewall and packet-capture work. See
+[`docs/network-isolation.md`](./docs/network-isolation.md) and
 [`docs/threat-model.md`](./docs/threat-model.md) for the Phase 2 network contracts and containment
 boundaries.
 
@@ -184,7 +184,8 @@ under a shared home directory or cloud-synced path.
 `crucible vm:create --dry-run` renders the planned qcow2 creation and QEMU command without launching
 a VM. `crucible vm:start --dry-run` renders only the QEMU command and sockets. The default plan uses
 `qemu-system-x86_64` with KVM acceleration, a qcow2 disk at `artifacts/disks/crucible-win11.qcow2`,
-no network device in isolated mode, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at
+restricted isolated networking with `restrict=on`, `net=192.0.2.0/30`, and
+`hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443`, `virtio-scsi`, `virtio-serial`, a QMP Unix socket at
 `artifacts/qmp.sock`, and a QGA virtserial channel backed by `artifacts/qga.sock`.
 
 Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the default

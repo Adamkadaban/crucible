@@ -6,13 +6,12 @@ network setup lands, use dry-run output to verify that the selected mode matches
 
 ## Network Modes
 
-- `isolated` is the default. It plans QEMU backend `none`, emits no `-netdev` or network `-device`
-  arguments, allows only the host-control intent, and records `deny-guest-egress` firewall intent.
-- `nat` is explicit opt-in guest Internet egress. It plans QEMU backend `user` with
-  `-netdev user,id=<netdevId>` and `virtio-net-pci`, and records `allow-nat-egress` firewall intent.
-- `capture` is explicit opt-in tap-backed capture. It plans QEMU backend `tap` with
-  `ifname=<netdevId>-tap`, `script=no`, `downscript=no`, and records `capture-guest-traffic`
-  firewall intent.
+- `isolated` emits a restricted QEMU user-mode NIC for the host-control path and carries firewall
+  intent to deny guest egress.
+- `nat` is an explicit opt-in mode for guest Internet egress through unrestricted QEMU user
+  networking.
+- `capture` is an explicit opt-in mode for tap-backed traffic capture while retaining project-owned
+  teardown tags.
 
 ## Configuration
 
@@ -31,16 +30,33 @@ The config schema accepts only these network fields:
 `network.controlPort` is the guest API port reserved for the host-only control plane and defaults to
 `8443`.
 
+## QEMU Integration
+
+`isolated` is still the secure default. Its QEMU netdev uses `restrict=on`, which leaves the guest
+without a general egress route while allowing the planned guest control service to be reached
+through one TCP forward bound to host loopback. The default control mapping is:
+
+```text
+127.0.0.1:8443 -> 192.0.2.2:8443
+```
+
+The port comes from `network.controlPort`. QEMU user networking is assigned `192.0.2.0/30` with
+`192.0.2.1` as the QEMU-side gateway and `192.0.2.2` as the guest DHCP start address; the host
+listener remains `127.0.0.1` so no unconfigured host interface address is required. `nat` uses the
+same address allocation and port mapping with `restrict=off`, making guest egress explicit in the
+dry-run command. `capture` uses a project-owned tap name, `<netdev-id>-tap`, so later firewall and
+capture setup can bind traffic to a specific Crucible VM.
+
 ## Contract Surfaces
 
 - `NetworkPlan` combines the selected mode, QEMU network arguments, firewall intent, control address
   allocation, teardown tags, and operator warnings.
-- `QemuNetworkPlan` records whether QEMU receives no network args, a user-mode netdev, or a
-  tap-backed netdev. The default `isolated` plan has `backend: "none"` and `args: []`.
-- `FirewallPlan` is dry-run-only in the current model layer and records nftables rule intent, owner
-  tags, and whether each rule would be added or removed. It does not mutate the host yet.
-- `ControlAddressAllocation` reserves `192.0.2.1/30` for the host, `192.0.2.2/30` for the guest, and
-  the configured guest API port for later guest-service work.
+- `FirewallPlan` is dry-run-only in the model layer and records rule intent, target firewall
+  backend, and owner tags without applying host rules.
+- `QemuNetworkPlan` records whether QEMU should receive a restricted user-mode netdev, an
+  unrestricted user-mode netdev, or a tap-backed netdev.
+- `ControlAddressAllocation` reserves the host-control address pair and guest API port used by later
+  guest-service work.
 - `NetworkTeardownPlan` lists only project-owned firewall rule IDs and interface names that teardown
   code may remove.
 
@@ -72,8 +88,8 @@ matching owner tag.
 ## Operator Guidance
 
 - Use `isolated` for malware samples unless a specific analysis objective requires egress.
-- Review `vm:start --dry-run` before launch. In isolated mode, the QEMU argv should not contain
-  `-netdev` or a network `-device`.
+- Review `vm:start --dry-run` before launch. In isolated mode, the QEMU argv should contain
+  `restrict=on` and only the loopback control `hostfwd` mapping.
 - Do not add `vm.extraQemuArgs` that create bridge, socket, VNC-over-network, host filesystem, or
   unrestricted network devices unless the host is dedicated to that risk.
 - Keep packet captures, dumps, and downloaded guest artifacts under artifact directories, not in Git
@@ -84,6 +100,5 @@ matching owner tag.
 ## Open Implementation Work
 
 - Generate concrete nftables or iptables dry-run/apply plans from `FirewallPlan`.
-- Wire host-only control address assignment into tap/user networking setup.
 - Implement `crucible net:plan --mode isolated` output for the Phase 2 exit test.
 - Add packet capture artifact metadata for `capture` mode.

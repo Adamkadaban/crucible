@@ -73,8 +73,8 @@ default is containment, repeatability, and narrow host exposure rather than conv
 ## Internet Egress
 
 - `isolated` is the default `network.mode` and is the malware-analysis default. The current network
-  contract omits a QEMU NIC and carries `deny-guest-egress` firewall intent, so the guest must not
-  have Internet access by default.
+  contract uses restricted QEMU user networking for the host-control channel only and carries
+  `deny-guest-egress` firewall intent, so the guest must not have Internet access by default.
 - `nat` is explicit opt-in guest Internet egress through QEMU user networking. Do not use it for
   unknown malware unless the analysis objective requires live egress and the operator accepts the
   risk.
@@ -87,9 +87,9 @@ default is containment, repeatability, and narrow host exposure rather than conv
 
 - Network rules must be project-owned and VM-scoped. Teardown may remove only matching Crucible
   owner tags and must not flush broad firewall tables or unrelated host interfaces.
-- The default control address allocation is documentation-only IPv4 space, `192.0.2.1/30` for the
-  host and `192.0.2.2/30` for the guest, with guest API port `network.controlPort` defaulting to
-  `8443`.
+- The default control mapping listens on host loopback `127.0.0.1:8443` and forwards to guest
+  address `192.0.2.2:8443`; QEMU user networking uses `192.0.2.1/30` as the QEMU-side gateway and
+  `192.0.2.2/30` as the guest address.
 - Host-only control is allowed; arbitrary guest-to-LAN, guest-to-Internet, and host filesystem
   access are not allowed in the safe default.
 - Operator-provided `vm.extraQemuArgs` can weaken containment. Review dry-run QEMU output before
