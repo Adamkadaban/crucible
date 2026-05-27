@@ -42,6 +42,25 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("allows retry after a transient connection failure", async () => {
+    const socketPath = path.join(await createTempDir(), "qmp.sock");
+    const client = new QmpClient({ socketPath, timeoutMs: 200 });
+
+    await expect(client.connect()).rejects.toMatchObject({ code: "QMP_CONNECTION_FAILED" });
+
+    const server = await createFakeQmpServerAt(socketPath, (connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) => {
+        connection.send({ return: {}, id: request.id });
+      });
+    });
+
+    await expect(client.connect()).resolves.toEqual(capturedGreeting.QMP);
+
+    client.close();
+    await server.close();
+  });
+
   it("memoizes concurrent connect calls during greeting negotiation", async () => {
     const sendGreeting: Array<() => void> = [];
     const server = await createFakeQmpServer((connection) => {
@@ -368,6 +387,56 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("preserves parse errors as the terminal failure cause", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", () => connection.sendRaw("{\r\n"));
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_PARSE_ERROR",
+      message: "QMP sent invalid JSON",
+    });
+    await expect(client.execute("query-block")).rejects.toMatchObject({
+      code: "QMP_PARSE_ERROR",
+      message: "QMP sent invalid JSON",
+    });
+
+    client.close();
+    await server.close();
+  });
+
+  it("preserves protocol errors as the terminal failure cause", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", () => connection.send({ return: {}, id: "unknown" }));
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("query-status")).rejects.toMatchObject({
+      code: "QMP_PROTOCOL_ERROR",
+      message: "QMP response used unknown request id: unknown",
+    });
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_PROTOCOL_ERROR",
+      message: "QMP response used unknown request id: unknown",
+    });
+
+    client.close();
+    await server.close();
+  });
+
   it("fails fast after the peer closes the socket", async () => {
     const server = await createFakeQmpServer((connection) => {
       connection.send(capturedGreeting);
@@ -480,6 +549,7 @@ type QmpRequest = {
 type FakeQmpConnection = {
   readonly send: (message: Record<string, unknown>) => void;
   readonly sendMany: (messages: readonly Record<string, unknown>[]) => void;
+  readonly sendRaw: (raw: string) => void;
   readonly onCommand: (command: string, handler: (request: QmpRequest) => void) => void;
   readonly close: () => void;
   readonly destroyWithError: () => void;
@@ -496,7 +566,13 @@ async function createFakeQmpServer(
   setup: (connection: FakeQmpConnection) => void,
 ): Promise<FakeQmpServer> {
   const dir = await createTempDir();
-  const socketPath = path.join(dir, "qmp.sock");
+  return createFakeQmpServerAt(path.join(dir, "qmp.sock"), setup);
+}
+
+async function createFakeQmpServerAt(
+  socketPath: string,
+  setup: (connection: FakeQmpConnection) => void,
+): Promise<FakeQmpServer> {
   const connections: net.Socket[] = [];
   const requests: QmpRequest[] = [];
   const server = net.createServer((socket) => {
@@ -507,6 +583,7 @@ async function createFakeQmpServer(
       send: (message) => socket.write(`${JSON.stringify(message)}\r\n`),
       sendMany: (messages) =>
         socket.write(messages.map((message) => JSON.stringify(message)).join("\r\n") + "\r\n"),
+      sendRaw: (raw) => socket.write(raw),
       onCommand: (command, handler) => handlers.set(command, handler),
       close: () => socket.end(),
       destroyWithError: () => {

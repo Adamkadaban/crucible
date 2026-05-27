@@ -67,9 +67,11 @@ export type ParsedQmpMessage =
 export class QmpClient {
   readonly #socketPath: string;
   readonly #timeoutMs: number;
-  readonly #socket: net.Socket;
+  #socket: net.Socket;
   #buffer = "";
   #connected = false;
+  #connecting = false;
+  #suppressNextClose = false;
   #ready = false;
   #nextId = 1;
   #greeting: QmpGreeting | undefined;
@@ -90,10 +92,17 @@ export class QmpClient {
   constructor(options: QmpClientOptions) {
     this.#socketPath = options.socketPath;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_QMP_TIMEOUT_MS;
-    this.#socket = new net.Socket();
-    this.#socket.setEncoding("utf8");
-    this.#socket.on("data", (chunk) => this.#handleData(chunk));
-    this.#socket.on("error", (error) => {
+    this.#socket = this.#createSocket();
+  }
+
+  #createSocket(): net.Socket {
+    const socket = new net.Socket();
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => this.#handleData(chunk));
+    socket.on("error", (error) => {
+      if (this.#connecting) {
+        return;
+      }
       this.#disconnectPermanently(
         qmpError("QMP_DISCONNECTED", "QMP socket error", {
           cause: error.message,
@@ -101,9 +110,17 @@ export class QmpClient {
         }),
       );
     });
-    this.#socket.on("close", () => {
+    socket.on("close", () => {
+      if (this.#suppressNextClose) {
+        this.#suppressNextClose = false;
+        return;
+      }
+      if (this.#connecting) {
+        return;
+      }
       this.#disconnectPermanently(qmpError("QMP_DISCONNECTED", "QMP socket closed"));
     });
+    return socket;
   }
 
   get greeting(): QmpGreeting | undefined {
@@ -239,8 +256,13 @@ export class QmpClient {
       throw this.#terminalError;
     }
 
+    if (this.#socket.destroyed) {
+      this.#socket = this.#createSocket();
+    }
+
     await new Promise<void>((resolve, reject) => {
       let settled = false;
+      this.#connecting = true;
       const timeout = setTimeout(() => {
         const error = qmpError(
           "QMP_TIMEOUT",
@@ -269,7 +291,9 @@ export class QmpClient {
           return;
         }
         settled = true;
+        this.#suppressNextClose = true;
         cleanup();
+        this.#socket.destroy();
         reject(
           qmpError("QMP_CONNECTION_FAILED", `failed to connect QMP socket ${this.#socketPath}`, {
             cause: error.message,
@@ -285,6 +309,7 @@ export class QmpClient {
         reject(qmpError("QMP_DISCONNECTED", "QMP socket closed before connecting"));
       };
       const cleanup = (): void => {
+        this.#connecting = false;
         clearTimeout(timeout);
         this.#socket.off("connect", onConnect);
         this.#socket.off("error", onError);
@@ -358,8 +383,7 @@ export class QmpClient {
     try {
       message = parseQmpMessage(line);
     } catch (error) {
-      this.#failAll(error);
-      this.close();
+      this.#terminateForProtocolError(error);
       return;
     }
 
@@ -386,8 +410,7 @@ export class QmpClient {
           break;
       }
     } catch (error) {
-      this.#failAll(error);
-      this.close();
+      this.#terminateForProtocolError(error);
     }
   }
 
@@ -446,6 +469,20 @@ export class QmpClient {
     this.#greeting = undefined;
     this.#usedCallerIds.clear();
     this.#failAll(error);
+  }
+
+  #terminateForProtocolError(error: unknown): void {
+    const terminalError =
+      error instanceof CrucibleError
+        ? error
+        : qmpError("QMP_PROTOCOL_ERROR", "QMP protocol handling failed", { error });
+    this.#terminalError = terminalError;
+    this.#connected = false;
+    this.#ready = false;
+    this.#greeting = undefined;
+    this.#usedCallerIds.clear();
+    this.#failAll(terminalError);
+    this.#socket.destroy();
   }
 
   #destroyPermanently(error: CrucibleError): void {
