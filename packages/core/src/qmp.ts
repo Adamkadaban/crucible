@@ -4,6 +4,7 @@ import { CrucibleError } from "./errors.js";
 
 export const DEFAULT_QMP_TIMEOUT_MS = 5000;
 export const DEFAULT_QMP_MAX_BUFFER_BYTES = 1024 * 1024;
+const GENERATED_ID_PREFIX = "crucible-";
 
 export type QmpRequestId = string | number;
 
@@ -172,6 +173,13 @@ export class QmpClient {
       return greeting;
     } catch (error) {
       this.#ready = false;
+      if (this.#connected) {
+        this.#destroyForRetry(
+          error instanceof CrucibleError
+            ? error
+            : qmpError("QMP_PROTOCOL_ERROR", "QMP capabilities negotiation failed", { error }),
+        );
+      }
       if (this.#terminalError === undefined) {
         this.#readyPromise = undefined;
       }
@@ -203,6 +211,16 @@ export class QmpClient {
 
     const callerSuppliedId = options.id !== undefined;
     const id = options.id ?? this.#nextRequestId();
+    if (callerSuppliedId && isGeneratedRequestId(id)) {
+      throw qmpError(
+        "QMP_PROTOCOL_ERROR",
+        `caller-supplied QMP request id uses reserved prefix: ${String(id)}`,
+        {
+          id,
+          reservedPrefix: GENERATED_ID_PREFIX,
+        },
+      );
+    }
     if (this.#pending.has(id) || this.#usedCallerIds.has(id)) {
       throw qmpError("QMP_PROTOCOL_ERROR", `duplicate QMP request id: ${String(id)}`, { id });
     }
@@ -264,6 +282,7 @@ export class QmpClient {
     }
 
     if (this.#socket.destroyed) {
+      this.#buffer = "";
       this.#socket = this.#createSocket();
     }
 
@@ -505,6 +524,7 @@ export class QmpClient {
     this.#connected = false;
     this.#ready = false;
     this.#greeting = undefined;
+    this.#buffer = "";
     this.#usedCallerIds.clear();
     this.#failAll(error);
     this.#suppressNextClose = true;
@@ -512,7 +532,7 @@ export class QmpClient {
   }
 
   #nextRequestId(): QmpRequestId {
-    const id = `crucible-${this.#nextId}`;
+    const id = `${GENERATED_ID_PREFIX}${this.#nextId}`;
     this.#nextId += 1;
     return id;
   }
@@ -611,6 +631,10 @@ function parseRequestId(value: unknown): QmpRequestId | undefined {
   }
 
   throw qmpError("QMP_PARSE_ERROR", "QMP request id must be a string or number", { value });
+}
+
+function isGeneratedRequestId(value: QmpRequestId): boolean {
+  return typeof value === "string" && value.startsWith(GENERATED_ID_PREFIX);
 }
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {

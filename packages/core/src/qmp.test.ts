@@ -326,6 +326,29 @@ describe("QmpClient", () => {
     await server.close();
   });
 
+  it("rejects caller-supplied IDs in the generated request namespace", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(
+      client.execute("query-status", undefined, { id: "crucible-2" }),
+    ).rejects.toMatchObject({
+      code: "QMP_PROTOCOL_ERROR",
+      message: "caller-supplied QMP request id uses reserved prefix: crucible-2",
+      details: { reservedPrefix: "crucible-" },
+    });
+
+    client.close();
+    await server.close();
+  });
+
   it("allows many generated IDs without recording them as caller supplied IDs", async () => {
     const server = await createFakeQmpServer((connection) => {
       connection.send(capturedGreeting);
@@ -538,6 +561,57 @@ describe("QmpClient", () => {
   it("allows retry after a connect timeout", async () => {
     const socketPath = path.join(await createTempDir(), "qmp.sock");
     const server = await createFakeQmpServerAt(socketPath, () => undefined);
+    const client = new QmpClient({ socketPath, timeoutMs: 20 });
+
+    await expect(client.connect()).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
+    await server.close();
+
+    const retryServer = await createFakeQmpServerAt(socketPath, (connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+    });
+
+    await expect(client.connect()).resolves.toEqual(capturedGreeting.QMP);
+
+    client.close();
+    await retryServer.close();
+  });
+
+  it("recreates the socket after qmp_capabilities times out", async () => {
+    const socketPath = path.join(await createTempDir(), "qmp.sock");
+    const server = await createFakeQmpServerAt(socketPath, (connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", () => undefined);
+    });
+    const client = new QmpClient({ socketPath, timeoutMs: 20 });
+
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_TIMEOUT",
+      details: { command: "qmp_capabilities" },
+    });
+    await server.close();
+
+    const retryServer = await createFakeQmpServerAt(socketPath, (connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+    });
+
+    await expect(client.connect()).resolves.toEqual(capturedGreeting.QMP);
+    expect(retryServer.requests).toEqual([{ execute: "qmp_capabilities", id: "crucible-2" }]);
+
+    client.close();
+    await retryServer.close();
+  });
+
+  it("clears partial parser state before retrying on a new socket", async () => {
+    const socketPath = path.join(await createTempDir(), "qmp.sock");
+    const server = await createFakeQmpServerAt(socketPath, (connection) => {
+      connection.sendRaw("partial");
+    });
     const client = new QmpClient({ socketPath, timeoutMs: 20 });
 
     await expect(client.connect()).rejects.toMatchObject({ code: "QMP_TIMEOUT" });
