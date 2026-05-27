@@ -31,5 +31,14 @@ export type {
   ProcessResult,
   ProcessRunner,
 } from "./process.js";
+export { DEFAULT_QMP_TIMEOUT_MS, parseQmpMessage, QmpClient } from "./qmp.js";
+export type {
+  QmpClientOptions,
+  QmpCommandOptions,
+  QmpCommandResult,
+  QmpEvent,
+  QmpGreeting,
+  QmpRequestId,
+} from "./qmp.js";
 
 export const CRUCIBLE_VERSION = "0.0.0";

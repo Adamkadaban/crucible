@@ -73,6 +73,18 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
 If automated downloads are blocked, `crucible media:plan` prints manual download URLs and the cache
 paths where the files should be placed.
 
+## QMP Control
+
+Crucible controls QEMU through the local Unix socket at `qmp.socketPath`, defaulting to
+`artifacts/qmp.sock`. The QMP client waits for QEMU's greeting, sends `qmp_capabilities`, adds
+request IDs to commands, collects asynchronous events, and reports structured timeout, parse,
+protocol, connection, and command errors.
+
+The default QMP timeout is `5000` ms for connection, greeting negotiation, capabilities negotiation,
+and commands. The parser rejects malformed JSON and unknown top-level message fields conservatively
+while leaving command-specific payloads opaque for QEMU version compatibility. See
+[`docs/protocol.md`](./docs/protocol.md) for details.
+
 ## Hacking On It
 
 ```sh

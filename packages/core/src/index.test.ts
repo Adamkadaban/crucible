@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createEmptyArtifactManifest,
   CRUCIBLE_VERSION,
+  DEFAULT_QMP_TIMEOUT_MS,
   defaultCrucibleConfig,
   describeCommand,
   getManualDownloadInstructions,
@@ -29,6 +30,7 @@ describe("core bootstrap exports", () => {
     expect(defaultCrucibleConfig.media.profile).toBe("windows11-enterprise-eval");
     expect(defaultCrucibleConfig.network.mode).toBe("isolated");
     expect(defaultCrucibleConfig.virtio.diskBus).toBe("virtio-scsi");
+    expect(defaultCrucibleConfig.qmp.timeoutMs).toBe(DEFAULT_QMP_TIMEOUT_MS);
   });
 
   it("accepts custom media overrides and qemu args", () => {

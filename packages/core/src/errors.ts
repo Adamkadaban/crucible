@@ -4,7 +4,13 @@ export type CrucibleErrorCode =
   | "PROCESS_TIMEOUT"
   | "PROCESS_FAILED"
   | "MEDIA_UNAVAILABLE"
-  | "STATE_INVALID";
+  | "STATE_INVALID"
+  | "QMP_CONNECTION_FAILED"
+  | "QMP_TIMEOUT"
+  | "QMP_PARSE_ERROR"
+  | "QMP_PROTOCOL_ERROR"
+  | "QMP_COMMAND_FAILED"
+  | "QMP_DISCONNECTED";
 
 export class CrucibleError extends Error {
   constructor(
