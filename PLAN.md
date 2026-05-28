@@ -362,17 +362,21 @@ cleanly, and the matching MCP debugger tool returns structured output.
 
 **Deliverable checklist:**
 
-- [ ] Define debugger session model: launch, attach, command, break, detach/kill, collect dump, and
-      close.
-- [ ] Implement guest-side debugger wrapper using command-line debugger tooling first, with GUI
+- [x] Define debugger session model: launch, attach, command, break, detach/kill, collect dump, and
+      close. _(Break is a normal cdb command; detach/kill is `debug_close` since each
+      `debug_command` runs cdb in single-shot mode.)_
+- [x] Implement guest-side debugger wrapper using command-line debugger tooling first, with GUI
       WinDbg explicitly not required.
-- [ ] Implement symbol path configuration and cache directory controls.
-- [ ] Add MCP tools for `debug_launch`, `debug_attach`, `debug_command`, `debug_dump`, and
-      `debug_close`.
-- [ ] Add output truncation, transcript capture, and artifact metadata for debugger sessions.
-- [ ] Add tests with fake debugger executable and parser fixtures.
-- [ ] Add real-VM smoke test against a benign Windows process.
-- [ ] Document PoC debugging workflow and known limitations for kernel debugging and TTD as
+- [x] Implement symbol path configuration and cache directory controls.
+- [x] Add MCP tools for `debug_open`, `debug_command`, `debug_dump`, and `debug_close`.
+      _(`debug_launch` / `debug_attach` collapse into `debug_open { mode: "launch" | "attach" }`
+      since the session-spec discriminator is the only meaningful difference.)_
+- [x] Add output truncation, transcript capture, and artifact metadata for debugger sessions.
+- [x] Add tests with fake debugger executable and parser fixtures.
+- [ ] Add real-VM smoke test against a benign Windows process. _(Deferred until the Phase 3 exit
+      test passes; once a provisioned VM is reachable the manual recipe in `docs/debugger.md`
+      becomes the automated coverage path.)_
+- [x] Document PoC debugging workflow and known limitations for kernel debugging and TTD as
       extension points.
 
 **Parallel-work split table:**
