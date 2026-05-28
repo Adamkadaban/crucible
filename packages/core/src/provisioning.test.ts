@@ -454,6 +454,9 @@ describe("provisioning contracts", () => {
     expect(autounattend).toContain("BypassTPMCheck");
     expect(autounattend).toContain("BypassSecureBootCheck");
     expect(autounattend).toContain("BypassRAMCheck");
+    const startup = await readFile(join(root, "artifacts", "boot", "startup.nsh"), "utf8");
+    expect(startup).toContain("for %a in (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)");
+    expect(startup).toContain("bootx64.efi");
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
