@@ -455,6 +455,7 @@ describe("provisioning contracts", () => {
       "xorriso",
     ]);
     expect(commands[3]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
+    expect(commands.at(-1)?.args).toEqual(expect.arrayContaining(["-J", "-joliet-long", "-r"]));
     const autounattend = await readFile(
       join(root, "artifacts", "boot", "Autounattend.xml"),
       "utf8",
