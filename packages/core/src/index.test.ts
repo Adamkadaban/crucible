@@ -719,4 +719,27 @@ describe("core bootstrap exports", () => {
     expect(output).toContain("network mode: isolated (user)");
     expect(output).toContain("qmp socket: artifacts/qmp.sock");
   });
+
+  it("emits a filter-dump pcap object when capture mode declares a pcapPath", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({
+        mode: "capture",
+        pcapPath: "artifacts/captures/run-1.pcap",
+      }),
+      vmName: "capture-vm",
+    });
+    expect(plan.qemu.pcapPath).toBe("artifacts/captures/run-1.pcap");
+    expect(plan.qemu.args).toContain(
+      "filter-dump,id=crucible-capture-vm-net0-pcap,netdev=crucible-capture-vm-net0,file=artifacts/captures/run-1.pcap",
+    );
+  });
+
+  it("ignores pcapPath when network mode is not capture", () => {
+    const plan = buildNetworkPlan({
+      config: parseNetworkConfig({ mode: "isolated", pcapPath: "artifacts/never-used.pcap" }),
+      vmName: "isolated-vm",
+    });
+    expect(plan.qemu.pcapPath).toBeUndefined();
+    expect(plan.qemu.args.some((arg) => arg.startsWith("filter-dump"))).toBe(false);
+  });
 });

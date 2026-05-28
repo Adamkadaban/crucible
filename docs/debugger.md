@@ -56,7 +56,22 @@ and `windbg` paths so the MCP server can confirm the toolchain is present before
 
 ## Smoke test
 
-A real-VM smoke test against `notepad.exe` can be driven manually:
+A real-VM smoke test against `notepad.exe` runs automatically when the environment is wired to a
+live guest agent:
+
+```sh
+export CRUCIBLE_GUEST_BASE_URL=https://127.0.0.1:8443
+export CRUCIBLE_GUEST_CA_PATH=artifacts/secrets/<vm>/mtls/ca.cert.pem
+export CRUCIBLE_GUEST_CERT_PATH=artifacts/secrets/<vm>/mtls/host-client.cert.pem
+export CRUCIBLE_GUEST_KEY_PATH=artifacts/secrets/<vm>/mtls/host-client.key.pem
+pnpm test packages/core/src/debugger.live.test.ts
+```
+
+The test spawns a fresh `notepad.exe` via `/exec`, opens an attach session, runs `lm`, and verifies
+the loaded-modules output mentions notepad. The test is skipped (not run) when those env vars are
+unset, so CI stays hermetic.
+
+Manual MCP recipe (for ad-hoc triage):
 
 ```sh
 crucible mcp --stdio
