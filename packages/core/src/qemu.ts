@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { CrucibleError } from "./errors.js";
 import { buildNetworkPlan, type QemuNetworkPlan } from "./network.js";
@@ -95,13 +97,19 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     // cpu_reset capture firmware/CPU-level diagnostics that never reach
     // stdio. -debugcon captures OVMF's debug output. None of these affect
     // the guest; they only add host-side observability.
+    //
+    // Note: -no-shutdown means the host QEMU process stays alive after a
+    // guest power-off, so `processController.isAlive(pid)` alone is no
+    // longer a sufficient liveness check — the CLI's liveness poller
+    // (packages/cli/src/index.ts startLifecycleLivenessPoller) also
+    // inspects QMP `query-status` for shutdown/panicked/error runstates.
     "-no-shutdown",
     "-D",
-    `${config.artifacts.logsDirectory}/${config.vm.name}.qemu.log`,
+    path.join(config.artifacts.logsDirectory, `${config.vm.name}.qemu.log`),
     "-d",
     "guest_errors,unimp,cpu_reset",
     "-debugcon",
-    `file:${config.artifacts.logsDirectory}/${config.vm.name}.ovmf.log`,
+    `file:${path.join(config.artifacts.logsDirectory, `${config.vm.name}.ovmf.log`)}`,
     "-global",
     "isa-debugcon.iobase=0x402",
     ...buildSataControllerArgs(options.bootMedia),

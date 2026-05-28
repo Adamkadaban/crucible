@@ -400,14 +400,13 @@ async function runProvisionCommand(
     throw error;
   } finally {
     livenessHandle.stop();
-    if (!lifecycleAbort.signal.aborted) {
+    // Only abort on the error path. On a successful provision we leave the
+    // signal alone; the executor's last call has already resolved so no
+    // straggler retry needs releasing, and aborting here would surface a
+    // misleading STATE_INVALID rejection if anything was still racing.
+    if (provisionRejected && !lifecycleAbort.signal.aborted) {
       lifecycleAbort.abort(
-        new CrucibleError(
-          "STATE_INVALID",
-          provisionRejected
-            ? "provisioning failed; aborting in-flight QGA retries"
-            : "provisioning complete; releasing in-flight QGA retries",
-        ),
+        new CrucibleError("STATE_INVALID", "provisioning failed; aborting in-flight QGA retries"),
       );
     }
   }
@@ -421,22 +420,32 @@ function startLifecycleLivenessPoller(
 ): LifecycleLivenessHandle {
   const intervalMs = 5_000;
   let stopped = false;
+  // QMP runstates that mean "guest is no longer making progress and qemu-ga
+  // has gone away" — these are exactly the cases where -no-shutdown leaves
+  // the QEMU host process alive but every QGA call is doomed. See
+  // https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#qapidoc-43
+  const deadQmpRunstates = new Set([
+    "shutdown",
+    "guest-panicked",
+    "internal-error",
+    "io-error",
+    "watchdog",
+  ]);
   const handle = setInterval(() => {
     if (stopped) {
       return;
     }
     void (async () => {
       try {
-        const status = await manager.status({ queryQmp: false });
-        if (status.processAlive === false && status.pid !== undefined) {
-          if (!abort.signal.aborted) {
-            abort.abort(
-              new CrucibleError(
-                "STATE_INVALID",
-                `QEMU pid ${status.pid} has exited; aborting provision`,
-              ),
-            );
-          }
+        const status = await manager.status({ queryQmp: true });
+        const isHostDead = status.processAlive === false && status.pid !== undefined;
+        const isGuestDead =
+          status.qmpStatus !== undefined && deadQmpRunstates.has(status.qmpStatus);
+        if ((isHostDead || isGuestDead) && !abort.signal.aborted) {
+          const reason = isHostDead
+            ? `QEMU pid ${status.pid} has exited; aborting provision`
+            : `QEMU guest runstate is '${status.qmpStatus}'; aborting provision`;
+          abort.abort(new CrucibleError("STATE_INVALID", reason));
         }
       } catch {
         // status() failures are not fatal — keep polling.
