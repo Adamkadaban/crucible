@@ -34,6 +34,13 @@ export type QgaClientOptions = {
   readonly timeoutMs?: number;
   readonly retryPolicy?: QgaRetryPolicy;
   readonly sleep?: (ms: number) => Promise<void>;
+  /**
+   * Aborting this signal cancels any in-flight retry sleep immediately and
+   * makes subsequent calls reject with the signal's reason. Used by the
+   * provisioning CLI to cut a 5-minute retry budget short the moment QEMU
+   * is observed to have exited.
+   */
+  readonly signal?: AbortSignal;
 };
 
 export type QgaGuestExecResult = {
@@ -61,6 +68,7 @@ export class QgaClient {
   readonly #timeoutMs: number;
   readonly #retryPolicy: QgaRetryPolicy;
   readonly #sleep: (ms: number) => Promise<void>;
+  readonly #signal: AbortSignal | undefined;
 
   constructor(options: QgaClientOptions) {
     this.#socketPath = options.socketPath;
@@ -71,6 +79,7 @@ export class QgaClient {
       maxBackoffMs: DEFAULT_RETRY_MAX_BACKOFF_MS,
     };
     this.#sleep = options.sleep ?? sleep;
+    this.#signal = options.signal;
   }
 
   /**
@@ -197,6 +206,7 @@ export class QgaClient {
     let backoff = this.#retryPolicy.initialBackoffMs;
     let lastError: unknown;
     while (true) {
+      this.#throwIfAborted(label);
       try {
         return await op();
       } catch (error) {
@@ -207,7 +217,7 @@ export class QgaClient {
         if (Date.now() >= deadline) {
           break;
         }
-        await this.#sleep(Math.min(backoff, this.#retryPolicy.maxBackoffMs));
+        await this.#sleepRespectingAbort(Math.min(backoff, this.#retryPolicy.maxBackoffMs), label);
         backoff = Math.min(backoff * 2, this.#retryPolicy.maxBackoffMs);
       }
     }
@@ -216,6 +226,44 @@ export class QgaClient {
       `QGA ${label} retry budget exhausted (${this.#retryPolicy.budgetMs}ms)`,
       lastError,
     );
+  }
+
+  #throwIfAborted(label: string): void {
+    if (this.#signal?.aborted === true) {
+      throw new CrucibleError(
+        "PROCESS_FAILED",
+        `QGA ${label} aborted: ${describeAbortReason(this.#signal.reason)}`,
+        this.#signal.reason,
+      );
+    }
+  }
+
+  async #sleepRespectingAbort(ms: number, label: string): Promise<void> {
+    if (this.#signal === undefined) {
+      await this.#sleep(ms);
+      return;
+    }
+    if (this.#signal.aborted) {
+      this.#throwIfAborted(label);
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(
+          new CrucibleError(
+            "PROCESS_FAILED",
+            `QGA ${label} aborted: ${describeAbortReason(this.#signal!.reason)}`,
+            this.#signal!.reason,
+          ),
+        );
+      };
+      const timer = setTimeout(() => {
+        this.#signal!.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      this.#signal!.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   async #requestOnce<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -228,7 +276,13 @@ export class QgaClient {
       }
       return response.return as T;
     } finally {
-      socket.end();
+      // destroy(), not end(): end() sends FIN but leaves the libuv handle
+      // alive in FIN_WAIT until the peer also closes. When qemu-ga vanishes
+      // mid-request (Windows reboot), the peer never closes — and the
+      // dangling AF_UNIX handle keeps Node's event loop alive forever,
+      // wedging the CLI even after the orchestrator gives up. destroy()
+      // releases the libuv handle immediately so liveness loops can exit.
+      socket.destroy();
     }
   }
 }
@@ -558,6 +612,19 @@ function decodeBase64(value: string | undefined): string {
     return "";
   }
   return Buffer.from(value, "base64").toString("utf8");
+}
+
+function describeAbortReason(reason: unknown): string {
+  if (reason === undefined || reason === null) {
+    return "signal aborted";
+  }
+  if (reason instanceof Error) {
+    return reason.message;
+  }
+  if (typeof reason === "string") {
+    return reason;
+  }
+  return "signal aborted";
 }
 
 function sleep(ms: number): Promise<void> {

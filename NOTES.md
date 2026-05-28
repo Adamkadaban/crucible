@@ -72,3 +72,26 @@ treats `PROCESS_TIMEOUT`, connect failures, and structured QGA errors mentioning
 every provisioning stage script as `idempotent: true`; existing guest scripts in
 `guest/provision/*.ps1` were already designed idempotent. `packages/core/src/qga.ts:62-237` · issue
 #67, PR #126
+
+## 2026-05-28 — Provision hangs after silent QEMU exit ~6 min in
+
+**Resolution:** Three independent bugs surfaced by the Phase 3 exit test, fixed together in #129.
+(1) `-boot once=d,order=c` violates the QEMU manual's "should not be used together with bootindex"
+rule; OVMF silently ACPI-shut-down the guest at `wpeutil reboot`. Dropped the `-boot` line; rely on
+`bootindex=` exclusively (CD=1, disk=10). Added `-no-shutdown`, `-D <log>`,
+`-d guest_errors,cpu_reset`, and `-debugcon file:<log>` so any future silent exit becomes
+diagnosable. (2) `VmLifecycleManager.#buildStateManifest` always serialized `this.#plan.args`, so
+any CLI subcommand built from a no-`bootMedia` default plan would clobber `state/<vm>.json`'s
+`qemu.args` with the bare form when it ran stop/kill. Cleanup, stop, and kill paths now reuse the
+manifest's existing `qemu` block instead. (3) `QgaClient.#withRetry`'s 5 min per-call budget burned
+indefinitely against a dead socket; `connectSocket` left FIN_WAIT handles alive, wedging libuv.
+Added `signal?: AbortSignal` to `QgaClientOptions` and a liveness poller in the CLI
+(`startLifecycleLivenessPoller`) that aborts the signal when `processController.isAlive(pid)` flips
+false OR when QMP `query-status` reports `shutdown`/`guest-panicked`/`internal-error`/`io-error`/
+`watchdog` (necessary because `-no-shutdown` keeps the host process alive after a guest power-off so
+pid-liveness alone is insufficient). Sockets are now `destroy()`'d instead of `end()`'d. The CLI
+wraps the executor loop in try/catch that calls `lifecycleManager.kill()` on failure.
+`packages/core/src/qemu.ts:81-100,141-158` ·
+`packages/core/src/lifecycle.ts:280-302,304-360,398-447` ·
+`packages/core/src/qga.ts:30-46,76-94,195-265,282` · `packages/cli/src/index.ts:357-470` · issue
+#127, PR #129

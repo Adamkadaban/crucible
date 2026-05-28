@@ -523,6 +523,51 @@ describe("QGA client and provisioning executor", () => {
       await server.close();
     }
   });
+
+  it("aborts in-flight retry sleep when the AbortSignal fires (no 5min hang on dead VM)", async () => {
+    // Simulates a dead VM by destroying every connection. connectSocket
+    // sees the FIN, throws PROCESS_FAILED "QGA socket error" which is
+    // classified transient, retry loop sleeps. Without an abort the loop
+    // would burn the full 5 min budget. With one, the in-flight sleep
+    // wakes up immediately and rejects.
+    const server = await startFakeQga((_request, socket) => {
+      socket.destroy();
+      return undefined;
+    });
+    try {
+      const controller = new AbortController();
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5 * 60 * 1000, initialBackoffMs: 50, maxBackoffMs: 50 },
+        signal: controller.signal,
+      });
+      const pending = client.writeFile("C:\\Test\\file.bin", "x");
+      setTimeout(() => controller.abort(new Error("QEMU died")), 30);
+      const started = Date.now();
+      await expect(pending).rejects.toThrow(/aborted/);
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects immediately when the AbortSignal is already aborted at call time", async () => {
+    const server = await startFakeQga(() => ({ return: {} }));
+    try {
+      const controller = new AbortController();
+      controller.abort(new Error("already gone"));
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 60_000, initialBackoffMs: 50, maxBackoffMs: 100 },
+        signal: controller.signal,
+      });
+      await expect(client.writeFile("C:\\Test\\file.bin", "x")).rejects.toThrow(/already gone/);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 type QgaRequest = {
