@@ -45,8 +45,20 @@ describe("QGA client and provisioning executor", () => {
       const result = await executor.runStage(scriptStage());
 
       expect(result.status).toBe("succeeded");
-      expect(requests).toEqual(["guest-exec", "guest-exec-status"]);
-      expect(guestExecArgs[0]).toContain("-EncodedCommand");
+      expect(requests).toEqual([
+        "guest-file-open",
+        "guest-file-write",
+        "guest-file-close",
+        "guest-exec",
+        "guest-exec-status",
+      ]);
+      expect(guestExecArgs[0]).toContain("-File");
+      const fileArg = (guestExecArgs[0] ?? []).find(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.endsWith("install-windbg.ps1"),
+      );
+      expect(fileArg).toBeDefined();
+      expect(fileArg).toContain("C:\\ProgramData\\Crucible\\stages\\");
       expect(guestExecArgs[0]).not.toContain("guest/provision/install-windbg.ps1");
     } finally {
       await server.close();

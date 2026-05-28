@@ -16,8 +16,8 @@ function Test-AccountExists {
     }
 }
 
-$psVersion = $PSVersionTable.PSVersion.ToString()
-$psEdition = $PSVersionTable.PSEdition
+$psVersionDetected = $PSVersionTable.PSVersion.ToString()
+$psEditionDetected = $PSVersionTable.PSEdition
 $osVersion = [System.Environment]::OSVersion.VersionString
 $hostName = [System.Environment]::MachineName
 $adminPresent = Test-AccountExists -Name "CrucibleAdmin"
@@ -29,8 +29,8 @@ $psMajor = $PSVersionTable.PSVersion.Major
 $healthy = $psMajor -ge 5 -and $adminPresent -and $standardPresent -and $qemuAgentStatus -eq "Running"
 
 $payload = [ordered]@{
-    powershellVersion = $psVersion
-    powershellEdition = $psEdition
+    powershellVersion = $psVersionDetected
+    powershellEdition = $psEditionDetected
     osVersion = $osVersion
     hostName = $hostName
     crucibleAdminPresent = $adminPresent
