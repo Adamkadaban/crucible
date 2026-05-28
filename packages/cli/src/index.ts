@@ -43,7 +43,12 @@ import {
   VmLifecycleManager,
 } from "@crucible/core";
 import { spawn } from "node:child_process";
-import { BOOTSTRAP_TOOLS, getMcpServerBanner } from "@crucible/mcp-server";
+import {
+  BOOTSTRAP_TOOLS,
+  buildGuestAgentClientFromFiles,
+  getMcpServerBanner,
+  runStdioMcpServer,
+} from "@crucible/mcp-server";
 
 type CommandResult = {
   readonly exitCode: number;
@@ -123,14 +128,28 @@ export async function runCrucibleCli(
       return runProvisionCommand(rest, runtime);
     case "guest:health":
       return runGuestHealthCommand(rest, runtime);
-    case "mcp":
+    case "mcp": {
+      const wantsStdio = rest.includes("--stdio");
+      if (wantsStdio) {
+        const guestClientFactory = buildEnvGuestClientFactory();
+        await runStdioMcpServer({ guestClientFactory });
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
       return {
         exitCode: 0,
-        stdout: [getMcpServerBanner(), "Bootstrap tools:", ...BOOTSTRAP_TOOLS.map(formatTool)].join(
-          "\n",
-        ),
+        stdout: [
+          getMcpServerBanner(),
+          "Bootstrap tools:",
+          ...BOOTSTRAP_TOOLS.map(formatTool),
+          "",
+          "Run `crucible mcp --stdio` to expose the tools over stdio for an MCP client.",
+          "Set CRUCIBLE_GUEST_BASE_URL + CRUCIBLE_GUEST_CA_PATH +",
+          "CRUCIBLE_GUEST_CERT_PATH + CRUCIBLE_GUEST_KEY_PATH to wire the guest tools",
+          "to a live Crucible guest agent.",
+        ].join("\n"),
         stderr: "",
       };
+    }
     default:
       return {
         exitCode: 2,
@@ -965,7 +984,31 @@ function formatMediaEntry(entry: MediaCacheEntry): string {
 }
 
 function formatTool(tool: (typeof BOOTSTRAP_TOOLS)[number]): string {
-  return `- ${tool.name}: ${tool.description}`;
+  return `  - ${tool.name}: ${tool.description}`;
+}
+
+function buildEnvGuestClientFactory():
+  | (() => Promise<import("@crucible/core").GuestAgentClient>)
+  | undefined {
+  const baseUrl = process.env.CRUCIBLE_GUEST_BASE_URL;
+  const caPath = process.env.CRUCIBLE_GUEST_CA_PATH;
+  const certPath = process.env.CRUCIBLE_GUEST_CERT_PATH;
+  const keyPath = process.env.CRUCIBLE_GUEST_KEY_PATH;
+  if (
+    baseUrl === undefined ||
+    caPath === undefined ||
+    certPath === undefined ||
+    keyPath === undefined
+  ) {
+    return undefined;
+  }
+  return async () =>
+    buildGuestAgentClientFromFiles({
+      baseUrl,
+      caPath,
+      clientCertificatePath: certPath,
+      clientPrivateKeyPath: keyPath,
+    });
 }
 
 function getHelpText(): string {

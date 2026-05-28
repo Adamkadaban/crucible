@@ -323,19 +323,19 @@ successfully.
 
 **Deliverable checklist:**
 
-- [ ] Register MCP tools for `host_check`, `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`,
+- [x] Register MCP tools for `host_check`, `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`,
       `snapshot_restore`, `guest_health`.
-- [ ] Register MCP tools for `guest_exec`, `guest_exec_admin`, `upload_file`, and `download_file`.
-- [ ] Add structured Zod input/output schemas for every tool.
-- [ ] Add error mapping that distinguishes validation errors, host prerequisite errors, VM offline
+- [x] Register MCP tools for `guest_exec`, `guest_exec_admin`, `upload_file`, and `download_file`.
+- [x] Add structured Zod input/output schemas for every tool.
+- [x] Add error mapping that distinguishes validation errors, host prerequisite errors, VM offline
       errors, guest service errors, timeout errors, and security policy denials.
-- [ ] Add MCP smoke-test harness that drives stdio without a human client.
-- [ ] Add real-VM MCP integration tests gated by environment variables that verify every public MCP
+- [x] Add MCP smoke-test harness that drives stdio without a human client.
+- [x] Add real-VM MCP integration tests gated by environment variables that verify every public MCP
       tool against a locally provisioned VM.
-- [ ] Add README MCP configuration snippets for opencode/Claude-style clients.
-- [ ] Add docs for safe malware-analysis workflow and snapshot restore before/after sample
+- [x] Add README MCP configuration snippets for opencode/Claude-style clients.
+- [x] Add docs for safe malware-analysis workflow and snapshot restore before/after sample
       execution.
-- [ ] Add audit log locations to tool outputs where relevant.
+- [x] Add audit log locations to tool outputs where relevant.
 
 **Parallel-work split table:**
 
