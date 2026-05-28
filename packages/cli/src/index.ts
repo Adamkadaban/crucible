@@ -420,6 +420,7 @@ function startLifecycleLivenessPoller(
 ): LifecycleLivenessHandle {
   const intervalMs = 5_000;
   let stopped = false;
+  let inFlight = false;
   // QMP runstates that mean "guest is no longer making progress and qemu-ga
   // has gone away" — these are exactly the cases where -no-shutdown leaves
   // the QEMU host process alive but every QGA call is doomed. See
@@ -432,9 +433,13 @@ function startLifecycleLivenessPoller(
     "watchdog",
   ]);
   const handle = setInterval(() => {
-    if (stopped) {
+    // Skip this tick if the previous status() call hasn't finished —
+    // a slow QMP connect timeout can take longer than intervalMs and
+    // we don't want to stack concurrent QMP sessions.
+    if (stopped || inFlight) {
       return;
     }
+    inFlight = true;
     void (async () => {
       try {
         const status = await manager.status({ queryQmp: true });
@@ -449,6 +454,8 @@ function startLifecycleLivenessPoller(
         }
       } catch {
         // status() failures are not fatal — keep polling.
+      } finally {
+        inFlight = false;
       }
     })();
   }, intervalMs);

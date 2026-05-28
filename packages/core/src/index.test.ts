@@ -701,7 +701,7 @@ describe("core bootstrap exports", () => {
     // -no-shutdown keeps QEMU alive on guest S5 so QMP can report the
     // shutdown reason instead of the process disappearing with 0-byte logs.
     expect(plan.args).toContain("-no-shutdown");
-    // -D + -d guest_errors,unimp,cpu_reset captures firmware/CPU-level
+    // -D + -d guest_errors,cpu_reset captures firmware/CPU-level
     // diagnostics that never reach stdio.
     const dFlag = plan.args.indexOf("-D");
     expect(dFlag).toBeGreaterThanOrEqual(0);

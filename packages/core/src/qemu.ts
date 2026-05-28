@@ -93,7 +93,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     `${config.vm.memoryMiB}M`,
     // Diagnostic surface: -no-shutdown keeps QEMU alive on guest S5 so
     // operators / lifecycle.status can see the shutdown reason via QMP
-    // instead of "QEMU vanished, 0-byte logs". -D + -d guest_errors,unimp,
+    // instead of "QEMU vanished, 0-byte logs". -D + -d guest_errors,
     // cpu_reset capture firmware/CPU-level diagnostics that never reach
     // stdio. -debugcon captures OVMF's debug output. None of these affect
     // the guest; they only add host-side observability.
