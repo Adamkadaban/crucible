@@ -437,7 +437,7 @@ export async function prepareRealFirstBootProvisioning(
 function buildStartupNsh(): string {
   return [
     "@echo -off",
-    "for %a run (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)",
+    "for %a in (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)",
     "  if exist %a:\\efi\\boot\\bootx64.efi then",
     "    %a:\\efi\\boot\\bootx64.efi",
     "  endif",
