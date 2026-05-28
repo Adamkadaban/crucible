@@ -107,6 +107,12 @@ export type {
   ProcessResult,
   ProcessRunner,
 } from "./process.js";
+export { QgaClient, QgaProvisioningExecutor } from "./qga.js";
+export type {
+  QgaClientOptions,
+  QgaGuestExecResult,
+  QgaProvisioningExecutorOptions,
+} from "./qga.js";
 export {
   buildGuestAgentCertificateStagePlan,
   buildProvisioningPlan,

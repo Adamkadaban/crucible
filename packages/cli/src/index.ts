@@ -14,6 +14,8 @@ import {
   NETWORK_MODES,
   normalizeSnapshotName,
   prepareRealFirstBootProvisioning,
+  QgaClient,
+  QgaProvisioningExecutor,
   type ProcessCommand,
   type ProcessResult,
   type ProcessRunner,
@@ -314,7 +316,16 @@ async function runProvisionCommand(
   const result = await runProvisioningCommand({
     config,
     lifecycleManager,
-    executor: runtime.provisioningExecutor,
+    executor:
+      runtime.provisioningExecutor ??
+      new QgaProvisioningExecutor({
+        client: new QgaClient({
+          socketPath: config.qga.socketPath,
+          timeoutMs: config.qga.timeoutMs,
+        }),
+        vmName: config.vm.name,
+        secretsDirectory: config.artifacts.secretsDirectory,
+      }),
     snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
   });
 
