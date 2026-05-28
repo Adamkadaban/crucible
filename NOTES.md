@@ -95,3 +95,13 @@ wraps the executor loop in try/catch that calls `lifecycleManager.kill()` on fai
 `packages/core/src/lifecycle.ts:280-302,304-360,398-447` ·
 `packages/core/src/qga.ts:30-46,76-94,195-265,282` · `packages/cli/src/index.ts:357-470` · issue
 #127, PR #129
+
+## 2026-05-28 — Phase 3 exit test: CLI hang fixed; new guest-file-open error surfaces
+
+**Resolution:** After #129 merged, real-VM provision no longer hangs indefinitely on QEMU exit
+or stage failure. The CLI now exits with `ELIFECYCLE` and a real error message within ~9 min
+on a failed stage (was: infinite hang requiring SIGKILL). Empirical confirmation in
+`/tmp/crucible-provision.log` at 15:15. The remaining surfaced failure is a stage's
+`writeFile` -> `guest-file-open` call returning a structured qga error; needs separate
+investigation with stage-context in the error message. Filed as #130. `#67` remains open
+until the full provision -> snapshot -> restore -> health flow completes end-to-end.
