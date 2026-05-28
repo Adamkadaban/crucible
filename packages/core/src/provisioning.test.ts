@@ -462,6 +462,11 @@ describe("provisioning contracts", () => {
     expect(autounattend).toContain("BypassTPMCheck");
     expect(autounattend).toContain("BypassSecureBootCheck");
     expect(autounattend).toContain("BypassRAMCheck");
+    expect(autounattend).toContain("Microsoft-Windows-International-Core-WinPE");
+    expect(autounattend).toContain(
+      "<SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>",
+    );
+    expect(autounattend).toContain("<InputLocale>en-US</InputLocale>");
     expect(autounattend).toContain("crucible-install.cmd");
     const startup = await readFile(join(root, "artifacts", "boot", "startup.nsh"), "utf8");
     expect(startup).toContain("for %a in (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)");
