@@ -166,7 +166,9 @@ function buildBootMediaArgs(bootMedia?: QemuBootMediaOptions): readonly string[]
   const args: string[] = [];
 
   if (bootMedia?.windowsIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 0));
+    // bootindex 1 lets OVMF enumerate the Windows installer ESP as FS0 and
+    // boot bootmgr ahead of the empty disk (which uses bootindex 10).
+    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 0, 1));
   }
 
   if (bootMedia?.autounattendIsoPath !== undefined) {
@@ -180,14 +182,18 @@ function buildBootMediaArgs(bootMedia?: QemuBootMediaOptions): readonly string[]
   return args;
 }
 
-function isoDriveArgs(id: string, filePath: string, index: number): readonly string[] {
+function isoDriveArgs(
+  id: string,
+  filePath: string,
+  index: number,
+  bootindex?: number,
+): readonly string[] {
   validateQemuSuboptionValue(id, filePath);
-  return [
-    "-drive",
-    `file=${filePath},media=cdrom,if=none,readonly=on,id=${id}`,
-    "-device",
-    `ide-cd,drive=${id},bus=crucible-sata0.${index}`,
-  ];
+  const device =
+    bootindex === undefined
+      ? `ide-cd,drive=${id},bus=crucible-sata0.${index}`
+      : `ide-cd,drive=${id},bus=crucible-sata0.${index},bootindex=${bootindex}`;
+  return ["-drive", `file=${filePath},media=cdrom,if=none,readonly=on,id=${id}`, "-device", device];
 }
 
 function buildTpmArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
@@ -241,8 +247,12 @@ function renderQemuStartDryRunLines(plan: QemuCommandPlan): readonly string[] {
 function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly string[] {
   const drive = `file=${diskPath},if=none,format=qcow2,id=${DEFAULT_DISK_ID},cache=none,discard=unmap`;
 
+  // bootindex 10 keeps the install CD (bootindex 1) ahead of the empty disk
+  // during first boot so OVMF actually enumerates the Windows installer ESP
+  // as FS0. Once Windows is installed the CD prompt times out and OVMF
+  // falls through to the disk.
   if (config.virtio.diskBus === "virtio-blk") {
-    return ["-drive", drive, "-device", `virtio-blk-pci,drive=${DEFAULT_DISK_ID},bootindex=1`];
+    return ["-drive", drive, "-device", `virtio-blk-pci,drive=${DEFAULT_DISK_ID},bootindex=10`];
   }
 
   return [
@@ -251,7 +261,7 @@ function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly strin
     "-drive",
     drive,
     "-device",
-    `scsi-hd,drive=${DEFAULT_DISK_ID},bus=scsi0.0,bootindex=1`,
+    `scsi-hd,drive=${DEFAULT_DISK_ID},bus=scsi0.0,bootindex=10`,
   ];
 }
 
