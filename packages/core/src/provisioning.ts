@@ -432,6 +432,13 @@ export async function prepareRealFirstBootProvisioning(
     "utf8",
   );
   await writeFile(path.join(bootDirectory, "startup.nsh"), buildStartupNsh(), "utf8");
+  await copyVirtioDriverDirectories({
+    virtioIsoPath,
+    bootDirectory,
+    profile: config.media.profile,
+    processRunner: options.processRunner,
+    timeoutMs,
+  });
 
   const commands: ProcessCommand[] = [
     ...((await pathExists(plan.disk.path))
@@ -500,6 +507,13 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     '<?xml version="1.0" encoding="utf-8"?>',
     '<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">',
     '  <settings pass="windowsPE">',
+    '    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    "      <DriverPaths>",
+    '        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\\drivers\\vioscsi</Path></PathAndCredentials>',
+    '        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>D:\\drivers\\NetKVM</Path></PathAndCredentials>',
+    '        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>D:\\drivers\\vioserial</Path></PathAndCredentials>',
+    "      </DriverPaths>",
+    "    </component>",
     '    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     "      <RunSynchronous>",
     '        <RunSynchronousCommand wcm:action="add">',
@@ -516,6 +530,29 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     "        </RunSynchronousCommand>",
     "      </RunSynchronous>",
     "      <UserData><AcceptEula>true</AcceptEula></UserData>",
+    "      <DiskConfiguration>",
+    '        <Disk wcm:action="add">',
+    "          <DiskID>0</DiskID>",
+    "          <WillWipeDisk>true</WillWipeDisk>",
+    "          <CreatePartitions>",
+    '            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>100</Size></CreatePartition>',
+    '            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>',
+    '            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>',
+    "          </CreatePartitions>",
+    "          <ModifyPartitions>",
+    '            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>',
+    '            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>',
+    "          </ModifyPartitions>",
+    "        </Disk>",
+    "        <WillShowUI>OnError</WillShowUI>",
+    "      </DiskConfiguration>",
+    "      <ImageInstall>",
+    "        <OSImage>",
+    '          <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData></InstallFrom>',
+    "          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>",
+    "          <WillShowUI>OnError</WillShowUI>",
+    "        </OSImage>",
+    "      </ImageInstall>",
     "    </component>",
     "  </settings>",
     '  <settings pass="oobeSystem">',
@@ -526,6 +563,35 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     "  </settings>",
     "</unattend>",
   ].join("\n");
+}
+
+async function copyVirtioDriverDirectories(options: {
+  readonly virtioIsoPath: string;
+  readonly bootDirectory: string;
+  readonly profile: CrucibleConfig["media"]["profile"];
+  readonly processRunner: ProcessRunner;
+  readonly timeoutMs: number;
+}): Promise<void> {
+  const osFolder = options.profile === "windows-server-2025-eval" ? "2k25" : "w11";
+  const driverRoot = path.join(options.bootDirectory, "drivers");
+  await mkdir(driverRoot, { recursive: true });
+
+  for (const driver of ["vioscsi", "NetKVM", "vioserial"] as const) {
+    await runProvisioningProcess(options.processRunner, {
+      executable: "xorriso",
+      args: [
+        "-osirrox",
+        "on",
+        "-indev",
+        options.virtioIsoPath,
+        "-extract",
+        `/${driver}/${osFolder}/amd64`,
+        path.join(driverRoot, driver),
+      ],
+      timeoutMs: options.timeoutMs,
+      maxOutputBytes: 1024 * 1024,
+    });
+  }
 }
 
 function escapeXml(value: string): string {
