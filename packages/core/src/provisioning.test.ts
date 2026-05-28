@@ -445,12 +445,11 @@ describe("provisioning contracts", () => {
 
     expect(plan.diskPath).toContain("first-boot.qcow2");
     expect(plan.autounattendIsoPath).toContain("autounattend.iso");
-    expect(plan.swtpmSocketPath).toContain("swtpm.sock");
-    expect(plan.swtpmPidPath).toContain("swtpm.pid");
-    expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso", "swtpm"]);
+    expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso"]);
     expect(commands[0]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
-    expect(commands[2]?.args).toContain("--terminate");
-    expect(commands[2]?.args).toContain("not-need-init,startup-clear");
+    await expect(
+      readFile(join(root, "artifacts", "boot", "Autounattend.xml"), "utf8"),
+    ).resolves.toContain("BypassTPMCheck");
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
@@ -509,125 +508,9 @@ describe("provisioning contracts", () => {
       },
     });
 
-    expect(commands.map((command) => command.executable)).toEqual(["xorriso", "swtpm"]);
+    expect(commands.map((command) => command.executable)).toEqual(["xorriso"]);
     await expect(readFile(diskPath, "utf8")).resolves.toBe("existing disk");
     await expect(readFile(existingVars, "utf8")).resolves.toBe("existing vars");
-  });
-
-  it("restarts swtpm when only stale TPM socket state remains", async () => {
-    const root = await mkdtemp(join(tmpdir(), "crucible-stale-swtpm-"));
-    const windowsIso = join(root, "windows.iso");
-    const virtioIso = join(root, "virtio.iso");
-    const ovmfCode = join(root, "OVMF_CODE.fd");
-    const ovmfVars = join(root, "OVMF_VARS.fd");
-    const artifactDirectory = join(root, "artifacts");
-    const swtpmDirectory = join(artifactDirectory, "swtpm", "first-boot");
-    const swtpmSocket = join(swtpmDirectory, "swtpm.sock");
-    const swtpmPid = join(swtpmDirectory, "swtpm.pid");
-    await mkdir(swtpmDirectory, { recursive: true });
-    await Promise.all([
-      writeFile(windowsIso, "windows", "utf8"),
-      writeFile(virtioIso, "virtio", "utf8"),
-      writeFile(ovmfCode, "code", "utf8"),
-      writeFile(ovmfVars, "vars", "utf8"),
-      writeFile(swtpmSocket, "stale socket", "utf8"),
-      writeFile(swtpmPid, "99999999\n", "utf8"),
-    ]);
-    const commands: ProcessCommand[] = [];
-
-    await prepareRealFirstBootProvisioning({
-      config: parseCrucibleConfig({
-        vm: { name: "first-boot", diskGiB: 64 },
-        media: {
-          windowsIso: { path: windowsIso },
-          virtioIso: { path: virtioIso },
-        },
-        artifacts: {
-          directory: artifactDirectory,
-          manifestPath: join(artifactDirectory, "manifest.json"),
-          logsDirectory: join(artifactDirectory, "logs"),
-          snapshotsDirectory: join(root, "snapshots"),
-          secretsDirectory: join(root, "secrets"),
-        },
-      }),
-      ovmfCodePath: ovmfCode,
-      ovmfVarsTemplatePath: ovmfVars,
-      processRunner: {
-        run(command) {
-          commands.push(command);
-          return Promise.resolve({
-            command,
-            exitCode: 0,
-            signal: null,
-            stdout: "",
-            stderr: "",
-            durationMs: 1,
-            timedOut: false,
-          });
-        },
-      },
-    });
-
-    expect(commands.map((command) => command.executable)).toContain("swtpm");
-    await expect(stat(swtpmSocket)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(swtpmPid)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("treats malformed swtpm PID files as stale", async () => {
-    const root = await mkdtemp(join(tmpdir(), "crucible-malformed-swtpm-"));
-    const windowsIso = join(root, "windows.iso");
-    const virtioIso = join(root, "virtio.iso");
-    const ovmfCode = join(root, "OVMF_CODE.fd");
-    const ovmfVars = join(root, "OVMF_VARS.fd");
-    const artifactDirectory = join(root, "artifacts");
-    const swtpmDirectory = join(artifactDirectory, "swtpm", "first-boot");
-    const swtpmSocket = join(swtpmDirectory, "swtpm.sock");
-    const swtpmPid = join(swtpmDirectory, "swtpm.pid");
-    await mkdir(swtpmDirectory, { recursive: true });
-    await Promise.all([
-      writeFile(windowsIso, "windows", "utf8"),
-      writeFile(virtioIso, "virtio", "utf8"),
-      writeFile(ovmfCode, "code", "utf8"),
-      writeFile(ovmfVars, "vars", "utf8"),
-      writeFile(swtpmSocket, "stale socket", "utf8"),
-      writeFile(swtpmPid, `${process.pid}abc\n`, "utf8"),
-    ]);
-    const commands: ProcessCommand[] = [];
-
-    await prepareRealFirstBootProvisioning({
-      config: parseCrucibleConfig({
-        vm: { name: "first-boot", diskGiB: 64 },
-        media: {
-          windowsIso: { path: windowsIso },
-          virtioIso: { path: virtioIso },
-        },
-        artifacts: {
-          directory: artifactDirectory,
-          manifestPath: join(artifactDirectory, "manifest.json"),
-          logsDirectory: join(artifactDirectory, "logs"),
-          snapshotsDirectory: join(root, "snapshots"),
-          secretsDirectory: join(root, "secrets"),
-        },
-      }),
-      ovmfCodePath: ovmfCode,
-      ovmfVarsTemplatePath: ovmfVars,
-      processRunner: {
-        run(command) {
-          commands.push(command);
-          return Promise.resolve({
-            command,
-            exitCode: 0,
-            signal: null,
-            stdout: "",
-            stderr: "",
-            durationMs: 1,
-            timedOut: false,
-          });
-        },
-      },
-    });
-
-    expect(commands.map((command) => command.executable)).toContain("swtpm");
   });
 
   it("builds guest health reports from provisioning readiness contracts", () => {

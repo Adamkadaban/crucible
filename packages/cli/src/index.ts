@@ -345,7 +345,6 @@ async function getProvisioningLifecycleManager(
       autounattendIsoPath: firstBootPlan.autounattendIsoPath,
       ovmfCodePath: firstBootPlan.ovmfCodePath,
       ovmfVarsPath: firstBootPlan.ovmfVarsPath,
-      swtpmSocketPath: firstBootPlan.swtpmSocketPath,
     },
   });
 

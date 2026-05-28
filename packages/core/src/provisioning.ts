@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -194,7 +194,6 @@ export type RealFirstBootProvisioningOptions = {
   readonly processRunner: ProcessRunner;
   readonly ovmfCodePath?: string;
   readonly ovmfVarsTemplatePath?: string;
-  readonly swtpmExecutable?: string;
   readonly qemuImgExecutable?: string;
   readonly xorrisoExecutable?: string;
   readonly timeoutMs?: number;
@@ -359,7 +358,6 @@ export async function prepareRealFirstBootProvisioning(
   const config = options.config ?? defaultCrucibleConfig;
   const timeoutMs = options.timeoutMs ?? 60_000;
   const qemuImgExecutable = options.qemuImgExecutable ?? "qemu-img";
-  const swtpmExecutable = options.swtpmExecutable ?? "swtpm";
   const xorrisoExecutable = options.xorrisoExecutable ?? "xorriso";
   const ovmfCodePath = options.ovmfCodePath ?? "/usr/share/OVMF/OVMF_CODE_4M.fd";
   const ovmfVarsTemplatePath = options.ovmfVarsTemplatePath ?? "/usr/share/OVMF/OVMF_VARS_4M.fd";
@@ -391,10 +389,6 @@ export async function prepareRealFirstBootProvisioning(
   await mkdir(path.dirname(plan.disk.path), { recursive: true });
   await mkdir(bootDirectory, { recursive: true });
   await mkdir(swtpmStateDirectory, { recursive: true });
-  const swtpmAlive = await isSwtpmAlive(swtpmPidPath);
-  if (!swtpmAlive) {
-    await Promise.all([rm(swtpmSocketPath, { force: true }), rm(swtpmPidPath, { force: true })]);
-  }
   if (!(await pathExists(ovmfVarsPath))) {
     await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
   }
@@ -429,29 +423,6 @@ export async function prepareRealFirstBootProvisioning(
       timeoutMs,
       maxOutputBytes: 1024 * 1024,
     },
-    ...(swtpmAlive
-      ? []
-      : [
-          {
-            executable: swtpmExecutable,
-            args: [
-              "socket",
-              "--tpm2",
-              "--tpmstate",
-              `dir=${swtpmStateDirectory}`,
-              "--ctrl",
-              `type=unixio,path=${swtpmSocketPath}`,
-              "--pid",
-              `file=${swtpmPidPath}`,
-              "--terminate",
-              "--flags",
-              "not-need-init,startup-clear",
-              "--daemon",
-            ],
-            timeoutMs,
-            maxOutputBytes: 1024 * 1024,
-          },
-        ]),
   ];
 
   for (const command of commands) {
@@ -468,33 +439,6 @@ export async function prepareRealFirstBootProvisioning(
     autounattendIsoPath,
     commands,
   };
-}
-
-async function isSwtpmAlive(pidPath: string): Promise<boolean> {
-  try {
-    const pidText = await readFile(pidPath, "utf8");
-    const trimmed = pidText.trim();
-    if (!/^\d+$/.test(trimmed)) {
-      return false;
-    }
-    const pid = Number.parseInt(trimmed, 10);
-    if (!Number.isInteger(pid) || pid <= 0) {
-      return false;
-    }
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ESRCH")) {
-      return false;
-    }
-    if (isNodeError(error) && error.code === "EPERM") {
-      return true;
-    }
-    if (error instanceof SyntaxError) {
-      return false;
-    }
-    throw error;
-  }
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -516,9 +460,23 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 function buildAutounattendXml(config: CrucibleConfig): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
-    '<unattend xmlns="urn:schemas-microsoft-com:unattend">',
+    '<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">',
     '  <settings pass="windowsPE">',
     '    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    "      <RunSynchronous>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>1</Order>",
+    "          <Path>cmd /c reg add HKLM\\SYSTEM\\Setup\\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>",
+    "        </RunSynchronousCommand>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>2</Order>",
+    "          <Path>cmd /c reg add HKLM\\SYSTEM\\Setup\\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>",
+    "        </RunSynchronousCommand>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>3</Order>",
+    "          <Path>cmd /c reg add HKLM\\SYSTEM\\Setup\\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>",
+    "        </RunSynchronousCommand>",
+    "      </RunSynchronous>",
     "      <UserData><AcceptEula>true</AcceptEula></UserData>",
     "    </component>",
     "  </settings>",
