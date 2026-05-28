@@ -43,6 +43,10 @@ describe("crucible MCP tools", () => {
       "guest_exec",
       "guest_upload",
       "guest_download",
+      "debug_open",
+      "debug_command",
+      "debug_dump",
+      "debug_close",
     ]);
   });
 
@@ -201,5 +205,76 @@ describe("crucible MCP tools", () => {
   it("createCrucibleMcpServer rejects duplicate tool registration", () => {
     const server = createCrucibleMcpServer({});
     expect(() => registerCrucibleTools({ server })).toThrow(/already registered/i);
+  });
+
+  it("exercises debug_open / debug_command / debug_dump / debug_close via injected manager", async () => {
+    const { DebuggerSessionManager } = await import("@crucible/core");
+    const calls: Array<readonly string[]> = [];
+    const manager = new DebuggerSessionManager({
+      run: (args) => {
+        calls.push(args);
+        return Promise.resolve({
+          stdoutBase64: Buffer.from("0:000>").toString("base64"),
+          stderrBase64: "",
+          exitCode: 0,
+          timedOut: false,
+          truncated: false,
+          durationMs: 7,
+        });
+      },
+      idFactory: () => "dbg-abc",
+    });
+    const client = await harness({ debuggerManager: manager });
+
+    const openResult = (await client.callTool({
+      name: "debug_open",
+      arguments: { mode: "attach", pid: 1234 },
+    })) as ToolCallText;
+    const openPayload = parseFirstTextPayload<{ ok: boolean; result: { id: string } }>(openResult);
+    expect(openPayload.ok).toBe(true);
+    expect(openPayload.result.id).toBe("dbg-abc");
+
+    const commandResult = (await client.callTool({
+      name: "debug_command",
+      arguments: { sessionId: "dbg-abc", commands: ["!analyze -v"] },
+    })) as ToolCallText;
+    expect(
+      parseFirstTextPayload<{ ok: boolean; result: { command: string } }>(commandResult).result
+        .command,
+    ).toBe("!analyze -v");
+    expect(calls[0]).toEqual(["-c", "!analyze -v; q", "-p", "1234"]);
+
+    const dumpResult = (await client.callTool({
+      name: "debug_dump",
+      arguments: {
+        sessionId: "dbg-abc",
+        outputGuestPath: "C:\\ProgramData\\Crucible\\dump.dmp",
+      },
+    })) as ToolCallText;
+    expect(
+      parseFirstTextPayload<{ ok: boolean; result: { command: string } }>(dumpResult).result
+        .command,
+    ).toBe(".dump /ma C:\\ProgramData\\Crucible\\dump.dmp");
+
+    const closeResult = (await client.callTool({
+      name: "debug_close",
+      arguments: { sessionId: "dbg-abc" },
+    })) as ToolCallText;
+    const closePayload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { id: string; closed: boolean };
+    }>(closeResult);
+    expect(closePayload.result.closed).toBe(true);
+  });
+
+  it("reports vm-offline when debugger tools have no manager / guest client", async () => {
+    const client = await harness({});
+    const result = (await client.callTool({
+      name: "debug_open",
+      arguments: { mode: "attach", pid: 1 },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string } }>(result);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("vm-offline");
   });
 });

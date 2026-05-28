@@ -8,6 +8,9 @@ import { z } from "zod";
 import {
   CRUCIBLE_VERSION,
   CrucibleError,
+  DebuggerSessionManager,
+  type DebuggerSession,
+  type DebuggerSessionSpec,
   GuestAgentClient,
   type GuestAgentClientOptions,
   type GuestAgentExecRequest,
@@ -15,6 +18,7 @@ import {
   type GuestAgentHealth,
   type GuestAgentUploadResult,
   type HostCheckProbeResult,
+  type RunResult,
   runHostCheck,
 } from "@crucible/core";
 
@@ -65,6 +69,22 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     name: "guest_download",
     description:
       "Download a file from the guest staging directory back to the host via the Crucible guest agent.",
+  },
+  {
+    name: "debug_open",
+    description: "Open a CDB-backed debugger session against a guest process (launch or attach).",
+  },
+  {
+    name: "debug_command",
+    description: "Run one or more CDB commands inside an open debugger session.",
+  },
+  {
+    name: "debug_dump",
+    description: "Capture a user-mode dump file for a debugger session target.",
+  },
+  {
+    name: "debug_close",
+    description: "Close an open debugger session and discard its transcript.",
   },
 ];
 
@@ -134,6 +154,49 @@ const SnapshotRestoreInput = z
   .strict();
 type SnapshotRestoreInputType = z.infer<typeof SnapshotRestoreInput>;
 
+const DebugOpenInput = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("launch"),
+      executable: z.string().min(1),
+      arguments: z.array(z.string()).max(64).optional(),
+      symbolPath: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("attach"),
+      pid: z.number().int().positive(),
+      symbolPath: z.string().optional(),
+    })
+    .strict(),
+]);
+type _DebugOpenInputType = z.infer<typeof DebugOpenInput>;
+
+const DebugCommandInput = z
+  .object({
+    sessionId: z.string().min(1),
+    commands: z.array(z.string().min(1)).min(1).max(32),
+  })
+  .strict();
+type DebugCommandInputType = z.infer<typeof DebugCommandInput>;
+
+const DebugDumpInput = z
+  .object({
+    sessionId: z.string().min(1),
+    outputGuestPath: z.string().min(1),
+    minidump: z.boolean().optional(),
+  })
+  .strict();
+type DebugDumpInputType = z.infer<typeof DebugDumpInput>;
+
+const DebugCloseInput = z
+  .object({
+    sessionId: z.string().min(1),
+  })
+  .strict();
+type DebugCloseInputType = z.infer<typeof DebugCloseInput>;
+
 export type VmLifecycleSnapshot = {
   readonly state: string;
   readonly pid?: number;
@@ -167,6 +230,7 @@ export type RegisterCrucibleToolsOptions = {
   readonly guestClientFactory?: () => Promise<GuestAgentClient>;
   readonly vmAdapter?: CrucibleVmAdapter;
   readonly snapshotAdapter?: CrucibleSnapshotAdapter;
+  readonly debuggerManager?: DebuggerSessionManager;
   readonly auditLogPath?: string;
 };
 
@@ -216,6 +280,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
 
   registerVmTools(server, vmAdapter, auditLogPath);
   registerSnapshotTools(server, snapshotAdapter, auditLogPath);
+  registerDebuggerTools(server, options.debuggerManager, guestClientFactory, auditLogPath);
 
   server.registerTool(
     "guest_health",
@@ -441,6 +506,161 @@ function registerSnapshotTools(
   );
 }
 
+function registerDebuggerTools(
+  server: McpServer,
+  manager: DebuggerSessionManager | undefined,
+  guestClientFactory: (() => Promise<GuestAgentClient>) | undefined,
+  auditLogPath: string | undefined,
+): void {
+  // If no manager was injected but a guest client factory is, build a
+  // default manager that issues cdb invocations through the guest agent's
+  // /exec endpoint.
+  const effective =
+    manager ??
+    (guestClientFactory === undefined
+      ? undefined
+      : new DebuggerSessionManager({
+          run: async (args) => {
+            const client = await guestClientFactory();
+            const result = await client.exec({
+              executable: "cdb.exe",
+              arguments: [...args],
+              timeoutMs: 5 * 60 * 1000,
+            });
+            return {
+              stdoutBase64: result.stdoutBase64 ?? "",
+              stderrBase64: result.stderrBase64 ?? "",
+              exitCode: result.exitCode,
+              timedOut: result.timedOut,
+              truncated: result.truncated,
+              durationMs: result.durationMs,
+            } satisfies RunResult;
+          },
+        }));
+
+  const guard = (
+    handler: (mgr: DebuggerSessionManager) => Promise<ReturnType<typeof toJsonContent>>,
+  ) => {
+    return async () => {
+      if (effective === undefined) {
+        return toJsonContent({
+          ok: false,
+          error: {
+            kind: "vm-offline" as const,
+            message:
+              "debugger manager is not configured; install the guest agent and wire CRUCIBLE_GUEST_BASE_URL et al.",
+            auditLogPath,
+          },
+        });
+      }
+      return handler(effective);
+    };
+  };
+
+  server.registerTool(
+    "debug_open",
+    {
+      title: "Open debugger session",
+      description: "Open a CDB-backed debugger session against a guest process (launch or attach).",
+      inputSchema: {
+        mode: z.enum(["launch", "attach"]),
+        executable: z.string().optional(),
+        arguments: z.array(z.string()).optional(),
+        pid: z.number().optional(),
+        symbolPath: z.string().optional(),
+      },
+    },
+    async (raw: unknown) => {
+      const parsed = DebugOpenInput.safeParse(raw);
+      if (!parsed.success) {
+        return toJsonContent({
+          ok: false,
+          error: { kind: "validation" as const, message: parsed.error.message, auditLogPath },
+        });
+      }
+      return guard((mgr) =>
+        Promise.resolve().then(() => {
+          const spec: DebuggerSessionSpec = parsed.data;
+          const session: DebuggerSession = mgr.open(spec);
+          return toJsonContent({
+            ok: true,
+            result: { id: session.id, createdAt: session.createdAt, spec: session.spec },
+            auditLogPath,
+          });
+        }),
+      )();
+    },
+  );
+
+  server.registerTool(
+    "debug_command",
+    {
+      title: "Run a debugger command",
+      description: "Execute one or more CDB commands inside an open debugger session.",
+      inputSchema: DebugCommandInput.shape,
+    },
+    async (input: DebugCommandInputType) => {
+      return guard(async (mgr) => {
+        try {
+          const result = await mgr.command(input.sessionId, input.commands);
+          return toJsonContent({ ok: true, result, auditLogPath });
+        } catch (error) {
+          return toJsonContent({
+            ok: false,
+            error: toToolError(classifyError(error), error, auditLogPath),
+          });
+        }
+      })();
+    },
+  );
+
+  server.registerTool(
+    "debug_dump",
+    {
+      title: "Capture user-mode dump",
+      description: "Capture a user-mode dump file for an open debugger session's target.",
+      inputSchema: DebugDumpInput.shape,
+    },
+    async (input: DebugDumpInputType) => {
+      return guard(async (mgr) => {
+        try {
+          const result = await mgr.dump(input.sessionId, {
+            outputGuestPath: input.outputGuestPath,
+            minidump: input.minidump,
+          });
+          return toJsonContent({ ok: true, result, auditLogPath });
+        } catch (error) {
+          return toJsonContent({
+            ok: false,
+            error: toToolError(classifyError(error), error, auditLogPath),
+          });
+        }
+      })();
+    },
+  );
+
+  server.registerTool(
+    "debug_close",
+    {
+      title: "Close debugger session",
+      description: "Close an open debugger session and discard its transcript.",
+      inputSchema: DebugCloseInput.shape,
+    },
+    async (input: DebugCloseInputType) => {
+      return guard((mgr) =>
+        Promise.resolve().then(() => {
+          mgr.close(input.sessionId);
+          return toJsonContent({
+            ok: true,
+            result: { id: input.sessionId, closed: true },
+            auditLogPath,
+          });
+        }),
+      )();
+    },
+  );
+}
+
 /** Build a GuestAgentClient by reading the standard PEM file paths. */
 export async function buildGuestAgentClientFromFiles(
   options: { readonly baseUrl: string } & {
@@ -489,7 +709,12 @@ export function cacheGuestClientFactory(
 export async function runStdioMcpServer(
   options: Pick<
     RegisterCrucibleToolsOptions,
-    "guestClientFactory" | "hostCheck" | "vmAdapter" | "snapshotAdapter" | "auditLogPath"
+    | "guestClientFactory"
+    | "hostCheck"
+    | "vmAdapter"
+    | "snapshotAdapter"
+    | "debuggerManager"
+    | "auditLogPath"
   >,
 ): Promise<void> {
   const server = createCrucibleMcpServer(options);
@@ -500,7 +725,12 @@ export async function runStdioMcpServer(
 export function createCrucibleMcpServer(
   options: Pick<
     RegisterCrucibleToolsOptions,
-    "guestClientFactory" | "hostCheck" | "vmAdapter" | "snapshotAdapter" | "auditLogPath"
+    | "guestClientFactory"
+    | "hostCheck"
+    | "vmAdapter"
+    | "snapshotAdapter"
+    | "debuggerManager"
+    | "auditLogPath"
   >,
 ): McpServer {
   const server = new McpServer({ name: "crucible", version: CRUCIBLE_VERSION });

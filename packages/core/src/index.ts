@@ -111,6 +111,16 @@ export { QgaClient, QgaProvisioningExecutor } from "./qga.js";
 export { GuestAgentClient } from "./guest-agent-client.js";
 export { runHostCheck } from "./host-check.js";
 export type { HostCheckProbeResult } from "./host-check.js";
+export { DebuggerSessionManager } from "./debugger.js";
+export type {
+  DebuggerSession,
+  DebuggerSessionSpec,
+  DebuggerSessionMode,
+  DebuggerCommandResult,
+  DebuggerDumpRequest,
+  DebuggerSessionManagerOptions,
+  RunResult,
+} from "./debugger.js";
 export type {
   GuestAgentClientOptions,
   GuestAgentHealth,
