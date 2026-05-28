@@ -17,11 +17,23 @@ const DEFAULT_QGA_READINESS_TIMEOUT_MS = 30 * 60 * 1000;
 const QGA_READINESS_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
+const DEFAULT_RETRY_BUDGET_MS = 5 * 60 * 1000;
+const DEFAULT_RETRY_INITIAL_BACKOFF_MS = 500;
+const DEFAULT_RETRY_MAX_BACKOFF_MS = 5_000;
+
 type QgaResponse<T> = { readonly return?: T; readonly error?: { readonly desc?: string } };
+
+export type QgaRetryPolicy = {
+  readonly budgetMs: number;
+  readonly initialBackoffMs: number;
+  readonly maxBackoffMs: number;
+};
 
 export type QgaClientOptions = {
   readonly socketPath: string;
   readonly timeoutMs?: number;
+  readonly retryPolicy?: QgaRetryPolicy;
+  readonly sleep?: (ms: number) => Promise<void>;
 };
 
 export type QgaGuestExecResult = {
@@ -31,23 +43,72 @@ export type QgaGuestExecResult = {
   readonly timedOut: boolean;
 };
 
+export type QgaExecOptions = {
+  readonly timeoutMs?: number;
+  readonly env?: Readonly<Record<string, string>>;
+  /**
+   * When set, the entire guest-exec + status-poll loop is retried if the
+   * connection to qemu-ga drops mid-flight or if a status poll reports
+   * "pid not found" (which happens after a Windows reboot restarts the
+   * agent and forgets the in-flight pid). The caller is responsible for
+   * ensuring the command itself is safe to re-execute.
+   */
+  readonly idempotent?: boolean;
+};
+
 export class QgaClient {
   readonly #socketPath: string;
   readonly #timeoutMs: number;
+  readonly #retryPolicy: QgaRetryPolicy;
+  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(options: QgaClientOptions) {
     this.#socketPath = options.socketPath;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_QGA_TIMEOUT_MS;
+    this.#retryPolicy = options.retryPolicy ?? {
+      budgetMs: DEFAULT_RETRY_BUDGET_MS,
+      initialBackoffMs: DEFAULT_RETRY_INITIAL_BACKOFF_MS,
+      maxBackoffMs: DEFAULT_RETRY_MAX_BACKOFF_MS,
+    };
+    this.#sleep = options.sleep ?? sleep;
   }
 
+  /**
+   * Single-shot guest-ping. Callers that need readiness polling (e.g.
+   * QgaProvisioningExecutor#waitForGuestReadiness) loop ping themselves
+   * with their own deadline, so this intentionally does NOT retry.
+   */
   async ping(): Promise<void> {
-    await this.#request("guest-ping", {});
+    await this.#requestOnce("guest-ping", {});
   }
 
   async exec(
     executablePath: string,
     args: readonly string[],
-    options: { readonly timeoutMs?: number; readonly env?: Readonly<Record<string, string>> } = {},
+    options: QgaExecOptions = {},
+  ): Promise<QgaGuestExecResult> {
+    if (options.idempotent === true) {
+      return this.#withRetry(`exec ${executablePath}`, () =>
+        this.#execOnce(executablePath, args, options),
+      );
+    }
+    return this.#execOnce(executablePath, args, options);
+  }
+
+  /**
+   * writeFile is naturally idempotent (same path, same bytes, mode=wb
+   * truncates on open) so the whole open + write + close sequence is
+   * always retried under the configured policy.
+   */
+  async writeFile(guestPath: string, contents: Buffer | string): Promise<void> {
+    const data = typeof contents === "string" ? Buffer.from(contents, "utf8") : contents;
+    return this.#withRetry(`writeFile ${guestPath}`, () => this.#writeFileOnce(guestPath, data));
+  }
+
+  async #execOnce(
+    executablePath: string,
+    args: readonly string[],
+    options: QgaExecOptions,
   ): Promise<QgaGuestExecResult> {
     const execArgs: Record<string, unknown> = {
       path: executablePath,
@@ -62,11 +123,11 @@ export class QgaClient {
     if (envEntries.length > 0) {
       execArgs.env = envEntries.map(([name, value]) => `${name}=${value}`);
     }
-    const started = await this.#request<{ readonly pid: number }>("guest-exec", execArgs);
+    const started = await this.#requestOnce<{ readonly pid: number }>("guest-exec", execArgs);
     const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS);
 
     while (Date.now() < deadline) {
-      const status = await this.#request<{
+      const status = await this.#requestOnce<{
         readonly exited: boolean;
         readonly exitcode?: number;
         readonly "out-data"?: string;
@@ -82,35 +143,82 @@ export class QgaClient {
         };
       }
 
-      await sleep(DEFAULT_POLL_INTERVAL_MS);
+      await this.#sleep(DEFAULT_POLL_INTERVAL_MS);
     }
 
     return { stdout: "", stderr: "", timedOut: true };
   }
 
-  async writeFile(guestPath: string, contents: Buffer | string): Promise<void> {
-    const data = typeof contents === "string" ? Buffer.from(contents, "utf8") : contents;
-    const opened = await this.#request<{ readonly handle: number }>("guest-file-open", {
+  async #writeFileOnce(guestPath: string, data: Buffer): Promise<void> {
+    const opened = await this.#requestOnce<{ readonly handle: number }>("guest-file-open", {
       path: guestPath,
       mode: "wb",
     });
+    let primaryError: unknown;
     try {
       // qemu-ga caps a single guest-file-write at 48 KiB by default, so chunk
       // larger payloads to keep big PowerShell scripts within the limit.
       const chunkSize = 32 * 1024;
       for (let offset = 0; offset < data.length; offset += chunkSize) {
         const chunk = data.subarray(offset, offset + chunkSize);
-        await this.#request("guest-file-write", {
+        await this.#requestOnce("guest-file-write", {
           handle: opened.handle,
           "buf-b64": chunk.toString("base64"),
         });
       }
-    } finally {
-      await this.#request("guest-file-close", { handle: opened.handle });
+    } catch (error) {
+      primaryError = error;
+    }
+    try {
+      await this.#requestOnce("guest-file-close", { handle: opened.handle });
+    } catch (closeError) {
+      // Close errors only matter when the write itself succeeded — otherwise
+      // the original write failure is the real signal and must not be masked
+      // by a close failure (the handle may already be invalid because qga
+      // restarted, which is exactly what triggered the write failure).
+      if (primaryError === undefined) {
+        throw closeError;
+      }
+    }
+    if (primaryError !== undefined) {
+      if (primaryError instanceof Error) {
+        throw primaryError;
+      }
+      throw new CrucibleError(
+        "PROCESS_FAILED",
+        `writeFile failed with non-Error value`,
+        primaryError,
+      );
     }
   }
 
-  async #request<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  async #withRetry<T>(label: string, op: () => Promise<T>): Promise<T> {
+    const deadline = Date.now() + this.#retryPolicy.budgetMs;
+    let backoff = this.#retryPolicy.initialBackoffMs;
+    let lastError: unknown;
+    while (true) {
+      try {
+        return await op();
+      } catch (error) {
+        if (!isTransientQgaError(error)) {
+          throw error;
+        }
+        lastError = error;
+        if (Date.now() >= deadline) {
+          break;
+        }
+        await this.#sleep(Math.min(backoff, this.#retryPolicy.maxBackoffMs));
+        backoff = Math.min(backoff * 2, this.#retryPolicy.maxBackoffMs);
+      }
+    }
+    throw new CrucibleError(
+      "PROCESS_TIMEOUT",
+      `QGA ${label} retry budget exhausted (${this.#retryPolicy.budgetMs}ms)`,
+      lastError,
+    );
+  }
+
+  async #requestOnce<T>(command: string, args: Record<string, unknown>): Promise<T> {
     const socket = await connectSocket(this.#socketPath, this.#timeoutMs);
     try {
       socket.write(`${JSON.stringify({ execute: command, arguments: args })}\r\n`);
@@ -123,6 +231,45 @@ export class QgaClient {
       socket.end();
     }
   }
+}
+
+/**
+ * Classify a QGA error as transient (retryable) vs permanent. Transient:
+ *  - Socket-level timeouts (PROCESS_TIMEOUT) — agent didn't respond in
+ *    time, often because Windows is mid-reboot.
+ *  - Socket-level connect failures — agent service is restarting.
+ *  - Structured QGA errors that look like "lost handle/pid" — usually
+ *    after qemu-ga itself was restarted by a Windows reboot, which
+ *    invalidates all open file handles and running exec pids.
+ */
+function isTransientQgaError(error: unknown): boolean {
+  if (!(error instanceof CrucibleError)) {
+    return false;
+  }
+  if (error.code === "PROCESS_TIMEOUT") {
+    return true;
+  }
+  if (error.code !== "PROCESS_FAILED") {
+    return false;
+  }
+  if (error.message.startsWith("Unable to connect to QGA")) {
+    return true;
+  }
+  if (error.message === "QGA socket error") {
+    // Mid-flight socket error (e.g. ECONNRESET / EPIPE) — qemu-ga went
+    // away while we held an open connection, exactly what a reboot looks
+    // like from the host side.
+    return true;
+  }
+  const desc = (error.details as { desc?: string } | undefined)?.desc ?? "";
+  if (
+    error.message.startsWith("QGA command failed: guest-exec-status") ||
+    error.message.startsWith("QGA command failed: guest-file-write") ||
+    error.message.startsWith("QGA command failed: guest-file-close")
+  ) {
+    return /pid|handle|not found|invalid/i.test(desc);
+  }
+  return false;
 }
 
 export type QgaProvisioningExecutorOptions = {
@@ -222,6 +369,11 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     const result = await this.#client.exec(stage.script.executable, args, {
       timeoutMs: Math.max(stage.script.timeoutMs, this.#timeoutMs),
       env,
+      // Provisioning PowerShell scripts in guest/provision/ are written to be
+      // idempotent (they short-circuit when already-applied) so the exec can
+      // safely be replayed if a Windows reboot during the stage drops
+      // qemu-ga's pid.
+      idempotent: true,
     });
 
     return {
@@ -266,7 +418,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     const result = await this.#client.exec(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-Command", psCommand],
-      { timeoutMs: this.#timeoutMs },
+      { timeoutMs: this.#timeoutMs, idempotent: true },
     );
     if (result.timedOut || (result.exitCode !== 0 && result.exitCode !== undefined)) {
       throw new CrucibleError(
