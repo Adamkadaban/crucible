@@ -35,6 +35,11 @@ function Find-DebuggerExecutable {
         "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64",
         "$env:LOCALAPPDATA\Microsoft\WindowsApps"
     )
+    $windowsApps = "$env:ProgramFiles\WindowsApps"
+    if (-not [string]::IsNullOrWhiteSpace($windowsApps) -and (Test-Path -LiteralPath $windowsApps)) {
+        $candidates += Get-ChildItem -LiteralPath $windowsApps -Directory -Filter "Microsoft.WinDbg_*" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName
+    }
     foreach ($dir in $candidates) {
         if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { continue }
         foreach ($name in $FileNames) {
@@ -96,7 +101,10 @@ $healthy = (
     $qemuAgentStatus -eq "Running" -and
     $crucibleAgentStatus -eq "Running" -and
     ($defenderRtp -eq $false) -and
-    ($testSigning -eq $true)
+    # Matches the policy default (`bcdedit /set testsigning off`). Operators
+    # who enable test signing through a custom policy should override this
+    # script accordingly.
+    ($testSigning -eq $false)
 )
 
 $checks.healthy = $healthy
