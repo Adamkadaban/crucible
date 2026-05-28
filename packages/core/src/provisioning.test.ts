@@ -446,8 +446,11 @@ describe("provisioning contracts", () => {
     expect(plan.diskPath).toContain("first-boot.qcow2");
     expect(plan.autounattendIsoPath).toContain("autounattend.iso");
     expect(plan.swtpmSocketPath).toContain("swtpm.sock");
+    expect(plan.swtpmPidPath).toContain("swtpm.pid");
     expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso", "swtpm"]);
     expect(commands[0]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
+    expect(commands[2]?.args).toContain("--terminate");
+    expect(commands[2]?.args).toContain("not-need-init,startup-clear");
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
