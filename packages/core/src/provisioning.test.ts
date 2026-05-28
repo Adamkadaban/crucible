@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,11 +13,13 @@ import {
   buildProvisioningSecretStorageContract,
   canAdvanceProvisioningStage,
   createInitialProvisioningStateMachine,
+  prepareRealFirstBootProvisioning,
   PROVISIONING_SECRET_KINDS,
   PROVISIONING_STAGE_IDS,
   runProvisioningCommand,
   writeWindowsAccountSecrets,
 } from "./provisioning.js";
+import type { ProcessCommand, ProcessRunner } from "./process.js";
 
 describe("provisioning contracts", () => {
   it("defines the Phase 3 provisioning stages in execution order", () => {
@@ -391,6 +393,61 @@ describe("provisioning contracts", () => {
       expect.objectContaining({ id: "media-ready", status: "blocked" }),
     );
     expect(result.health.status).toBe("unavailable");
+  });
+
+  it("prepares first-boot host artifacts and commands", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-first-boot-"));
+    const windowsIso = path.join(root, "windows.iso");
+    const virtioIso = path.join(root, "virtio.iso");
+    const ovmfCode = path.join(root, "OVMF_CODE.fd");
+    const ovmfVars = path.join(root, "OVMF_VARS.fd");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+    ]);
+    const commands: ProcessCommand[] = [];
+    const processRunner: ProcessRunner = {
+      run(command) {
+        commands.push(command);
+        return Promise.resolve({
+          command,
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          durationMs: 1,
+          timedOut: false,
+        });
+      },
+    };
+
+    const plan = await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "first-boot", diskGiB: 64 },
+        media: {
+          windowsIso: { path: windowsIso },
+          virtioIso: { path: virtioIso },
+        },
+        artifacts: {
+          directory: path.join(root, "artifacts"),
+          manifestPath: path.join(root, "artifacts", "manifest.json"),
+          logsDirectory: path.join(root, "artifacts", "logs"),
+          snapshotsDirectory: path.join(root, "snapshots"),
+          secretsDirectory: path.join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner,
+    });
+
+    expect(plan.diskPath).toContain("first-boot.qcow2");
+    expect(plan.autounattendIsoPath).toContain("autounattend.iso");
+    expect(plan.swtpmSocketPath).toContain("swtpm.sock");
+    expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso", "swtpm"]);
+    expect(commands[0]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
   });
 
   it("builds guest health reports from provisioning readiness contracts", () => {

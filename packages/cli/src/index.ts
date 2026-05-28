@@ -13,6 +13,10 @@ import {
   loadCrucibleConfigFile,
   NETWORK_MODES,
   normalizeSnapshotName,
+  prepareRealFirstBootProvisioning,
+  type ProcessCommand,
+  type ProcessResult,
+  type ProcessRunner,
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
   runProvisioningCommand,
@@ -36,6 +40,7 @@ import {
   type VmStopResult,
   VmLifecycleManager,
 } from "@crucible/core";
+import { spawn } from "node:child_process";
 import { BOOTSTRAP_TOOLS, getMcpServerBanner } from "@crucible/mcp-server";
 
 type CommandResult = {
@@ -50,6 +55,7 @@ type CliRuntime = {
   readonly lifecycleManager?: CliLifecycleManager;
   readonly provisioningExecutor?: ProvisioningExecutor;
   readonly snapshotManager?: CliSnapshotManager;
+  readonly processRunner?: ProcessRunner;
 };
 
 type CliLifecycleManager = Pick<
@@ -304,9 +310,10 @@ async function runProvisionCommand(
   }
 
   const config = getRuntimeConfig(runtime);
+  const lifecycleManager = await getProvisioningLifecycleManager(config, runtime);
   const result = await runProvisioningCommand({
     config,
-    lifecycleManager: getLifecycleManager(runtime),
+    lifecycleManager,
     executor: runtime.provisioningExecutor,
     snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
   });
@@ -316,6 +323,88 @@ async function runProvisionCommand(
     stdout: renderProvisioningResult(result),
     stderr: "",
   };
+}
+
+async function getProvisioningLifecycleManager(
+  config: CrucibleConfig,
+  runtime: CliRuntime,
+): Promise<CliLifecycleManager> {
+  if (runtime.lifecycleManager !== undefined || runtime.provisioningExecutor !== undefined) {
+    return getLifecycleManager(runtime);
+  }
+
+  const processRunner = runtime.processRunner ?? nodeProcessRunner;
+  const firstBootPlan = await prepareRealFirstBootProvisioning({ config, processRunner });
+  const qemuPlan = buildQemuCommandPlan({
+    config,
+    diskPath: firstBootPlan.diskPath,
+    bootMedia: {
+      windowsIsoPath: config.media.windowsIso?.path,
+      virtioIsoPath: config.media.virtioIso?.path,
+      driverBundlePath: config.media.driverBundle?.path,
+      autounattendIsoPath: firstBootPlan.autounattendIsoPath,
+      ovmfCodePath: firstBootPlan.ovmfCodePath,
+      ovmfVarsPath: firstBootPlan.ovmfVarsPath,
+      swtpmSocketPath: firstBootPlan.swtpmSocketPath,
+    },
+  });
+
+  return new VmLifecycleManager({ config, plan: qemuPlan });
+}
+
+const nodeProcessRunner: ProcessRunner = {
+  run(command) {
+    return runNodeProcess(command);
+  },
+};
+
+async function runNodeProcess(command: ProcessCommand): Promise<ProcessResult> {
+  const startedAt = Date.now();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command.executable, [...command.args], {
+      cwd: command.cwd,
+      env: command.env === undefined ? process.env : { ...process.env, ...command.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const maxOutputBytes = command.maxOutputBytes ?? 1024 * 1024;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, command.timeoutMs);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout = boundedAppend(stdout, chunk, maxOutputBytes);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr = boundedAppend(stderr, chunk, maxOutputBytes);
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode, signal) => {
+      clearTimeout(timeout);
+      resolve({
+        command,
+        exitCode,
+        signal,
+        stdout,
+        stderr,
+        durationMs: Date.now() - startedAt,
+        timedOut,
+      });
+    });
+  });
+}
+
+function boundedAppend(current: string, chunk: string, maxBytes: number): string {
+  const next = `${current}${chunk}`;
+  if (Buffer.byteLength(next, "utf8") <= maxBytes) {
+    return next;
+  }
+  return next.slice(-maxBytes);
 }
 
 async function runGuestHealthCommand(
