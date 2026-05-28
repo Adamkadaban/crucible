@@ -1129,7 +1129,7 @@ function buildProvisioningStageContracts(
         "guest-agent-powershell",
         "guest/provision/test-health.ps1",
         {
-          scriptArguments: ["-AllowMissingWinDbg"],
+          scriptArguments: ["-AllowMissingWinDbg", "-AllowDefenderEnabled"],
         },
       ),
       producesSecrets: [],

@@ -13,6 +13,15 @@ import (
 )
 
 func main() {
+	// Service-mode dispatch happens here in main(), not in init() — calling
+	// svc.Run from init() prevents Go's runtime from starting the main
+	// goroutine and SCM never receives a registered handler. The Windows
+	// build supplies maybeRunAsService; on non-Windows builds it's a no-op
+	// that returns false.
+	if maybeRunAsService() {
+		return
+	}
+
 	root := &cobra.Command{
 		Use:   "crucible-guest-agent",
 		Short: "Crucible Windows guest control service",

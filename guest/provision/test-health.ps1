@@ -1,5 +1,6 @@
 param(
-    [switch]$AllowMissingWinDbg
+    [switch]$AllowMissingWinDbg,
+    [switch]$AllowDefenderEnabled
 )
 
 $ErrorActionPreference = "Stop"
@@ -104,13 +105,22 @@ if ($AllowMissingWinDbg) {
     $windbgHealthy = $true
 }
 
+$defenderGate = $defenderRtp -eq $false
+if ($AllowDefenderEnabled) {
+    # Windows Tamper Protection prevents programmatic Defender disable via
+    # registry / Set-MpPreference even from LocalSystem. Provisioning may
+    # opt to surface RTP state without failing the health check; operators
+    # can disable Tamper Protection offline via an OEM image.
+    $defenderGate = $true
+}
+
 $healthy = (
     $windbgHealthy -and
     $crucibleAdmin -and
     $crucibleUser -and
     $qemuAgentStatus -eq "Running" -and
     $crucibleAgentStatus -eq "Running" -and
-    ($defenderRtp -eq $false) -and
+    $defenderGate -and
     # Matches the policy default (`bcdedit /set testsigning off`). Operators
     # who enable test signing through a custom policy should override this
     # script accordingly.
