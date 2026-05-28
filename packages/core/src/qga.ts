@@ -11,6 +11,8 @@ import {
 
 const DEFAULT_QGA_TIMEOUT_MS = 10_000;
 const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_QGA_READINESS_TIMEOUT_MS = 30 * 60 * 1000;
+const QGA_READINESS_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 type QgaResponse<T> = { readonly return?: T; readonly error?: { readonly desc?: string } };
@@ -96,6 +98,10 @@ export type QgaProvisioningExecutorOptions = {
   readonly vmName: string;
   readonly secretsDirectory: string;
   readonly timeoutMs?: number;
+  readonly readinessTimeoutMs?: number;
+  readonly readinessPollIntervalMs?: number;
+  readonly now?: () => number;
+  readonly sleep?: (ms: number) => Promise<void>;
 };
 
 export class QgaProvisioningExecutor implements ProvisioningExecutor {
@@ -103,12 +109,22 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
   readonly #vmName: string;
   readonly #secretsDirectory: string;
   readonly #timeoutMs: number;
+  readonly #readinessTimeoutMs: number;
+  readonly #readinessPollIntervalMs: number;
+  readonly #now: () => number;
+  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(options: QgaProvisioningExecutorOptions) {
     this.#client = options.client;
     this.#vmName = options.vmName;
     this.#secretsDirectory = options.secretsDirectory;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
+    this.#readinessTimeoutMs = options.readinessTimeoutMs ?? DEFAULT_QGA_READINESS_TIMEOUT_MS;
+    this.#readinessPollIntervalMs =
+      options.readinessPollIntervalMs ?? QGA_READINESS_POLL_INTERVAL_MS;
+    this.#now = options.now ?? (() => Date.now());
+    this.#sleep =
+      options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async runStage(stage: ProvisioningStageContract) {
@@ -122,7 +138,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     }
 
     if (stage.id === "qga-ready") {
-      await this.#client.ping();
+      await this.#waitForGuestReadiness();
       if (stage.script === undefined) {
         return {
           id: stage.id,
@@ -160,6 +176,25 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
           ? stage.script.scriptPath
           : result.stderr || `guest-exec exit code ${result.exitCode ?? "unknown"}`,
     };
+  }
+
+  async #waitForGuestReadiness(): Promise<void> {
+    const deadline = this.#now() + this.#readinessTimeoutMs;
+    let lastError: unknown;
+    while (this.#now() < deadline) {
+      try {
+        await this.#client.ping();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+      await this.#sleep(this.#readinessPollIntervalMs);
+    }
+    throw new CrucibleError(
+      "QMP_TIMEOUT",
+      `Timed out waiting for QGA after ${this.#readinessTimeoutMs}ms`,
+      lastError,
+    );
   }
 
   async #buildStageEnv(
