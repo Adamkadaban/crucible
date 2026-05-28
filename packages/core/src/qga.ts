@@ -11,7 +11,7 @@ import {
   type ProvisioningStageId,
 } from "./provisioning.js";
 
-const DEFAULT_QGA_TIMEOUT_MS = 10_000;
+const DEFAULT_QGA_TIMEOUT_MS = 60_000;
 const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_QGA_READINESS_TIMEOUT_MS = 30 * 60 * 1000;
 const QGA_READINESS_POLL_INTERVAL_MS = 5_000;
@@ -114,7 +114,7 @@ export class QgaClient {
     const socket = await connectSocket(this.#socketPath, this.#timeoutMs);
     try {
       socket.write(`${JSON.stringify({ execute: command, arguments: args })}\r\n`);
-      const response = await readResponse<T>(socket, this.#timeoutMs);
+      const response = await readResponse<T>(socket, this.#timeoutMs, command);
       if (response.error !== undefined) {
         throw new CrucibleError("PROCESS_FAILED", `QGA command failed: ${command}`, response.error);
       }
@@ -361,11 +361,20 @@ function connectSocket(socketPath: string, timeoutMs: number): Promise<Socket> {
   });
 }
 
-function readResponse<T>(socket: Socket, timeoutMs: number): Promise<QgaResponse<T>> {
+function readResponse<T>(
+  socket: Socket,
+  timeoutMs: number,
+  command: string,
+): Promise<QgaResponse<T>> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     const timeout = setTimeout(() => {
-      reject(new CrucibleError("PROCESS_TIMEOUT", "Timed out waiting for QGA response"));
+      reject(
+        new CrucibleError(
+          "PROCESS_TIMEOUT",
+          `Timed out waiting for QGA response (${command}, ${timeoutMs}ms)`,
+        ),
+      );
     }, timeoutMs);
 
     socket.setEncoding("utf8");
