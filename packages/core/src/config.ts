@@ -53,12 +53,20 @@ const driverBundleOverrideSchema = mediaOverrideSchema(
 
 const socketPathSchema = z.string().min(1);
 
+const vmDisplayConfigSchema = z
+  .object({
+    mode: z.enum(["none", "vnc", "gtk"]).default("none"),
+    vncSocketPath: z.string().min(1).default("artifacts/vnc.sock"),
+  })
+  .strict();
+
 const vmConfigSchema = z
   .object({
     name: z.string().min(1).default("crucible-win11"),
     cpus: z.number().int().min(1).default(4),
     memoryMiB: z.number().int().min(2048).default(8192),
     diskGiB: z.number().int().min(40).default(128),
+    display: z.preprocess((value) => value ?? {}, vmDisplayConfigSchema),
     extraQemuArgs: z.array(z.string()).default([]),
   })
   .strict();

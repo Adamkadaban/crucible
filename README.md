@@ -97,6 +97,7 @@ extra QEMU arguments, QMP/QGA sockets, networking mode, and artifact directories
     "cpus": 4,
     "memoryMiB": 8192,
     "diskGiB": 128,
+    "display": { "mode": "none", "vncSocketPath": "artifacts/vnc.sock" },
     "extraQemuArgs": []
   },
   "media": {
@@ -271,6 +272,13 @@ Set `virtio.diskBus` to `virtio-blk` to use `virtio-blk-pci` instead of the defa
 `virtio-scsi-pci`/`scsi-hd` pair. `vm.extraQemuArgs` is appended at the end of the generated argv so
 operators can add explicit QEMU flags while keeping Crucible's required lifecycle devices visible in
 dry-run output.
+
+The default `vm.display.mode` is `none` so QEMU never opens a GTK window on the host (suitable for
+servers, CI, and headless workstations). Set `vm.display.mode` to `gtk` for a local GUI while
+debugging, or to `vnc` to expose the framebuffer over a Unix domain socket at
+`vm.display.vncSocketPath` (default `artifacts/vnc.sock`). Connect with
+`vncviewer unix=artifacts/vnc.sock` or `remote-viewer vnc+unix://$PWD/artifacts/vnc.sock`. QMP
+`screendump` keeps working in every mode.
 
 ## Hacking On It
 

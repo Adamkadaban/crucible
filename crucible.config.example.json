@@ -4,7 +4,8 @@
     "name": "crucible-win11",
     "cpus": 4,
     "memoryMiB": 8192,
-    "diskGiB": 128
+    "diskGiB": 128,
+    "display": { "mode": "none", "vncSocketPath": "artifacts/vnc.sock" }
   },
   "media": {
     "cacheDir": "media/cache",
