@@ -14,6 +14,8 @@ import {
   type GuestAgentExecResult,
   type GuestAgentHealth,
   type GuestAgentUploadResult,
+  type HostCheckProbeResult,
+  runHostCheck,
 } from "@crucible/core";
 
 export type CrucibleToolDefinition = {
@@ -25,6 +27,26 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   {
     name: "host_check",
     description: "Report Linux host prerequisites for QEMU/KVM-based Windows analysis VMs.",
+  },
+  {
+    name: "vm_status",
+    description: "Read the lifecycle state of the configured Crucible VM from its state manifest.",
+  },
+  {
+    name: "vm_start",
+    description: "Start the configured Crucible VM through the injected lifecycle manager.",
+  },
+  {
+    name: "vm_stop",
+    description: "Stop the configured Crucible VM through the injected lifecycle manager.",
+  },
+  {
+    name: "snapshot_list",
+    description: "List qcow2 snapshots tracked by Crucible for the configured VM.",
+  },
+  {
+    name: "snapshot_restore",
+    description: "Restore a named snapshot before or after running a sample.",
   },
   {
     name: "guest_health",
@@ -56,6 +78,8 @@ export type CrucibleToolErrorKind =
   | "host-prerequisite"
   | "vm-offline"
   | "guest-failed"
+  | "timeout"
+  | "policy-denied"
   | "internal";
 
 export type CrucibleToolError = {
@@ -63,6 +87,13 @@ export type CrucibleToolError = {
   readonly message: string;
   readonly auditLogPath?: string;
 };
+
+const Base64String = z
+  .string()
+  .min(1)
+  .refine((value) => /^[A-Za-z0-9+/]+={0,2}$/.test(value) && value.length % 4 === 0, {
+    message: "must be a canonical base64 string",
+  });
 
 const GuestExecInput = z
   .object({
@@ -78,7 +109,7 @@ type GuestExecInputType = z.infer<typeof GuestExecInput>;
 const GuestUploadInput = z
   .object({
     targetPath: z.string().min(1),
-    contentsBase64: z.string().min(1),
+    contentsBase64: Base64String,
   })
   .strict();
 type GuestUploadInputType = z.infer<typeof GuestUploadInput>;
@@ -92,18 +123,51 @@ type GuestDownloadInputType = z.infer<typeof GuestDownloadInput>;
 
 const HostCheckInput = z.object({}).strict();
 const GuestHealthInput = z.object({}).strict();
+const VmStatusInput = z.object({}).strict();
+const VmStartInput = z.object({}).strict();
+const VmStopInput = z.object({}).strict();
+const SnapshotListInput = z.object({}).strict();
+const SnapshotRestoreInput = z
+  .object({
+    snapshotName: z.string().min(1),
+  })
+  .strict();
+type SnapshotRestoreInputType = z.infer<typeof SnapshotRestoreInput>;
+
+export type VmLifecycleSnapshot = {
+  readonly state: string;
+  readonly pid?: number;
+  readonly startedAt?: string;
+};
+
+export type SnapshotInfo = {
+  readonly name: string;
+  readonly path: string;
+  readonly createdAt: string;
+};
+
+/**
+ * Pluggable surfaces — every adapter is optional so the CLI can wire real
+ * implementations while tests inject fakes.
+ */
+export type CrucibleVmAdapter = {
+  readonly status: () => Promise<VmLifecycleSnapshot>;
+  readonly start: () => Promise<VmLifecycleSnapshot>;
+  readonly stop: () => Promise<VmLifecycleSnapshot>;
+};
+
+export type CrucibleSnapshotAdapter = {
+  readonly list: () => Promise<readonly SnapshotInfo[]>;
+  readonly restore: (snapshotName: string) => Promise<SnapshotInfo>;
+};
 
 export type RegisterCrucibleToolsOptions = {
   readonly server: McpServer;
-  readonly hostCheck?: () => Promise<HostCheckResult>;
+  readonly hostCheck?: () => Promise<HostCheckProbeResult>;
   readonly guestClientFactory?: () => Promise<GuestAgentClient>;
+  readonly vmAdapter?: CrucibleVmAdapter;
+  readonly snapshotAdapter?: CrucibleSnapshotAdapter;
   readonly auditLogPath?: string;
-};
-
-export type HostCheckResult = {
-  readonly healthy: boolean;
-  readonly missing: readonly string[];
-  readonly notes?: string;
 };
 
 /**
@@ -111,31 +175,36 @@ export type HostCheckResult = {
  *
  * Optional dependencies are injected so tests can drive the same handlers
  * without spawning QEMU. In production callers wire a real
- * GuestAgentClient and a host-prerequisite checker.
+ * GuestAgentClient, lifecycle/snapshot adapters, and host probe.
  */
 export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): void {
-  const { server, hostCheck, guestClientFactory, auditLogPath } = options;
+  const { server, vmAdapter, snapshotAdapter, auditLogPath } = options;
+  const hostCheck = options.hostCheck ?? runHostCheck;
+  const guestClientFactory = options.guestClientFactory;
 
   server.registerTool(
     "host_check",
     {
       title: "Check host prerequisites",
       description:
-        "Verify the Linux host has QEMU/KVM, OVMF, virtio drivers, and other binaries required to run a Crucible analysis VM.",
+        "Verify the Linux host has QEMU/KVM, OVMF, and other binaries required to run a Crucible analysis VM.",
       inputSchema: HostCheckInput.shape,
     },
     async () => {
       try {
-        const probe =
-          hostCheck ??
-          (() =>
-            Promise.resolve({
-              healthy: true,
-              missing: [] as string[],
-              notes: "default stub host_check",
-            }));
-        const result = await probe();
-        return toJsonContent({ ok: result.healthy, result, auditLogPath });
+        const result = await hostCheck();
+        if (!result.healthy) {
+          return toJsonContent({
+            ok: false,
+            error: {
+              kind: "host-prerequisite" as const,
+              message: result.notes ?? "host prerequisites missing",
+              auditLogPath,
+            },
+            result,
+          });
+        }
+        return toJsonContent({ ok: true, result, auditLogPath });
       } catch (error) {
         return toJsonContent({
           ok: false,
@@ -144,6 +213,9 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
       }
     },
   );
+
+  registerVmTools(server, vmAdapter, auditLogPath);
+  registerSnapshotTools(server, snapshotAdapter, auditLogPath);
 
   server.registerTool(
     "guest_health",
@@ -249,6 +321,126 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   );
 }
 
+function registerVmTools(
+  server: McpServer,
+  vm: CrucibleVmAdapter | undefined,
+  auditLogPath: string | undefined,
+): void {
+  const wrap = async (operation: () => Promise<VmLifecycleSnapshot>) => {
+    if (vm === undefined) {
+      return toJsonContent({
+        ok: false,
+        error: {
+          kind: "vm-offline" as const,
+          message: "VM adapter is not configured; cannot inspect or control the VM",
+          auditLogPath,
+        },
+      });
+    }
+    try {
+      const result = await operation();
+      return toJsonContent({ ok: true, result, auditLogPath });
+    } catch (error) {
+      return toJsonContent({
+        ok: false,
+        error: toToolError(classifyError(error), error, auditLogPath),
+      });
+    }
+  };
+  server.registerTool(
+    "vm_status",
+    {
+      title: "VM lifecycle status",
+      description: "Read the persisted lifecycle state of the configured Crucible VM.",
+      inputSchema: VmStatusInput.shape,
+    },
+    () => wrap(() => vm!.status()),
+  );
+  server.registerTool(
+    "vm_start",
+    {
+      title: "Start the VM",
+      description: "Start the configured Crucible VM through the lifecycle manager.",
+      inputSchema: VmStartInput.shape,
+    },
+    () => wrap(() => vm!.start()),
+  );
+  server.registerTool(
+    "vm_stop",
+    {
+      title: "Stop the VM",
+      description: "Stop the configured Crucible VM through the lifecycle manager.",
+      inputSchema: VmStopInput.shape,
+    },
+    () => wrap(() => vm!.stop()),
+  );
+}
+
+function registerSnapshotTools(
+  server: McpServer,
+  snapshot: CrucibleSnapshotAdapter | undefined,
+  auditLogPath: string | undefined,
+): void {
+  server.registerTool(
+    "snapshot_list",
+    {
+      title: "List snapshots",
+      description: "Enumerate qcow2 snapshots tracked by Crucible for the configured VM.",
+      inputSchema: SnapshotListInput.shape,
+    },
+    async () => {
+      if (snapshot === undefined) {
+        return toJsonContent({
+          ok: false,
+          error: {
+            kind: "vm-offline" as const,
+            message: "snapshot adapter is not configured",
+            auditLogPath,
+          },
+        });
+      }
+      try {
+        const result = await snapshot.list();
+        return toJsonContent({ ok: true, result, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+  server.registerTool(
+    "snapshot_restore",
+    {
+      title: "Restore a snapshot",
+      description: "Restore a named qcow2 snapshot before or after running a sample.",
+      inputSchema: SnapshotRestoreInput.shape,
+    },
+    async (input: SnapshotRestoreInputType) => {
+      if (snapshot === undefined) {
+        return toJsonContent({
+          ok: false,
+          error: {
+            kind: "vm-offline" as const,
+            message: "snapshot adapter is not configured",
+            auditLogPath,
+          },
+        });
+      }
+      try {
+        const result = await snapshot.restore(input.snapshotName);
+        return toJsonContent({ ok: true, result, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+}
+
 /** Build a GuestAgentClient by reading the standard PEM file paths. */
 export async function buildGuestAgentClientFromFiles(
   options: { readonly baseUrl: string } & {
@@ -275,9 +467,30 @@ export async function buildGuestAgentClientFromFiles(
   return new GuestAgentClient(clientOptions);
 }
 
+/**
+ * Wrap a single-shot factory so the resulting GuestAgentClient is built lazily
+ * and reused for the process lifetime. Long-running MCP servers should pass
+ * the cached factory to registerCrucibleTools so undici keep-alive sockets
+ * and PEM file reads aren't repeated per request.
+ */
+export function cacheGuestClientFactory(
+  factory: () => Promise<GuestAgentClient>,
+): () => Promise<GuestAgentClient> {
+  let cached: Promise<GuestAgentClient> | undefined;
+  return () => {
+    if (cached === undefined) {
+      cached = factory();
+    }
+    return cached;
+  };
+}
+
 /** Run the MCP server over stdio (entrypoint for `crucible mcp`). */
 export async function runStdioMcpServer(
-  options: Pick<RegisterCrucibleToolsOptions, "guestClientFactory" | "hostCheck" | "auditLogPath">,
+  options: Pick<
+    RegisterCrucibleToolsOptions,
+    "guestClientFactory" | "hostCheck" | "vmAdapter" | "snapshotAdapter" | "auditLogPath"
+  >,
 ): Promise<void> {
   const server = createCrucibleMcpServer(options);
   const transport = new StdioServerTransport();
@@ -285,7 +498,10 @@ export async function runStdioMcpServer(
 }
 
 export function createCrucibleMcpServer(
-  options: Pick<RegisterCrucibleToolsOptions, "guestClientFactory" | "hostCheck" | "auditLogPath">,
+  options: Pick<
+    RegisterCrucibleToolsOptions,
+    "guestClientFactory" | "hostCheck" | "vmAdapter" | "snapshotAdapter" | "auditLogPath"
+  >,
 ): McpServer {
   const server = new McpServer({ name: "crucible", version: CRUCIBLE_VERSION });
   registerCrucibleTools({ server, ...options });
@@ -314,9 +530,15 @@ function classifyError(error: unknown): CrucibleToolErrorKind {
       case "QMP_DISCONNECTED":
       case "QMP_CONNECTION_FAILED":
         return "vm-offline";
+      case "QMP_TIMEOUT":
+      case "PROCESS_TIMEOUT":
+        return "timeout";
       default:
         return "guest-failed";
     }
+  }
+  if (error instanceof Error && /denied|forbidden|policy/i.test(error.message)) {
+    return "policy-denied";
   }
   return "internal";
 }

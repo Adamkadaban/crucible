@@ -46,6 +46,7 @@ import { spawn } from "node:child_process";
 import {
   BOOTSTRAP_TOOLS,
   buildGuestAgentClientFromFiles,
+  cacheGuestClientFactory,
   getMcpServerBanner,
   runStdioMcpServer,
 } from "@crucible/mcp-server";
@@ -1002,13 +1003,14 @@ function buildEnvGuestClientFactory():
   ) {
     return undefined;
   }
-  return async () =>
+  return cacheGuestClientFactory(() =>
     buildGuestAgentClientFromFiles({
       baseUrl,
       caPath,
       clientCertificatePath: certPath,
       clientPrivateKeyPath: keyPath,
-    });
+    }),
+  );
 }
 
 function getHelpText(): string {

@@ -325,13 +325,15 @@ successfully.
 
 - [x] Register MCP tools for `host_check`, `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`,
       `snapshot_restore`, `guest_health`.
-- [x] Register MCP tools for `guest_exec`, `guest_exec_admin`, `upload_file`, and `download_file`.
+- [x] Register MCP tools for `guest_exec`, `upload_file`, and `download_file`. `guest_exec_admin` is
+      deferred until the guest agent grows the SCM impersonation path planned in Phase 4 follow-up.
 - [x] Add structured Zod input/output schemas for every tool.
 - [x] Add error mapping that distinguishes validation errors, host prerequisite errors, VM offline
       errors, guest service errors, timeout errors, and security policy denials.
 - [x] Add MCP smoke-test harness that drives stdio without a human client.
-- [x] Add real-VM MCP integration tests gated by environment variables that verify every public MCP
-      tool against a locally provisioned VM.
+- [ ] Add real-VM MCP integration tests gated by environment variables that verify every public MCP
+      tool against a locally provisioned VM. _(deferred until the Phase 3 exit test passes against a
+      real provisioned VM.)_
 - [x] Add README MCP configuration snippets for opencode/Claude-style clients.
 - [x] Add docs for safe malware-analysis workflow and snapshot restore before/after sample
       execution.

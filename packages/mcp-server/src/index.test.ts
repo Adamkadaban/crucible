@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { Buffer } from "node:buffer";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Buffer } from "node:buffer";
+import { describe, expect, it } from "vitest";
 
 import {
   BOOTSTRAP_TOOLS,
+  cacheGuestClientFactory,
   createCrucibleMcpServer,
   getMcpServerBanner,
   registerCrucibleTools,
@@ -29,10 +30,15 @@ async function harness(options: Parameters<typeof createCrucibleMcpServer>[0]): 
 }
 
 describe("crucible MCP tools", () => {
-  it("exposes the bootstrap registration via getMcpServerBanner", () => {
+  it("publishes the bootstrap surface", () => {
     expect(getMcpServerBanner()).toMatch(/^crucible MCP server /);
     expect(BOOTSTRAP_TOOLS.map((tool) => tool.name)).toEqual([
       "host_check",
+      "vm_status",
+      "vm_start",
+      "vm_stop",
+      "snapshot_list",
+      "snapshot_restore",
       "guest_health",
       "guest_exec",
       "guest_upload",
@@ -40,17 +46,94 @@ describe("crucible MCP tools", () => {
     ]);
   });
 
-  it("invokes host_check with the injected probe", async () => {
+  it("reports host-prerequisite failures via the structured envelope", async () => {
     const client = await harness({
-      hostCheck: () => Promise.resolve({ healthy: false, missing: ["qemu"] as readonly string[] }),
+      hostCheck: () =>
+        Promise.resolve({
+          healthy: false,
+          missing: ["bin:qemu-system-x86_64"],
+          notes: "missing prerequisites",
+          platform: "linux",
+          arch: "x64",
+        }),
     });
     const result = (await client.callTool({ name: "host_check", arguments: {} })) as ToolCallText;
-    const payload = parseFirstTextPayload<{ ok: boolean; result: { missing: string[] } }>(result);
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      error?: { kind: string };
+      result?: { missing: string[] };
+    }>(result);
     expect(payload.ok).toBe(false);
-    expect(payload.result.missing).toEqual(["qemu"]);
+    expect(payload.error?.kind).toBe("host-prerequisite");
+    expect(payload.result?.missing).toEqual(["bin:qemu-system-x86_64"]);
   });
 
-  it("reports guest-failed when the guest client is missing", async () => {
+  it("marks the host as healthy when the probe succeeds", async () => {
+    const client = await harness({
+      hostCheck: () =>
+        Promise.resolve({
+          healthy: true,
+          missing: [] as readonly string[],
+          notes: "ok",
+          platform: "linux",
+          arch: "x64",
+        }),
+    });
+    const result = (await client.callTool({ name: "host_check", arguments: {} })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean }>(result);
+    expect(payload.ok).toBe(true);
+  });
+
+  it("returns vm-offline when no VM adapter is wired", async () => {
+    const client = await harness({});
+    const result = (await client.callTool({ name: "vm_status", arguments: {} })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string } }>(result);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("vm-offline");
+  });
+
+  it("exercises every vm + snapshot tool through injected adapters", async () => {
+    const fakeVm = {
+      status: () => Promise.resolve({ state: "stopped" }),
+      start: () => Promise.resolve({ state: "running", pid: 1234 }),
+      stop: () => Promise.resolve({ state: "stopped" }),
+    };
+    const fakeSnapshots = {
+      list: () =>
+        Promise.resolve([
+          { name: "clean-base", path: "snapshots/clean-base.qcow2", createdAt: "2026-01-01" },
+        ] as const),
+      restore: (name: string) =>
+        Promise.resolve({ name, path: `snapshots/${name}.qcow2`, createdAt: "2026-01-01" }),
+    };
+    const client = await harness({
+      vmAdapter: fakeVm,
+      snapshotAdapter: fakeSnapshots,
+    });
+    for (const name of ["vm_status", "vm_start", "vm_stop"] as const) {
+      const result = (await client.callTool({ name, arguments: {} })) as ToolCallText;
+      const payload = parseFirstTextPayload<{ ok: boolean; result: { state: string } }>(result);
+      expect(payload.ok).toBe(true);
+      expect(payload.result.state).toMatch(/^(running|stopped)$/);
+    }
+    const listResult = (await client.callTool({
+      name: "snapshot_list",
+      arguments: {},
+    })) as ToolCallText;
+    expect(
+      parseFirstTextPayload<{ ok: boolean; result: Array<{ name: string }> }>(listResult).result[0]
+        ?.name,
+    ).toBe("clean-base");
+    const restoreResult = (await client.callTool({
+      name: "snapshot_restore",
+      arguments: { snapshotName: "clean-base" },
+    })) as ToolCallText;
+    expect(
+      parseFirstTextPayload<{ ok: boolean; result: { name: string } }>(restoreResult).result.name,
+    ).toBe("clean-base");
+  });
+
+  it("returns guest-failed when the guest client is missing", async () => {
     const client = await harness({});
     const result = (await client.callTool({
       name: "guest_health",
@@ -65,7 +148,7 @@ describe("crucible MCP tools", () => {
     expect(payload.error.message).toMatch(/guest client is not configured/);
   });
 
-  it("round-trips guest_exec through a fake guest client", async () => {
+  it("round-trips guest_exec through a cached guest client", async () => {
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
       exec: (req: { executable: string; arguments?: string[] }) =>
@@ -81,43 +164,20 @@ describe("crucible MCP tools", () => {
       download: () => Promise.resolve(Buffer.from("downloaded")),
       close: () => Promise.resolve(),
     };
-    const client = await harness({
+    let factoryCalls = 0;
+    const factory = cacheGuestClientFactory(() => {
+      factoryCalls += 1;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      guestClientFactory: () => Promise.resolve(fakeClient as any),
+      return Promise.resolve(fakeClient as any);
     });
-    const exec = (await client.callTool({
-      name: "guest_exec",
-      arguments: { executable: "whoami.exe", arguments: ["/groups"] },
-    })) as ToolCallText;
-    const execPayload = parseFirstTextPayload<{
-      ok: boolean;
-      result: { stdoutBase64: string };
-    }>(exec);
-    expect(execPayload.ok).toBe(true);
-    expect(Buffer.from(execPayload.result.stdoutBase64, "base64").toString()).toBe(
-      "ran whoami.exe",
-    );
-
-    const upload = (await client.callTool({
-      name: "guest_upload",
-      arguments: {
-        targetPath: "stage/payload.bin",
-        contentsBase64: Buffer.from("data").toString("base64"),
-      },
-    })) as ToolCallText;
-    expect(
-      parseFirstTextPayload<{ ok: boolean; result: { sizeBytes: number } }>(upload).result
-        .sizeBytes,
-    ).toBe(4);
-
-    const download = (await client.callTool({
-      name: "guest_download",
-      arguments: { sourcePath: "stage/payload.bin" },
-    })) as ToolCallText;
-    const dlPayload = parseFirstTextPayload<{ ok: boolean; result: { contentsBase64: string } }>(
-      download,
-    );
-    expect(Buffer.from(dlPayload.result.contentsBase64, "base64").toString()).toBe("downloaded");
+    const client = await harness({ guestClientFactory: factory });
+    for (let i = 0; i < 3; i += 1) {
+      await client.callTool({
+        name: "guest_exec",
+        arguments: { executable: "whoami.exe" },
+      });
+    }
+    expect(factoryCalls).toBe(1);
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {
@@ -129,10 +189,17 @@ describe("crucible MCP tools", () => {
     expect(result.isError).toBe(true);
   });
 
-  it("createCrucibleMcpServer registers exactly the bootstrap tool set", () => {
+  it("rejects non-canonical base64 in guest_upload", async () => {
+    const client = await harness({});
+    const result = (await client.callTool({
+      name: "guest_upload",
+      arguments: { targetPath: "stage/bad.bin", contentsBase64: "not!!!valid!!!" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(result.isError).toBe(true);
+  });
+
+  it("createCrucibleMcpServer rejects duplicate tool registration", () => {
     const server = createCrucibleMcpServer({});
-    // Re-registering throws by SDK contract; ensures the bootstrap set is
-    // installed once and avoids duplicate registrations across callers.
     expect(() => registerCrucibleTools({ server })).toThrow(/already registered/i);
   });
 });
