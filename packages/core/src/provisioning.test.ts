@@ -12,6 +12,7 @@ import {
   buildProvisioningPlan,
   buildProvisioningSecretStorageContract,
   canAdvanceProvisioningStage,
+  commandToQemuKeys,
   createInitialProvisioningStateMachine,
   prepareRealFirstBootProvisioning,
   PROVISIONING_SECRET_KINDS,
@@ -60,6 +61,36 @@ describe("provisioning contracts", () => {
       { from: "local-accounts-created", onSuccess: "health-checked", onFailure: "blocked" },
       { from: "health-checked", onSuccess: "snapshot-prepared", onFailure: "blocked" },
       { from: "snapshot-prepared", onSuccess: "complete", onFailure: "blocked" },
+    ]);
+  });
+
+  it("maps UEFI shell commands to QMP sendkey names", () => {
+    expect(commandToQemuKeys("fs0:\\efi\\boot\\bootx64.efi")).toEqual([
+      "f",
+      "s",
+      "0",
+      "shift-semicolon",
+      "backslash",
+      "e",
+      "f",
+      "i",
+      "backslash",
+      "b",
+      "o",
+      "o",
+      "t",
+      "backslash",
+      "b",
+      "o",
+      "o",
+      "t",
+      "x",
+      "6",
+      "4",
+      "dot",
+      "e",
+      "f",
+      "i",
     ]);
   });
 

@@ -367,7 +367,15 @@ async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
     });
     try {
       await qmp.connect();
-      for (let index = 0; index < 20; index += 1) {
+      for (const command of [
+        "fs0:\\efi\\boot\\bootx64.efi",
+        "fs1:\\efi\\boot\\bootx64.efi",
+        "fs2:\\efi\\boot\\bootx64.efi",
+      ]) {
+        await sendUefiShellCommand(qmp, command);
+        await sleep(1000);
+      }
+      for (let index = 0; index < 30; index += 1) {
         await qmp.execute("human-monitor-command", {
           "command-line": "sendkey ret",
         });
@@ -380,6 +388,29 @@ async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
       qmp.close();
     }
   }
+}
+
+async function sendUefiShellCommand(qmp: QmpClient, command: string): Promise<void> {
+  for (const key of commandToQemuKeys(command)) {
+    await qmp.execute("human-monitor-command", {
+      "command-line": `sendkey ${key} 20`,
+    });
+    await sleep(60);
+  }
+  await qmp.execute("human-monitor-command", {
+    "command-line": "sendkey ret 20",
+  });
+}
+
+export function commandToQemuKeys(command: string): readonly string[] {
+  const keyMap: Record<string, string> = {
+    "\\": "backslash",
+    ":": "shift-semicolon",
+    ".": "dot",
+    "-": "minus",
+  };
+
+  return [...command].map((character) => keyMap[character] ?? character.toLowerCase());
 }
 
 function sleep(ms: number): Promise<void> {
