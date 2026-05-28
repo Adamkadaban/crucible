@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -391,6 +391,10 @@ export async function prepareRealFirstBootProvisioning(
   await mkdir(path.dirname(plan.disk.path), { recursive: true });
   await mkdir(bootDirectory, { recursive: true });
   await mkdir(swtpmStateDirectory, { recursive: true });
+  const swtpmAlive = await isSwtpmAlive(swtpmPidPath);
+  if (!swtpmAlive) {
+    await Promise.all([rm(swtpmSocketPath, { force: true }), rm(swtpmPidPath, { force: true })]);
+  }
   if (!(await pathExists(ovmfVarsPath))) {
     await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
   }
@@ -425,7 +429,7 @@ export async function prepareRealFirstBootProvisioning(
       timeoutMs,
       maxOutputBytes: 1024 * 1024,
     },
-    ...((await pathExists(swtpmSocketPath))
+    ...(swtpmAlive
       ? []
       : [
           {
@@ -464,6 +468,20 @@ export async function prepareRealFirstBootProvisioning(
     autounattendIsoPath,
     commands,
   };
+}
+
+async function isSwtpmAlive(pidPath: string): Promise<boolean> {
+  try {
+    const pidText = await readFile(pidPath, "utf8");
+    const pid = Number.parseInt(pidText.trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return false;
+    }
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
