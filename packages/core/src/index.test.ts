@@ -627,7 +627,7 @@ describe("core bootstrap exports", () => {
     const plan = buildQemuCommandPlan({ config, diskPath: "/var/lib/crucible/custom.qcow2" });
 
     expect(plan.args).toContain("custom lab");
-    expect(plan.args).toContain("virtio-blk-pci,drive=crucible-disk0");
+    expect(plan.args).toContain("virtio-blk-pci,drive=crucible-disk0,bootindex=1");
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");

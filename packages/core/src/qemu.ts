@@ -242,7 +242,7 @@ function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly strin
   const drive = `file=${diskPath},if=none,format=qcow2,id=${DEFAULT_DISK_ID},cache=none,discard=unmap`;
 
   if (config.virtio.diskBus === "virtio-blk") {
-    return ["-drive", drive, "-device", `virtio-blk-pci,drive=${DEFAULT_DISK_ID}`];
+    return ["-drive", drive, "-device", `virtio-blk-pci,drive=${DEFAULT_DISK_ID},bootindex=1`];
   }
 
   return [
