@@ -102,7 +102,7 @@ const qmpConfigSchema = z
 const qgaConfigSchema = z
   .object({
     socketPath: socketPathSchema.default("artifacts/qga.sock"),
-    timeoutMs: z.number().int().min(100).default(10000),
+    timeoutMs: z.number().int().min(100).default(60000),
   })
   .strict();
 
