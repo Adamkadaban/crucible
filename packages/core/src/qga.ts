@@ -235,14 +235,16 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     const scriptBody = await readFile(stage.script.scriptPath, "utf8");
     const guestPath = `C:\\ProgramData\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
     await this.#client.writeFile(guestPath, scriptBody);
-    return [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      guestPath,
-      ...(stage.script.arguments ?? []),
-    ];
+    // The contract stores the full PowerShell invocation
+    // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
+    // so the host-side runner can spawn powershell.exe directly. The
+    // QGA-backed runner re-builds that prefix around the guest-staged
+    // copy, so peel off everything up to and including
+    // `-File <host-path>` and keep only the trailing user arguments.
+    const contractArgs = stage.script.arguments ?? [];
+    const fileFlagIndex = contractArgs.indexOf("-File");
+    const trailingArgs = fileFlagIndex >= 0 ? contractArgs.slice(fileFlagIndex + 2) : contractArgs;
+    return ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", guestPath, ...trailingArgs];
   }
 
   async #buildStageEnv(

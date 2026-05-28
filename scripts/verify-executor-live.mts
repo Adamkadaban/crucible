@@ -79,8 +79,6 @@ for (const stage of stages) {
       `status=${result.status} took=${Date.now() - start}ms detail=${(result.detail ?? "").slice(0, 400)}\n`,
     );
   } catch (err) {
-    process.stdout.write(
-      `THREW after ${Date.now() - start}ms: ${(err as Error).message}\n`,
-    );
+    process.stdout.write(`THREW after ${Date.now() - start}ms: ${(err as Error).message}\n`);
   }
 }

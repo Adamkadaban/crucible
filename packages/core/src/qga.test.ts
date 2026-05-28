@@ -60,6 +60,15 @@ describe("QGA client and provisioning executor", () => {
       expect(fileArg).toBeDefined();
       expect(fileArg).toContain("C:\\ProgramData\\Crucible\\stages\\");
       expect(guestExecArgs[0]).not.toContain("guest/provision/install-windbg.ps1");
+      // -NoProfile / -ExecutionPolicy / Bypass / -File should appear exactly
+      // once each so we never pass the host-side prefix down as script args.
+      for (const flag of ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]) {
+        const occurrences = (guestExecArgs[0] ?? []).filter((arg) => arg === flag).length;
+        expect(occurrences, `flag ${flag} should appear once`).toBe(1);
+      }
+      // Trailing script arguments must be preserved.
+      expect(guestExecArgs[0]).toContain("-SymbolCache");
+      expect(guestExecArgs[0]).toContain("C:\\Symbols");
     } finally {
       await server.close();
     }
@@ -245,7 +254,18 @@ function scriptStage(): ProvisioningStageContract {
       runner: "qga-powershell",
       executable: "powershell.exe",
       scriptPath: "guest/provision/install-windbg.ps1",
-      arguments: ["-NoProfile"],
+      // Mirror the real provisioning plan: contract args carry the full
+      // PowerShell invocation including the prefix and the host-side script
+      // path, followed by any user-provided script arguments.
+      arguments: [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "guest/provision/install-windbg.ps1",
+        "-SymbolCache",
+        "C:\\Symbols",
+      ],
       timeoutMs: 1000,
       elevated: true,
       redactedArgumentIndexes: [],

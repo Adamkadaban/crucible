@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Run each provisioning PowerShell script via QGA against the live VM,
-exactly the way QgaProvisioningExecutor would, and print exit code + output.
+"""Run each provisioning PowerShell script via QGA against the live VM.
+
+This is a debug-only helper used while iterating on the guest scripts and
+the QgaProvisioningExecutor wiring. It currently uses the legacy
+-EncodedCommand path; the production executor stages scripts to
+C:\\ProgramData\\Crucible\\stages\\<name>.ps1 via guest-file-open /
+-write / -close and invokes them with -File. Use scripts/verify-executor-live.mts
+when you need the exact production behaviour.
 """
 import socket, json, time, base64, os, sys
 SOCK = "artifacts/qga.sock"
@@ -63,9 +69,13 @@ def run_script(label, script_path, args=None, env=None, timeout_s=300):
 def secret(path, key):
     try:
         with open(path) as f: return json.load(f)[key]
-    except Exception as e: return None
+    except Exception as e:
+        print(f"[warn] secret {path} unreadable: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
 adm_pw = secret("artifacts/secrets/crucible-win11/windows/admin-user.json","password")
 std_pw = secret("artifacts/secrets/crucible-win11/windows/standard-user.json","password")
+if adm_pw is None or std_pw is None:
+    print("[warn] missing admin/standard secret; create-local-accounts/install-agent will likely fail in-guest", file=sys.stderr)
 run_script("probe-qga", "guest/provision/probe-qga.ps1", timeout_s=60)
 run_script("configure-policy", "guest/provision/configure-policy.ps1", timeout_s=300)
 run_script("install-windbg",  "guest/provision/install-windbg.ps1", timeout_s=600)
