@@ -133,6 +133,18 @@ export type QgaProvisioningExecutorOptions = {
   readonly readinessPollIntervalMs?: number;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
+  /**
+   * Map of host-side stage IDs → list of (hostPath, guestPath) pairs to
+   * upload before that stage's PowerShell script runs. Lets the CLI stage
+   * mTLS material + the agent binary before `install-guest-agent` fires,
+   * without bundling them into the autounattend ISO.
+   */
+  readonly filesToStage?: Readonly<Record<string, readonly StagedFile[]>>;
+};
+
+export type StagedFile = {
+  readonly hostPath: string;
+  readonly guestPath: string;
 };
 
 export class QgaProvisioningExecutor implements ProvisioningExecutor {
@@ -144,6 +156,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
   readonly #readinessPollIntervalMs: number;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
+  readonly #filesToStage: Readonly<Record<string, readonly StagedFile[]>>;
 
   constructor(options: QgaProvisioningExecutorOptions) {
     this.#client = options.client;
@@ -156,9 +169,21 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     this.#now = options.now ?? (() => Date.now());
     this.#sleep =
       options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#filesToStage = options.filesToStage ?? {};
   }
 
   async runStage(stage: ProvisioningStageContract) {
+    // Upload any files registered for this stage before the script runs.
+    // Used by the CLI to push mTLS material + the agent binary into the
+    // guest immediately before install-guest-agent fires, so the script
+    // sees them in place.
+    const staged = this.#filesToStage[stage.id];
+    if (staged !== undefined && staged.length > 0) {
+      for (const file of staged) {
+        await this.#stageFile(file);
+      }
+    }
+
     if (stage.id === "media-ready" || stage.id === "vm-booted") {
       return {
         id: stage.id,
@@ -217,6 +242,11 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
             ? `${stage.script.scriptPath} (skipped)`
             : result.stderr || `guest-exec exit code ${result.exitCode ?? "unknown"}`,
     };
+  }
+
+  async #stageFile(file: StagedFile): Promise<void> {
+    const contents = await readFile(file.hostPath);
+    await this.#client.writeFile(file.guestPath, contents);
   }
 
   async #waitForGuestReadiness(): Promise<void> {

@@ -77,9 +77,27 @@ export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key"
 ## First provision
 
 ```sh
+# Build the guest agent binary once; the CLI looks it up at
+# dist/release/crucible-guest-agent.exe by default. Override via
+# $CRUCIBLE_GUEST_AGENT_BINARY for custom layouts.
+scripts/package-release.sh
+
 pnpm crucible provision
 ```
 
-The CLI plans a QEMU command, drops the autounattend ISO, and waits for qemu-ga to come up inside
-the freshly installed Windows VM. The first run takes ~12–18 minutes (Windows install + auto-login +
-agent install). Subsequent boots are ~10–20 s because `clean-base` is snapshotted on success.
+The CLI generates a per-VM mTLS PKI under `artifacts/secrets/<vm>/mtls/` on first run (CA + server
+cert SAN'd to the host-only control address + host client cert), stages the cert material and the
+`crucible-agent.exe` binary into the guest via `qemu-ga guest-file-*`, and then runs
+`install-agent.ps1`.
+
+The first run takes ~12–18 minutes (Windows install + auto-login + agent install). Subsequent boots
+are ~10–20 s because `clean-base` is snapshotted on success.
+
+To wire MCP tools at the live agent, point the env vars at the generated bundle:
+
+```sh
+export CRUCIBLE_GUEST_BASE_URL="https://127.0.0.1:8443"   # via the hostfwd
+export CRUCIBLE_GUEST_CA_PATH="artifacts/secrets/<vm>/mtls/ca.cert.pem"
+export CRUCIBLE_GUEST_CERT_PATH="artifacts/secrets/<vm>/mtls/host-client.cert.pem"
+export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
+```

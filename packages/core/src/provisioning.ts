@@ -20,6 +20,7 @@ import {
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { CrucibleError } from "./errors.js";
 import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
+import { ensureMtlsBundle } from "./mtls.js";
 import { buildNetworkPlan } from "./network.js";
 import type { ProcessCommand, ProcessRunner } from "./process.js";
 import { buildQemuCommandPlan } from "./qemu.js";
@@ -208,6 +209,7 @@ export type RealFirstBootProvisioningOptions = {
   readonly ovmfVarsTemplatePath?: string;
   readonly qemuImgExecutable?: string;
   readonly xorrisoExecutable?: string;
+  readonly opensslExecutable?: string;
   readonly timeoutMs?: number;
 };
 
@@ -219,6 +221,12 @@ export type RealFirstBootProvisioningPlan = {
   readonly swtpmPidPath: string;
   readonly swtpmStateDirectory: string;
   readonly autounattendIsoPath: string;
+  readonly mtlsBundleDirectory: string;
+  readonly mtlsCaCertificatePath: string;
+  readonly mtlsServerCertificatePath: string;
+  readonly mtlsServerPrivateKeyPath: string;
+  readonly mtlsHostClientCertificatePath: string;
+  readonly mtlsHostClientPrivateKeyPath: string;
   readonly commands: readonly ProcessCommand[];
 };
 
@@ -549,6 +557,16 @@ export async function prepareRealFirstBootProvisioning(
     }
   }
 
+  // Per-VM mTLS bundle for the guest agent. Generated once and reused on
+  // subsequent provisions so the operator can pin the same CA in their
+  // MCP client config.
+  const mtls = await ensureMtlsBundle({
+    vmName: config.vm.name,
+    secretsDirectory: config.artifacts.secretsDirectory,
+    guestAddress: getGuestControlAddress(config),
+    opensslExecutable: options.opensslExecutable,
+  });
+
   return {
     diskPath: plan.disk.path,
     ovmfCodePath,
@@ -557,6 +575,12 @@ export async function prepareRealFirstBootProvisioning(
     swtpmPidPath,
     swtpmStateDirectory,
     autounattendIsoPath,
+    mtlsBundleDirectory: mtls.directory,
+    mtlsCaCertificatePath: mtls.caCertificatePath,
+    mtlsServerCertificatePath: mtls.serverCertificatePath,
+    mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
+    mtlsHostClientCertificatePath: mtls.hostClientCertificatePath,
+    mtlsHostClientPrivateKeyPath: mtls.hostClientPrivateKeyPath,
     commands,
   };
 }

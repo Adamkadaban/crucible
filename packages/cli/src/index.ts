@@ -333,20 +333,19 @@ async function runProvisionCommand(
   }
 
   const config = getRuntimeConfig(runtime);
-  const lifecycleManager = await getProvisioningLifecycleManager(config, runtime);
+  const lifecyclePrep = await getProvisioningLifecyclePreparation(config, runtime);
+
+  // When the CLI owns the lifecycle (no injected lifecycleManager /
+  // provisioningExecutor), build a default executor that stages mTLS
+  // material + the cross-compiled agent binary before
+  // `install-guest-agent` runs.
+  const executor =
+    runtime.provisioningExecutor ?? buildDefaultProvisioningExecutor(config, lifecyclePrep);
+
   const result = await runProvisioningCommand({
     config,
-    lifecycleManager,
-    executor:
-      runtime.provisioningExecutor ??
-      new QgaProvisioningExecutor({
-        client: new QgaClient({
-          socketPath: config.qga.socketPath,
-          timeoutMs: config.qga.timeoutMs,
-        }),
-        vmName: config.vm.name,
-        secretsDirectory: config.artifacts.secretsDirectory,
-      }),
+    lifecycleManager: lifecyclePrep.lifecycleManager,
+    executor,
     snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
     skipBootKeyNudge: runtime.skipBootKeyNudge,
   });
@@ -358,12 +357,67 @@ async function runProvisionCommand(
   };
 }
 
-async function getProvisioningLifecycleManager(
+type ProvisioningLifecyclePreparation = {
+  readonly lifecycleManager: CliLifecycleManager;
+  readonly firstBootPlan?: Awaited<ReturnType<typeof prepareRealFirstBootProvisioning>>;
+};
+
+function buildDefaultProvisioningExecutor(
+  config: CrucibleConfig,
+  prep: ProvisioningLifecyclePreparation,
+): QgaProvisioningExecutor {
+  const filesToStage: Record<string, { hostPath: string; guestPath: string }[]> = {};
+  if (prep.firstBootPlan !== undefined) {
+    const agentBinaryPath = resolveGuestAgentBinaryPath();
+    filesToStage["guest-agent-installed"] = [
+      {
+        hostPath: prep.firstBootPlan.mtlsCaCertificatePath,
+        guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
+      },
+      {
+        hostPath: prep.firstBootPlan.mtlsServerCertificatePath,
+        guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\guest-server.cert.pem",
+      },
+      {
+        hostPath: prep.firstBootPlan.mtlsServerPrivateKeyPath,
+        guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\guest-server.key.pem",
+      },
+      {
+        hostPath: agentBinaryPath,
+        guestPath: "C:\\Program Files\\Crucible\\crucible-agent.exe",
+      },
+    ];
+  }
+
+  return new QgaProvisioningExecutor({
+    client: new QgaClient({
+      socketPath: config.qga.socketPath,
+      timeoutMs: config.qga.timeoutMs,
+    }),
+    vmName: config.vm.name,
+    secretsDirectory: config.artifacts.secretsDirectory,
+    filesToStage,
+  });
+}
+
+/**
+ * Resolve a path to the cross-compiled Windows guest agent binary that
+ * `install-agent.ps1` expects in C:\Program Files\Crucible. Operators can
+ * override via $CRUCIBLE_GUEST_AGENT_BINARY; otherwise we look at the
+ * conventional dist/release output produced by scripts/package-release.sh.
+ */
+function resolveGuestAgentBinaryPath(): string {
+  const override = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
+  if (override !== undefined && override !== "") return override;
+  return "dist/release/crucible-guest-agent.exe";
+}
+
+async function getProvisioningLifecyclePreparation(
   config: CrucibleConfig,
   runtime: CliRuntime,
-): Promise<CliLifecycleManager> {
+): Promise<ProvisioningLifecyclePreparation> {
   if (runtime.lifecycleManager !== undefined || runtime.provisioningExecutor !== undefined) {
-    return getLifecycleManager(runtime);
+    return { lifecycleManager: getLifecycleManager(runtime) };
   }
 
   const processRunner = runtime.processRunner ?? nodeProcessRunner;
@@ -381,7 +435,10 @@ async function getProvisioningLifecycleManager(
     },
   });
 
-  return new VmLifecycleManager({ config, plan: qemuPlan });
+  return {
+    lifecycleManager: new VmLifecycleManager({ config, plan: qemuPlan }),
+    firstBootPlan,
+  };
 }
 
 const nodeProcessRunner: ProcessRunner = {
