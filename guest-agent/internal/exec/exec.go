@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"time"
 
@@ -22,13 +23,11 @@ const (
 )
 
 type request struct {
-	Executable      string            `json:"executable"`
-	Arguments       []string          `json:"arguments,omitempty"`
-	WorkingDir      string            `json:"workingDirectory,omitempty"`
-	Environment     map[string]string `json:"environment,omitempty"`
-	TimeoutMs       int               `json:"timeoutMs,omitempty"`
-	Elevation       string            `json:"elevation,omitempty"` // "standard" or "admin"
-	StdinBase64     string            `json:"stdinBase64,omitempty"`
+	Executable  string            `json:"executable"`
+	Arguments   []string          `json:"arguments,omitempty"`
+	WorkingDir  string            `json:"workingDirectory,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+	TimeoutMs   int               `json:"timeoutMs,omitempty"`
 }
 
 type response struct {
@@ -48,8 +47,13 @@ func Handler(auditor *audit.Auditor, maxRequestBytes int64) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 		if err != nil {
+			var max *http.MaxBytesError
+			if errors.As(err, &max) {
+				http.Error(w, "payload exceeds max-request-bytes", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -87,11 +91,6 @@ func validate(req request) error {
 	if req.TimeoutMs > maxTimeoutMs {
 		return errors.New("timeoutMs exceeds maximum")
 	}
-	switch req.Elevation {
-	case "", "standard", "admin":
-	default:
-		return errors.New("elevation must be standard or admin")
-	}
 	return nil
 }
 
@@ -107,8 +106,11 @@ func run(ctx context.Context, req request) (response, error) {
 	if req.WorkingDir != "" {
 		cmd.Dir = req.WorkingDir
 	}
+	// Start from the inherited Windows environment so PATH/SystemRoot/etc.
+	// survive, then layer in caller-supplied overrides. Always replacing the
+	// env (the previous behaviour) broke loaders that depended on PATH.
 	if len(req.Environment) > 0 {
-		env := make([]string, 0, len(req.Environment))
+		env := os.Environ()
 		for k, v := range req.Environment {
 			env = append(env, k+"="+v)
 		}

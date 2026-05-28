@@ -36,8 +36,6 @@ export type GuestAgentExecRequest = {
   readonly workingDirectory?: string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
-  readonly elevation?: "standard" | "admin";
-  readonly stdinBase64?: string;
 };
 
 export type GuestAgentExecResult = {
@@ -112,13 +110,36 @@ export class GuestAgentClient {
 
   async download(sourcePath: string): Promise<Buffer> {
     const res = await this.#request("GET", `/download?path=${encodeURIComponent(sourcePath)}`);
-    const arrayBuffer = await res.arrayBuffer();
-    if (arrayBuffer.byteLength > this.#maxBodyBytes) {
-      throw new Error(
-        `download payload (${arrayBuffer.byteLength} bytes) exceeds maxBodyBytes (${this.#maxBodyBytes})`,
-      );
+    if (res.body === null) {
+      return Buffer.alloc(0);
     }
-    return Buffer.from(arrayBuffer);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const reader = res.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    for (;;) {
+      const result = await reader.read();
+      if (result.done) break;
+      const value = result.value;
+      if (value === undefined) continue;
+      const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      total += chunk.byteLength;
+      if (total > this.#maxBodyBytes) {
+        await reader.cancel(new Error("download exceeded maxBodyBytes"));
+        throw new Error(
+          `download payload exceeded maxBodyBytes (${this.#maxBodyBytes}); aborted at ${total} bytes`,
+        );
+      }
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  /**
+   * Release the underlying undici Agent's keep-alive sockets. Long-running
+   * hosts should call this when the client is no longer needed.
+   */
+  async close(): Promise<void> {
+    await this.#dispatcher.close();
   }
 
   async #request(
@@ -139,12 +160,44 @@ export class GuestAgentClient {
         signal: controller.signal,
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`guest agent ${method} ${path} → ${res.status} ${text.trim()}`);
+        const errorPreview = await readBoundedText(res.body, 4 * 1024);
+        throw new Error(`guest agent ${method} ${path} → ${res.status} ${errorPreview.trim()}`);
       }
       return res;
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+/**
+ * Drain at most `cap` bytes from a fetch body and return the UTF-8 decoding.
+ * Used to bound how much memory we allocate when the agent returns an error
+ * response body.
+ */
+async function readBoundedText(
+  body: ReadableStream<Uint8Array> | null,
+  cap: number,
+): Promise<string> {
+  if (body === null) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < cap) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      const slice = value.subarray(0, Math.min(value.byteLength, cap - total));
+      chunks.push(slice);
+      total += slice.byteLength;
+    }
+  } catch {
+    // ignore, return what we have
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+  const text = buf.toString("utf8");
+  return text;
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -60,9 +61,11 @@ func TestRunHealthEndpointHandshake(t *testing.T) {
 		ClientCAs:    pool,
 	})
 
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(t.Context(), cfg)
+		done <- Run(ctx, cfg)
 	}()
 
 	clientTLSCert := tls.Certificate{
@@ -94,6 +97,7 @@ func TestRunHealthEndpointHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("health request: %v", err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -110,6 +114,16 @@ func TestRunHealthEndpointHandshake(t *testing.T) {
 	}
 	if rid := resp.Header.Get("X-Request-Id"); rid == "" {
 		t.Fatalf("missing request id header")
+	}
+	cancel()
+	// Run() may return either nil (clean shutdown) or a Shutdown deadline
+	// error when other in-flight handshakes hold the listener open. Either
+	// is acceptable; what we want to guarantee is that Run() actually
+	// returned and didn't leak the goroutine.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Run did not return after cancel")
 	}
 }
 

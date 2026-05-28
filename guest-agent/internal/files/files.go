@@ -23,10 +23,6 @@ type uploadResponse struct {
 	Sha256     string `json:"sha256"`
 }
 
-type downloadHeader struct {
-	Path string `json:"path"`
-}
-
 // UploadHandler accepts a multipart-less binary upload via POST. The target
 // path is derived from a `path` query parameter and must resolve inside the
 // staging directory.
@@ -57,9 +53,16 @@ func UploadHandler(auditor *audit.Auditor, stagingDir string, maxBytes int64) ht
 			return
 		}
 		hash := sha256.New()
-		n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(r.Body, maxBytes))
+		body := http.MaxBytesReader(w, r.Body, maxBytes)
+		n, err := io.Copy(io.MultiWriter(f, hash), body)
 		closeErr := f.Close()
 		if err != nil {
+			var max *http.MaxBytesError
+			if errors.As(err, &max) {
+				_ = os.Remove(clean)
+				http.Error(w, "payload exceeds max-request-bytes", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "write: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -67,12 +70,12 @@ func UploadHandler(auditor *audit.Auditor, stagingDir string, maxBytes int64) ht
 			http.Error(w, "close: "+closeErr.Error(), http.StatusInternalServerError)
 			return
 		}
-		body := uploadResponse{Path: clean, SizeBytes: n, Sha256: hex.EncodeToString(hash.Sum(nil))}
+		resp := uploadResponse{Path: clean, SizeBytes: n, Sha256: hex.EncodeToString(hash.Sum(nil))}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(body)
+		_ = json.NewEncoder(w).Encode(resp)
 		auditor.Record(audit.Event{
 			Action: "upload",
-			Detail: fmt.Sprintf("%s (%d bytes, sha256=%s)", clean, n, body.Sha256),
+			Detail: fmt.Sprintf("%s (%d bytes, sha256=%s)", clean, n, resp.Sha256),
 			Path:   r.URL.Path,
 		})
 	}
@@ -125,9 +128,6 @@ func DownloadHandler(auditor *audit.Auditor, stagingDir string) http.HandlerFunc
 			Detail: fmt.Sprintf("%s (%d bytes)", clean, info.Size()),
 			Path:   r.URL.Path,
 		})
-
-		// expose hash header for non-trailer clients
-		_ = downloadHeader{Path: clean}
 	}
 }
 
@@ -151,7 +151,12 @@ func resolveStagingPath(stagingDir, target string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("relpath: %w", err)
 	}
-	if strings.HasPrefix(rel, "..") || rel == "." {
+	switch {
+	case rel == ".":
+		return "", errors.New("path must reference a file, not the staging directory itself")
+	case rel == "..":
+		return "", errors.New("path escapes staging directory")
+	case strings.HasPrefix(rel, ".."+string(filepath.Separator)):
 		return "", errors.New("path escapes staging directory")
 	}
 	return absClean, nil

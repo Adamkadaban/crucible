@@ -179,78 +179,90 @@ async function generatePki(): Promise<{
   server: PkiBundle;
   client: PkiBundle;
 }> {
-  // Self-contained PKI: synthesise three certificates with the WebCrypto +
-  // node:crypto APIs. We rely on @peculiar/x509 transitively bundled with
-  // undici. To keep the test hermetic we shell out to openssl.
+  // Self-contained, throwaway PKI. We shell out to openssl so the test has
+  // no extra Node-side dependency and the resulting PEM matches what
+  // production hosts deploy.
   const tmp = await mkdtemp(join(tmpdir(), "crucible-pki-"));
-  // CA
-  await runProcess(
-    "openssl",
-    ["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", "ca.key"],
-    tmp,
-  );
-  await runProcess(
-    "openssl",
-    [
-      "req",
-      "-new",
-      "-x509",
-      "-days",
-      "1",
-      "-subj",
-      "/CN=crucible-test-ca",
-      "-key",
-      "ca.key",
-      "-out",
-      "ca.crt",
-    ],
-    tmp,
-  );
-
-  for (const name of ["server", "client"] as const) {
+  try {
+    // CA
     await runProcess(
       "openssl",
-      ["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", `${name}.key`],
+      ["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", "ca.key"],
       tmp,
-    );
-    await runProcess(
-      "openssl",
-      ["req", "-new", "-subj", `/CN=${name}`, "-key", `${name}.key`, "-out", `${name}.csr`],
-      tmp,
-    );
-    const extPath = join(tmp, `${name}.ext`);
-    await writeFile(
-      extPath,
-      name === "server"
-        ? "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n"
-        : "extendedKeyUsage=clientAuth\n",
     );
     await runProcess(
       "openssl",
       [
-        "x509",
-        "-req",
-        "-in",
-        `${name}.csr`,
-        "-CA",
-        "ca.crt",
-        "-CAkey",
-        "ca.key",
-        "-CAcreateserial",
+        "req",
+        "-new",
+        "-x509",
         "-days",
         "1",
-        "-extfile",
-        extPath,
+        "-subj",
+        "/CN=crucible-test-ca",
+        "-key",
+        "ca.key",
         "-out",
-        `${name}.crt`,
+        "ca.crt",
       ],
       tmp,
     );
+
+    for (const name of ["server", "client"] as const) {
+      await runProcess(
+        "openssl",
+        [
+          "genpkey",
+          "-algorithm",
+          "EC",
+          "-pkeyopt",
+          "ec_paramgen_curve:P-256",
+          "-out",
+          `${name}.key`,
+        ],
+        tmp,
+      );
+      await runProcess(
+        "openssl",
+        ["req", "-new", "-subj", `/CN=${name}`, "-key", `${name}.key`, "-out", `${name}.csr`],
+        tmp,
+      );
+      const extPath = join(tmp, `${name}.ext`);
+      await writeFile(
+        extPath,
+        name === "server"
+          ? "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n"
+          : "extendedKeyUsage=clientAuth\n",
+      );
+      await runProcess(
+        "openssl",
+        [
+          "x509",
+          "-req",
+          "-in",
+          `${name}.csr`,
+          "-CA",
+          "ca.crt",
+          "-CAkey",
+          "ca.key",
+          "-CAcreateserial",
+          "-days",
+          "1",
+          "-extfile",
+          extPath,
+          "-out",
+          `${name}.crt`,
+        ],
+        tmp,
+      );
+    }
+    const read = async (file: string) => (await readFile(join(tmp, file), "utf8")).trim() + "\n";
+    return {
+      ca: { cert: await read("ca.crt"), key: await read("ca.key") },
+      server: { cert: await read("server.crt"), key: await read("server.key") },
+      client: { cert: await read("client.crt"), key: await read("client.key") },
+    };
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
   }
-  const read = async (file: string) => (await readFile(join(tmp, file), "utf8")).trim() + "\n";
-  return {
-    ca: { cert: await read("ca.crt"), key: await read("ca.key") },
-    server: { cert: await read("server.crt"), key: await read("server.key") },
-    client: { cert: await read("client.crt"), key: await read("client.key") },
-  };
 }

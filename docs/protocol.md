@@ -58,7 +58,8 @@ Returns a JSON document describing the agent:
 
 ### `POST /exec`
 
-Bounded command execution. Request body:
+Bounded command execution under the agent's identity (LocalSystem when the agent runs as a Windows
+service). Request body:
 
 ```json
 {
@@ -66,8 +67,28 @@ Bounded command execution. Request body:
   "arguments": ["/c", "whoami /groups"],
   "workingDirectory": "C:\\\\ProgramData\\\\Crucible\\\\staging",
   "environment": { "FOO": "bar" },
-  "timeoutMs": 60000,
-  "elevation": "standard"
+  "timeoutMs": 60000
+}
+```
+
+Limits: at most 64 arguments, `timeoutMs <= 1800000` (30 minutes), each of stdout/stderr capped at 4
+MiB then `truncated: true`. The request body itself is bounded at `--max-request-bytes` (64 MiB
+default) and exceeded payloads return HTTP 413.
+
+`environment` entries are layered on top of the inherited Windows environment so PATH / SystemRoot
+survive. Stdin and elevation switching are **not** implemented in this revision; both will be added
+in a follow-up once standard / admin user impersonation is wired through the Windows service runner.
+
+Response:
+
+```json
+{
+  "exitCode": 0,
+  "stdoutBase64": "...",
+  "stderrBase64": "",
+  "timedOut": false,
+  "durationMs": 12,
+  "truncated": false
 }
 ```
 
