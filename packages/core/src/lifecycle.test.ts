@@ -209,6 +209,80 @@ describe("VmLifecycleManager", () => {
     });
     expect(cleanup.status.status).toBe("stopped");
   });
+
+  it("preserves the previously-recorded qemu argv when a different manager stops the VM", async () => {
+    // Regression for #127: a CLI vm:stop / vm:kill builds a no-bootMedia
+    // VmLifecycleManager and used to overwrite state.json's qemu.args with
+    // the bare default plan, destroying the historical record of how QEMU
+    // was actually launched.
+    const root = await createTempDir();
+    const config = parseCrucibleConfig({
+      vm: { name: "preserve-test" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock"), timeoutMs: 100 },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+    const paths = buildLifecyclePaths(config);
+    await mkdirFor(paths.stateManifest);
+
+    const richArgs = [
+      "-name",
+      "preserve-test",
+      "-drive",
+      "file=disk.qcow2,if=none,id=crucible-disk0",
+      "-cdrom",
+      "Win11.iso",
+      "-drive",
+      "if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd",
+    ];
+    await writeFile(
+      paths.stateManifest,
+      JSON.stringify({
+        version: 1,
+        vmName: "preserve-test",
+        state: "running",
+        pid: 4242,
+        paths,
+        qemu: { executable: "qemu-system-x86_64", args: richArgs },
+        lastTransitionAt: "2026-05-28T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    // Build a bare-plan manager — exactly what `pnpm crucible vm:stop`
+    // constructs when invoked separately from provision.
+    const barePlan = buildQemuCommandPlan({ config });
+    expect(barePlan.args).not.toContain("Win11.iso");
+
+    const processes = new Set<number>([4242]);
+    const manager = new VmLifecycleManager({
+      config,
+      plan: barePlan,
+      spawner: { spawn: () => Promise.resolve({ pid: 9999 }) },
+      processController: {
+        isAlive: (pid) => processes.has(pid),
+        signal: (pid) => processes.delete(pid),
+        waitForExit: (pid) => Promise.resolve(!processes.has(pid)),
+      },
+      qmpClientFactory: () => new FakeQmpSession(new Error("not used")),
+      stopTimeoutMs: 1,
+      killTimeoutMs: 1,
+      pollIntervalMs: 1,
+    });
+
+    await manager.kill();
+
+    const onDisk = JSON.parse(await readFile(paths.stateManifest, "utf8")) as {
+      qemu: { args: readonly string[] };
+    };
+    expect(onDisk.qemu.args).toEqual(richArgs);
+  });
 });
 
 type HarnessOptions = {

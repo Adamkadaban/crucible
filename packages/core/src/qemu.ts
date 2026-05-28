@@ -89,7 +89,21 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     String(config.vm.cpus),
     "-m",
     `${config.vm.memoryMiB}M`,
-    ...buildBootOrderArgs(options.bootMedia),
+    // Diagnostic surface: -no-shutdown keeps QEMU alive on guest S5 so
+    // operators / lifecycle.status can see the shutdown reason via QMP
+    // instead of "QEMU vanished, 0-byte logs". -D + -d guest_errors,unimp,
+    // cpu_reset capture firmware/CPU-level diagnostics that never reach
+    // stdio. -debugcon captures OVMF's debug output. None of these affect
+    // the guest; they only add host-side observability.
+    "-no-shutdown",
+    "-D",
+    `${config.artifacts.logsDirectory}/${config.vm.name}.qemu.log`,
+    "-d",
+    "guest_errors,unimp,cpu_reset",
+    "-debugcon",
+    `file:${config.artifacts.logsDirectory}/${config.vm.name}.ovmf.log`,
+    "-global",
+    "isa-debugcon.iobase=0x402",
     ...buildSataControllerArgs(options.bootMedia),
     ...buildFirmwareArgs(options.bootMedia),
     ...buildDiskArgs(config, diskPath),
@@ -138,14 +152,6 @@ function buildSataControllerArgs(bootMedia?: QemuBootMediaOptions): readonly str
   }
 
   return ["-device", "ich9-ahci,id=crucible-sata0"];
-}
-
-function buildBootOrderArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
-  if (bootMedia?.windowsIsoPath === undefined) {
-    return [];
-  }
-
-  return ["-boot", "once=d,order=c"];
 }
 
 function buildFirmwareArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {

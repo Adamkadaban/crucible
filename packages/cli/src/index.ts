@@ -356,26 +356,111 @@ async function runProvisionCommand(
 
   const lifecyclePrep = await getProvisioningLifecyclePreparation(config, runtime);
 
+  // Own an AbortController so the moment QEMU is observed to have exited
+  // (Windows S5, OVMF crash, OOM, ...) we can cancel every in-flight QGA
+  // retry instantly instead of burning a 5-minute per-call budget against
+  // a dead socket. The CLI is the only layer that knows the lifecycle is
+  // about to be torn down, so it owns the signal.
+  const lifecycleAbort = new AbortController();
+
   // When the CLI owns the lifecycle (no injected lifecycleManager /
   // provisioningExecutor), build a default executor that stages mTLS
   // material + the cross-compiled agent binary before
   // `install-guest-agent` runs.
   const executor =
-    runtime.provisioningExecutor ?? buildDefaultProvisioningExecutor(config, lifecyclePrep);
+    runtime.provisioningExecutor ??
+    buildDefaultProvisioningExecutor(config, lifecyclePrep, lifecycleAbort.signal);
 
-  const result = await runProvisioningCommand({
-    config,
-    lifecycleManager: lifecyclePrep.lifecycleManager,
-    executor,
-    snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
-    skipBootKeyNudge: runtime.skipBootKeyNudge,
-  });
+  const livenessHandle = startLifecycleLivenessPoller(
+    lifecyclePrep.lifecycleManager,
+    lifecycleAbort,
+  );
+  let provisionRejected = false;
 
+  try {
+    const result = await runProvisioningCommand({
+      config,
+      lifecycleManager: lifecyclePrep.lifecycleManager,
+      executor,
+      snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
+      skipBootKeyNudge: runtime.skipBootKeyNudge,
+    });
+
+    return {
+      exitCode: result.status === "complete" ? 0 : 1,
+      stdout: renderProvisioningResult(result),
+      stderr: "",
+    };
+  } catch (error) {
+    provisionRejected = true;
+    // Best-effort lifecycle teardown so we don't leave QEMU + swtpm orphaned
+    // after a fatal provisioning error. Only attempts kill if the process is
+    // still alive — a successful guest-initiated S5 is also possible here.
+    await tryKillLifecycle(lifecyclePrep.lifecycleManager);
+    throw error;
+  } finally {
+    livenessHandle.stop();
+    if (!lifecycleAbort.signal.aborted) {
+      lifecycleAbort.abort(
+        new CrucibleError(
+          "STATE_INVALID",
+          provisionRejected
+            ? "provisioning failed; aborting in-flight QGA retries"
+            : "provisioning complete; releasing in-flight QGA retries",
+        ),
+      );
+    }
+  }
+}
+
+type LifecycleLivenessHandle = { readonly stop: () => void };
+
+function startLifecycleLivenessPoller(
+  manager: CliLifecycleManager,
+  abort: AbortController,
+): LifecycleLivenessHandle {
+  const intervalMs = 5_000;
+  let stopped = false;
+  const handle = setInterval(() => {
+    if (stopped) {
+      return;
+    }
+    void (async () => {
+      try {
+        const status = await manager.status({ queryQmp: false });
+        if (status.processAlive === false && status.pid !== undefined) {
+          if (!abort.signal.aborted) {
+            abort.abort(
+              new CrucibleError(
+                "STATE_INVALID",
+                `QEMU pid ${status.pid} has exited; aborting provision`,
+              ),
+            );
+          }
+        }
+      } catch {
+        // status() failures are not fatal — keep polling.
+      }
+    })();
+  }, intervalMs);
+  handle.unref();
   return {
-    exitCode: result.status === "complete" ? 0 : 1,
-    stdout: renderProvisioningResult(result),
-    stderr: "",
+    stop: () => {
+      stopped = true;
+      clearInterval(handle);
+    },
   };
+}
+
+async function tryKillLifecycle(manager: CliLifecycleManager): Promise<void> {
+  try {
+    const status = await manager.status({ queryQmp: false });
+    if (status.processAlive === true && "kill" in manager && typeof manager.kill === "function") {
+      await (manager as { kill: () => Promise<unknown> }).kill();
+    }
+  } catch {
+    // best-effort
+  }
 }
 
 type ProvisioningLifecyclePreparation = {
@@ -386,6 +471,7 @@ type ProvisioningLifecyclePreparation = {
 function buildDefaultProvisioningExecutor(
   config: CrucibleConfig,
   prep: ProvisioningLifecyclePreparation,
+  signal: AbortSignal,
 ): QgaProvisioningExecutor {
   const filesToStage: Record<string, { hostPath: string; guestPath: string }[]> = {};
   if (prep.firstBootPlan !== undefined) {
@@ -414,6 +500,7 @@ function buildDefaultProvisioningExecutor(
     client: new QgaClient({
       socketPath: config.qga.socketPath,
       timeoutMs: config.qga.timeoutMs,
+      signal,
     }),
     vmName: config.vm.name,
     secretsDirectory: config.artifacts.secretsDirectory,

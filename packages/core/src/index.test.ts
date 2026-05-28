@@ -682,13 +682,38 @@ describe("core bootstrap exports", () => {
     });
 
     expect(plan.args).toContain("ich9-ahci,id=crucible-sata0");
-    expect(plan.args).toContain("once=d,order=c");
+    // QEMU's manual: the order / once -boot parameters must NOT be used
+    // together with the bootindex= property; OVMF rejects the combination
+    // and silently ACPI-shuts down at the first guest reset. We rely on
+    // bootindex= exclusively (CD bootindex=1, disk bootindex=10).
+    expect(plan.args).not.toContain("once=d,order=c");
+    expect(plan.args).not.toContain("-boot");
     expect(plan.args).toContain(
       "ide-cd,drive=crucible-windows-install,bus=crucible-sata0.0,bootindex=1",
     );
     expect(plan.args).toContain("ide-cd,drive=crucible-autounattend,bus=crucible-sata0.1");
     expect(plan.args).toContain("ide-cd,drive=crucible-virtio,bus=crucible-sata0.2");
     expect(plan.args).not.toContain("tpm-tis,tpmdev=crucible-tpmdev");
+  });
+
+  it("emits host-side diagnostic flags so silent QEMU exits become diagnosable", () => {
+    const plan = buildQemuCommandPlan();
+    // -no-shutdown keeps QEMU alive on guest S5 so QMP can report the
+    // shutdown reason instead of the process disappearing with 0-byte logs.
+    expect(plan.args).toContain("-no-shutdown");
+    // -D + -d guest_errors,unimp,cpu_reset captures firmware/CPU-level
+    // diagnostics that never reach stdio.
+    const dFlag = plan.args.indexOf("-D");
+    expect(dFlag).toBeGreaterThanOrEqual(0);
+    expect(plan.args[dFlag + 1]).toMatch(/\.qemu\.log$/);
+    const traceFlag = plan.args.indexOf("-d");
+    expect(traceFlag).toBeGreaterThanOrEqual(0);
+    expect(plan.args[traceFlag + 1]).toBe("guest_errors,unimp,cpu_reset");
+    // -debugcon captures OVMF's debug output (boot path, NVRAM ops, etc.)
+    const debugconIdx = plan.args.indexOf("-debugcon");
+    expect(debugconIdx).toBeGreaterThanOrEqual(0);
+    expect(plan.args[debugconIdx + 1]).toMatch(/\.ovmf\.log$/);
+    expect(plan.args).toContain("isa-debugcon.iobase=0x402");
   });
 
   it("rejects disk paths that QEMU drive suboptions would misparse", () => {

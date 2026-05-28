@@ -212,7 +212,7 @@ export class VmLifecycleManager {
   async kill(): Promise<VmStopResult> {
     const current = await this.status({ queryQmp: false });
     if (current.pid === undefined || !current.processAlive) {
-      const status = await this.#markStopped("stopped");
+      const status = await this.#markStopped("stopped", current.stateManifest?.qemu);
       return {
         status,
         mode: "stop",
@@ -228,7 +228,7 @@ export class VmLifecycleManager {
       this.#pollIntervalMs,
     );
     this.#assertExitedAfterKill(current.pid, exited);
-    const status = await this.#markStopped("stopped");
+    const status = await this.#markStopped("stopped", current.stateManifest?.qemu);
     return {
       status,
       mode: "stop",
@@ -295,7 +295,11 @@ export class VmLifecycleManager {
     }
 
     if (before.status === "stale" || before.stateManifest !== undefined) {
-      await this.#writeStateManifest(this.#buildStateManifest("stopped"));
+      await this.#writeStateManifest(
+        this.#buildStateManifest("stopped", {
+          previousQemu: before.stateManifest?.qemu,
+        }),
+      );
     }
 
     return { removedPaths, status: await this.status({ queryQmp: false }) };
@@ -307,7 +311,7 @@ export class VmLifecycleManager {
 
     if (current.pid === undefined || !current.processAlive) {
       return {
-        status: await this.#markStopped(stoppedState),
+        status: await this.#markStopped(stoppedState, current.stateManifest?.qemu),
         mode,
         qmpCommandSent: false,
         killedAfterTimeout: false,
@@ -318,6 +322,7 @@ export class VmLifecycleManager {
       this.#buildStateManifest("stopping", {
         pid: current.pid,
         startedAt: current.stateManifest?.startedAt,
+        previousQemu: current.stateManifest?.qemu,
       }),
     );
 
@@ -351,7 +356,7 @@ export class VmLifecycleManager {
     }
 
     return {
-      status: await this.#markStopped(stoppedState),
+      status: await this.#markStopped(stoppedState, current.stateManifest?.qemu),
       mode,
       qmpCommandSent,
       signalSent,
@@ -395,9 +400,14 @@ export class VmLifecycleManager {
     }
   }
 
-  async #markStopped(state: "stopped" | "poweredOff"): Promise<VmStatus> {
+  async #markStopped(
+    state: "stopped" | "poweredOff",
+    previousQemu?: VmLifecycleStateManifest["qemu"],
+  ): Promise<VmStatus> {
     await this.cleanupStaleResources();
-    await this.#writeStateManifest(this.#buildStateManifest(state, { stoppedAt: this.#nowIso() }));
+    await this.#writeStateManifest(
+      this.#buildStateManifest(state, { stoppedAt: this.#nowIso(), previousQemu }),
+    );
     return this.status({ queryQmp: false });
   }
 
@@ -407,6 +417,14 @@ export class VmLifecycleManager {
       readonly pid?: number;
       readonly startedAt?: string;
       readonly stoppedAt?: string;
+      /**
+       * When set, the manifest preserves this previously-recorded {executable,
+       * args} block instead of serializing the manager's in-memory plan. Used
+       * by stop / cleanup paths so a CLI invocation built from a no-bootMedia
+       * default plan does not clobber the historical truth recorded by the
+       * provisioning invocation that actually launched QEMU.
+       */
+      readonly previousQemu?: VmLifecycleStateManifest["qemu"];
     } = {},
   ): VmLifecycleStateManifest {
     const now = this.#nowIso();
@@ -420,7 +438,7 @@ export class VmLifecycleManager {
       stoppedAt: options.stoppedAt,
       lastTransitionAt: now,
       paths: this.paths,
-      qemu: {
+      qemu: options.previousQemu ?? {
         executable: this.#plan.executable,
         args: this.#plan.args,
       },
