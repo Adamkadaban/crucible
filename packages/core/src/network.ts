@@ -21,7 +21,7 @@ export const networkConfigSchema = z
      * frame on the tap netdev here via QEMU `-object filter-dump`.
      * Ignored unless mode === "capture".
      */
-    pcapPath: z.string().optional(),
+    pcapPath: z.string().min(1).optional(),
   })
   .strict();
 
@@ -378,11 +378,15 @@ function buildQemuNetworkPlan(options: {
     "-device",
     `${options.networkDevice},netdev=${options.netdevId}`,
   ];
-  if (options.mode === "capture" && options.pcapPath !== undefined && options.pcapPath !== "") {
-    validateQemuSuboptionValue("pcapPath", options.pcapPath);
+  const pcapPath =
+    options.mode === "capture" && options.pcapPath !== undefined && options.pcapPath !== ""
+      ? options.pcapPath
+      : undefined;
+  if (pcapPath !== undefined) {
+    validateQemuSuboptionValue("pcapPath", pcapPath);
     args.push(
       "-object",
-      `filter-dump,id=${options.netdevId}-pcap,netdev=${options.netdevId},file=${options.pcapPath}`,
+      `filter-dump,id=${options.netdevId}-pcap,netdev=${options.netdevId},file=${pcapPath}`,
     );
   }
 
@@ -395,7 +399,7 @@ function buildQemuNetworkPlan(options: {
     controlAddress: options.controlAddress,
     portForwards,
     owner: options.owner,
-    pcapPath: options.mode === "capture" ? options.pcapPath : undefined,
+    pcapPath,
   };
 }
 

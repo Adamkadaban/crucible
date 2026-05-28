@@ -1,6 +1,4 @@
-import { Buffer } from "node:buffer";
-
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { GuestAgentClient } from "@crucible/core";
 
@@ -23,8 +21,23 @@ function parsePayload<T>(result: ToolCallText): T {
   return JSON.parse(text) as T;
 }
 
+type LiveHarness = {
+  readonly mcp: Client;
+  readonly guest: GuestAgentClient;
+  readonly close: () => Promise<void>;
+};
+const activeHarnesses: LiveHarness[] = [];
+
+afterAll(async () => {
+  // Drain every harness we opened so Vitest doesn't hang on leaked
+  // undici sockets / MCP transports.
+  for (const harness of activeHarnesses) {
+    await harness.close();
+  }
+});
+
 describe.runIf(liveConfigured)("MCP tools against the live guest agent (env-gated)", () => {
-  async function client(): Promise<Client> {
+  async function harness(): Promise<LiveHarness> {
     const guest: GuestAgentClient = await buildGuestAgentClientFromFiles({
       baseUrl: baseUrl!,
       caPath: caPath!,
@@ -37,22 +50,32 @@ describe.runIf(liveConfigured)("MCP tools against the live guest agent (env-gate
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const c = new Client({ name: "crucible-it", version: "0.0.0" });
-    await c.connect(clientTransport);
-    return c;
+    const mcp = new Client({ name: "crucible-it", version: "0.0.0" });
+    await mcp.connect(clientTransport);
+    const h: LiveHarness = {
+      mcp,
+      guest,
+      close: async () => {
+        await mcp.close();
+        await server.close();
+        await guest.close();
+      },
+    };
+    activeHarnesses.push(h);
+    return h;
   }
 
   it("guest_health reports status:ok from the live agent", async () => {
-    const c = await client();
-    const result = (await c.callTool({ name: "guest_health", arguments: {} })) as ToolCallText;
+    const { mcp } = await harness();
+    const result = (await mcp.callTool({ name: "guest_health", arguments: {} })) as ToolCallText;
     const payload = parsePayload<{ ok: boolean; result: { status: string } }>(result);
     expect(payload.ok).toBe(true);
     expect(payload.result.status).toBe("ok");
   });
 
   it("guest_exec round-trips whoami.exe and returns the SYSTEM identity", async () => {
-    const c = await client();
-    const result = (await c.callTool({
+    const { mcp } = await harness();
+    const result = (await mcp.callTool({
       name: "guest_exec",
       arguments: {
         executable: "C:\\Windows\\System32\\whoami.exe",
@@ -70,11 +93,11 @@ describe.runIf(liveConfigured)("MCP tools against the live guest agent (env-gate
   });
 
   it("guest_upload + guest_download round-trip a payload via staging", async () => {
-    const c = await client();
+    const { mcp } = await harness();
     const payload = Buffer.from(`crucible-mcp-it-${Date.now()}`);
     const targetPath = `mcp-it-${Date.now()}.bin`;
 
-    const upload = (await c.callTool({
+    const upload = (await mcp.callTool({
       name: "guest_upload",
       arguments: {
         targetPath,
@@ -88,7 +111,7 @@ describe.runIf(liveConfigured)("MCP tools against the live guest agent (env-gate
     expect(uploadResp.ok).toBe(true);
     expect(uploadResp.result.sizeBytes).toBe(payload.byteLength);
 
-    const download = (await c.callTool({
+    const download = (await mcp.callTool({
       name: "guest_download",
       arguments: { sourcePath: targetPath },
     })) as ToolCallText;

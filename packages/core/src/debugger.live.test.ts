@@ -77,9 +77,14 @@ describe.runIf(liveConfigured)(
         // we care about is that we got some output from cdb's `lm` listing
         // the target's loaded modules.
         const stdout = Buffer.from(cmd.stdoutBase64, "base64").toString();
-        // cdb couldn't even be located — skip the strong assertion so the
-        // test reports the missing-debugger state instead of false-failing.
-        if (cmd.exitCode === -1 || stdout.toLowerCase().includes("is not recognized")) {
+        const stderr = Buffer.from(cmd.stderrBase64 ?? "", "base64").toString();
+        const missingCdb =
+          cmd.exitCode === -1 ||
+          stdout.toLowerCase().includes("is not recognized") ||
+          stderr.toLowerCase().includes("is not recognized") ||
+          stderr.toLowerCase().includes("cannot find") ||
+          stderr.toLowerCase().includes("not found");
+        if (missingCdb) {
           // eslint-disable-next-line no-console
           console.warn(
             "cdb.exe was not on PATH inside the guest; mark this as the soft-skipped real-VM debugger case",
