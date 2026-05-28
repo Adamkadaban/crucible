@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -611,6 +611,9 @@ async function copyVirtioDriverDirectories(options: {
   await mkdir(driverRoot, { recursive: true });
 
   for (const driver of ["vioscsi", "NetKVM", "vioserial"] as const) {
+    const destination = path.join(driverRoot, driver);
+    await chmodRecursive(destination, 0o755);
+    await rm(destination, { recursive: true, force: true });
     await runProvisioningProcess(options.processRunner, {
       executable: "xorriso",
       args: [
@@ -620,11 +623,30 @@ async function copyVirtioDriverDirectories(options: {
         options.virtioIsoPath,
         "-extract",
         `/${driver}/${osFolder}/amd64`,
-        path.join(driverRoot, driver),
+        destination,
       ],
       timeoutMs: options.timeoutMs,
       maxOutputBytes: 1024 * 1024,
     });
+    await chmodRecursive(destination, 0o755);
+  }
+}
+
+async function chmodRecursive(targetPath: string, mode: number): Promise<void> {
+  try {
+    await chmod(targetPath, mode);
+    const entries = await readdir(targetPath, { withFileTypes: true });
+    await Promise.all(
+      entries.map((entry) => chmodRecursive(path.join(targetPath, entry.name), mode)),
+    );
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return;
+    }
+    if (isNodeError(error) && error.code === "ENOTDIR") {
+      return;
+    }
+    throw error;
   }
 }
 

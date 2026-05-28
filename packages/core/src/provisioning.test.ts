@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -547,6 +547,61 @@ describe("provisioning contracts", () => {
     ]);
     await expect(readFile(diskPath, "utf8")).resolves.toBe("existing disk");
     await expect(readFile(existingVars, "utf8")).resolves.toBe("existing vars");
+  });
+
+  it("recreates read-only extracted virtio driver directories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "crucible-readonly-drivers-"));
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const artifactDirectory = join(root, "artifacts");
+    const staleDriver = join(artifactDirectory, "boot", "drivers", "vioscsi", "vioscsi.inf");
+    await mkdir(join(artifactDirectory, "boot", "drivers", "vioscsi"), { recursive: true });
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      writeFile(staleDriver, "stale", { encoding: "utf8", mode: 0o555 }),
+    ]);
+    await chmod(staleDriver, 0o555);
+    const commands: ProcessCommand[] = [];
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "first-boot", diskGiB: 64 },
+        media: {
+          windowsIso: { path: windowsIso },
+          virtioIso: { path: virtioIso },
+        },
+        artifacts: {
+          directory: artifactDirectory,
+          manifestPath: join(artifactDirectory, "manifest.json"),
+          logsDirectory: join(artifactDirectory, "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          commands.push(command);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    expect(commands.filter((command) => command.executable === "xorriso")).toHaveLength(4);
   });
 
   it("builds guest health reports from provisioning readiness contracts", () => {
