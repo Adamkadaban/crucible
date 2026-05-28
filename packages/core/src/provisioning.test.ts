@@ -474,6 +474,8 @@ describe("provisioning contracts", () => {
     expect(installScript).toContain("diskpart /s X:\\diskpart-crucible.txt");
     expect(installScript).toContain("dism /Apply-Image /ImageFile:%IMAGE_FILE% /Index:1");
     expect(installScript).toContain("bcdboot W:\\Windows /s S: /f UEFI");
+    expect(installScript).toContain("diskpart /s X:\\diskpart-crucible.txt || (pause & exit /b 1)");
+    expect(installScript).toContain("W:\\Windows\\Setup\\Scripts\\SetupComplete.cmd");
     const setupComplete = await readFile(
       join(root, "artifacts", "boot", "$OEM$", "$$", "Setup", "Scripts", "SetupComplete.cmd"),
       "utf8",
