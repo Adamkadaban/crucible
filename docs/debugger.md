@@ -51,8 +51,8 @@ and `windbg` paths so the MCP server can confirm the toolchain is present before
   pipe / TTD recording is deferred.
 - **Output bounded at 4 MiB per stream**, matching the guest agent's `/exec` cap. Large
   `!analyze -v` traces may be `truncated: true`.
-- **Transcript capped at 200 entries per session.** The newest entries win; older ones are dropped
-  to keep host memory bounded.
+- **Transcript capped at 200 entries per session.** When the cap is reached, the _oldest_ entries
+  are dropped (FIFO) so the latest invocations stay available and host memory stays bounded.
 
 ## Smoke test
 

@@ -561,12 +561,17 @@ function registerDebuggerTools(
     "debug_open",
     {
       title: "Open debugger session",
-      description: "Open a CDB-backed debugger session against a guest process (launch or attach).",
+      description:
+        'Open a CDB-backed debugger session against a guest process. mode="launch" requires `executable`, mode="attach" requires `pid`.',
       inputSchema: {
         mode: z.enum(["launch", "attach"]),
-        executable: z.string().optional(),
-        arguments: z.array(z.string()).optional(),
-        pid: z.number().optional(),
+        executable: z.string().min(1).optional().describe("Required when mode=launch"),
+        arguments: z
+          .array(z.string())
+          .max(64)
+          .optional()
+          .describe("Forwarded to the launched executable; ignored for attach"),
+        pid: z.number().int().positive().optional().describe("Required when mode=attach"),
         symbolPath: z.string().optional(),
       },
     },

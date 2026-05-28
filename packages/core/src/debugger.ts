@@ -43,8 +43,7 @@ export type DebuggerDumpRequest = {
   readonly minidump?: boolean;
 };
 
-const DEFAULT_CDB_EXECUTABLE =
-  "C:\\\\Program Files\\\\Windows Kits\\\\10\\\\Debuggers\\\\x64\\\\cdb.exe";
+const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe";
 const MAX_COMMAND_LENGTH = 4 * 1024;
 const MAX_TRANSCRIPT_ENTRIES = 200;
 
