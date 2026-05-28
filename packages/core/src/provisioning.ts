@@ -1021,6 +1021,7 @@ function buildProvisioningStageContracts(
         requiredCheck("symbol-path", "Default symbol path is configured"),
       ],
       script: script("install-windbg", "qga-powershell", "guest/provision/install-windbg.ps1", {
+        scriptArguments: ["-AllowSkipOnNetworkFailure"],
         timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
         elevated: true,
       }),
