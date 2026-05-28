@@ -334,3 +334,64 @@ When mTLS material has been provisioned, point the guest tools at the live agent
 `CRUCIBLE_GUEST_KEY_PATH` before launching `crucible mcp --stdio`. Without those, every guest tool
 returns the `guest-failed` error explaining that no guest client is configured — useful for
 dry-running the MCP wiring on hosts where no VM is online.
+
+## MVP walkthrough (beta)
+
+Quick start from a clean Debian 13 checkout:
+
+```sh
+# 1. Host prerequisites
+sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
+scripts/check-host.sh
+
+# 2. Node + Go toolchains
+nvm install
+corepack enable pnpm
+pnpm install --frozen-lockfile
+pnpm build
+
+# 3. Configure media (see docs/install.md for details)
+cp crucible.config.example.json crucible.config.json  # if you have an example
+# edit crucible.config.json to point at your Windows + virtio ISOs
+
+# 4. Provision the Windows VM
+pnpm crucible provision      # ~12-18 minutes the first time
+pnpm crucible snapshot:create clean-base
+pnpm crucible guest:health
+
+# 5. Drive the VM from an MCP client
+pnpm crucible mcp --stdio
+
+# 6. When done
+scripts/teardown.sh          # removes ephemeral state, keeps disks/secrets/snapshots
+```
+
+The full operator playbook lives under `docs/`:
+
+- `docs/install.md` — host prerequisites, media, toolchain, MCP wiring.
+- `docs/provisioning.md` — provisioning stages + script contracts.
+- `docs/setup-windows.md` — Windows + virtio caveats.
+- `docs/qemu.md` — QEMU command shape + dry runs.
+- `docs/network-isolation.md` — default-deny network modes.
+- `docs/protocol.md` — guest agent mTLS HTTP API.
+- `docs/debugger.md` — cdb-backed debugger session model.
+- `docs/malware-analysis-sop.md` — policy + scenario runner SOP.
+- `docs/upgrade.md` — host + guest agent upgrade flow.
+- `docs/teardown.md` — what `scripts/teardown.sh` touches.
+- `docs/threat-model.md` — assumptions + sample-handling boundaries.
+
+## Release bundle
+
+`scripts/package-release.sh` produces:
+
+```
+dist/release/
+├── crucible-cli-<version>.tgz
+├── crucible-core-<version>.tgz
+├── crucible-mcp-server-<version>.tgz
+├── crucible-guest-agent.exe          (windows/amd64)
+└── release-manifest.json             (SHA-256 + size per artifact)
+```
+
+`CRUCIBLE_VERSION=<tag> scripts/package-release.sh` stamps the version into both the manifest and
+the Go binary's `-X main.version`. The manifest is the canonical reference for downstream consumers.

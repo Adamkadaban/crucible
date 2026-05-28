@@ -437,15 +437,16 @@ succeeds, and the real-VM MVP checklist passes from README instructions.
 
 **Deliverable checklist:**
 
-- [ ] Add package/build outputs for TypeScript MCP server and CLI.
-- [ ] Add cross-compilation target for the Go Windows guest agent.
-- [ ] Add release artifact manifest with checksums.
-- [ ] Add install docs for Linux host, Windows media, virtio drivers, and MCP client configuration.
-- [ ] Add upgrade docs for guest agent and config migrations.
-- [ ] Add teardown docs and `scripts/teardown.sh` implementation for project-owned processes,
-      sockets, firewall chains, and temporary artifacts.
-- [ ] Add final end-to-end README walkthrough using the MVP flow.
-- [ ] Add changelog entry for beta readiness.
+- [x] Add package/build outputs for TypeScript MCP server and CLI.
+- [x] Add cross-compilation target for the Go Windows guest agent.
+- [x] Add release artifact manifest with checksums.
+- [x] Add install docs for Linux host, Windows media, virtio drivers, and MCP client configuration.
+- [x] Add upgrade docs for guest agent and config migrations.
+- [x] Add teardown docs and `scripts/teardown.sh` implementation for project-owned processes,
+      sockets, and ephemeral artifacts. _(Firewall-chain teardown lives in the `crucible net:*`
+      commands wired during Phase 2; the script intentionally limits itself to artifacts/.)_
+- [x] Add final end-to-end README walkthrough using the MVP flow.
+- [x] Add changelog entry for beta readiness.
 
 **Parallel-work split table:**
 

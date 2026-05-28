@@ -1,0 +1,35 @@
+{
+  "$schema": "./schemas/config.schema.json",
+  "vm": {
+    "name": "crucible-win11",
+    "cpus": 4,
+    "memoryMiB": 8192,
+    "diskGiB": 128
+  },
+  "media": {
+    "cacheDir": "media/cache",
+    "profile": "windows11-enterprise-eval",
+    "windowsIso": { "path": "/CHANGE_ME/Win11_25H2_English_x64_v2.iso" },
+    "virtioIso": { "path": "/CHANGE_ME/virtio-win-0.1.285.iso" },
+    "driverBundle": { "path": "/CHANGE_ME/virtio-win-guest-tools.exe" }
+  },
+  "network": {
+    "mode": "isolated",
+    "controlPort": 8443
+  },
+  "qmp": {
+    "socketPath": "artifacts/qmp.sock",
+    "timeoutMs": 5000
+  },
+  "qga": {
+    "socketPath": "artifacts/qga.sock",
+    "timeoutMs": 10000
+  },
+  "artifacts": {
+    "directory": "artifacts",
+    "manifestPath": "artifacts/manifest.json",
+    "logsDirectory": "artifacts/logs",
+    "snapshotsDirectory": "snapshots",
+    "secretsDirectory": "artifacts/secrets"
+  }
+}
