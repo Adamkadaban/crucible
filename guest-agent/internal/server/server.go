@@ -36,6 +36,11 @@ type Config struct {
 	Version                 string
 	// Internal hooks so tests can inject a listener (e.g., 127.0.0.1:0).
 	Listener net.Listener
+	// ListenerReady is closed once the TLS listener has bound successfully,
+	// before srv.Serve starts accepting. Callers (e.g. the Windows service
+	// handler) use this to wait for a real bind before reporting Running so
+	// SCM never sees Running while the port is still unreachable.
+	ListenerReady chan<- struct{}
 }
 
 const defaultMaxRequestBytes = 64 * 1024 * 1024
@@ -67,6 +72,9 @@ func Run(parent context.Context, cfg Config) error {
 		}
 	}
 	defer listener.Close()
+	if cfg.ListenerReady != nil {
+		close(cfg.ListenerReady)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health.Handler(cfg.Version))
