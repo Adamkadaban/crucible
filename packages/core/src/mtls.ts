@@ -61,8 +61,9 @@ export async function ensureMtlsBundle(options: EnsureMtlsBundleOptions): Promis
   const guestAddress = options.guestAddress ?? "192.0.2.2";
   const days = String(options.validityDays ?? 365);
 
-  // CA
-  if (!(await pathExists(paths.caCertificatePath))) {
+  // CA — regenerate if either the cert or the key is missing, so a
+  // half-written previous run self-heals on retry.
+  if (!(await bothExist(paths.caCertificatePath, paths.caPrivateKeyPath))) {
     await runOpenssl(openssl, [
       "genpkey",
       "-algorithm",
@@ -87,8 +88,8 @@ export async function ensureMtlsBundle(options: EnsureMtlsBundleOptions): Promis
     ]);
   }
 
-  // Server cert
-  if (!(await pathExists(paths.serverCertificatePath))) {
+  // Server cert — same belt-and-suspenders check on the keypair.
+  if (!(await bothExist(paths.serverCertificatePath, paths.serverPrivateKeyPath))) {
     const csrPath = path.join(directory, "guest-server.csr");
     const extPath = path.join(directory, "guest-server.ext");
     await runOpenssl(openssl, [
@@ -135,7 +136,7 @@ export async function ensureMtlsBundle(options: EnsureMtlsBundleOptions): Promis
   }
 
   // Host client cert
-  if (!(await pathExists(paths.hostClientCertificatePath))) {
+  if (!(await bothExist(paths.hostClientCertificatePath, paths.hostClientPrivateKeyPath))) {
     const csrPath = path.join(directory, "host-client.csr");
     const extPath = path.join(directory, "host-client.ext");
     await runOpenssl(openssl, [
@@ -203,4 +204,8 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function bothExist(a: string, b: string): Promise<boolean> {
+  return (await pathExists(a)) && (await pathExists(b));
 }

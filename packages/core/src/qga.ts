@@ -8,6 +8,7 @@ import {
   type ProvisioningExecutor,
   type ProvisioningSecretKind,
   type ProvisioningStageContract,
+  type ProvisioningStageId,
 } from "./provisioning.js";
 
 const DEFAULT_QGA_TIMEOUT_MS = 10_000;
@@ -137,9 +138,11 @@ export type QgaProvisioningExecutorOptions = {
    * Map of host-side stage IDs → list of (hostPath, guestPath) pairs to
    * upload before that stage's PowerShell script runs. Lets the CLI stage
    * mTLS material + the agent binary before `install-guest-agent` fires,
-   * without bundling them into the autounattend ISO.
+   * without bundling them into the autounattend ISO. Keyed by the
+   * concrete `ProvisioningStageId` union so a misspelled stage id is a
+   * compile error instead of a silent no-op.
    */
-  readonly filesToStage?: Readonly<Record<string, readonly StagedFile[]>>;
+  readonly filesToStage?: Partial<Record<ProvisioningStageId, readonly StagedFile[]>>;
 };
 
 export type StagedFile = {
@@ -156,7 +159,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
   readonly #readinessPollIntervalMs: number;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  readonly #filesToStage: Readonly<Record<string, readonly StagedFile[]>>;
+  readonly #filesToStage: Partial<Record<ProvisioningStageId, readonly StagedFile[]>>;
 
   constructor(options: QgaProvisioningExecutorOptions) {
     this.#client = options.client;

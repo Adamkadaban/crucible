@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readFile, stat as fsStat } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 
 import {
   buildNetworkPlan,
@@ -333,6 +334,26 @@ async function runProvisionCommand(
   }
 
   const config = getRuntimeConfig(runtime);
+
+  // Eagerly validate that the cross-compiled agent binary exists before
+  // we kick off the (long) Windows install. Without this the operator
+  // discovers the missing binary 15 minutes in, after the guest is
+  // already provisioned, when install-agent fails to upload it.
+  if (runtime.lifecycleManager === undefined && runtime.provisioningExecutor === undefined) {
+    const agentBinaryPath = resolveGuestAgentBinaryPath();
+    if (!(await fileExists(agentBinaryPath))) {
+      return {
+        exitCode: 2,
+        stdout: "",
+        stderr: [
+          `Cannot find the Windows guest agent binary at ${agentBinaryPath}.`,
+          "Build it via 'scripts/package-release.sh' or set CRUCIBLE_GUEST_AGENT_BINARY",
+          "to a pre-built crucible-guest-agent.exe.",
+        ].join("\n"),
+      };
+    }
+  }
+
   const lifecyclePrep = await getProvisioningLifecyclePreparation(config, runtime);
 
   // When the CLI owns the lifecycle (no injected lifecycleManager /
@@ -405,11 +426,25 @@ function buildDefaultProvisioningExecutor(
  * `install-agent.ps1` expects in C:\Program Files\Crucible. Operators can
  * override via $CRUCIBLE_GUEST_AGENT_BINARY; otherwise we look at the
  * conventional dist/release output produced by scripts/package-release.sh.
+ * Resolved against process.cwd() so the operator gets the expected
+ * "missing binary" error if they invoke the CLI from a different
+ * directory.
  */
 function resolveGuestAgentBinaryPath(): string {
   const override = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
-  if (override !== undefined && override !== "") return override;
-  return "dist/release/crucible-guest-agent.exe";
+  if (override !== undefined && override !== "") {
+    return resolvePath(override);
+  }
+  return resolvePath("dist/release/crucible-guest-agent.exe");
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fsStat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function getProvisioningLifecyclePreparation(
