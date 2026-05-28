@@ -17,6 +17,8 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@crucible/core": "workspace:*"
+    "@crucible/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.21.0",
+    "zod": "^3.25.0"
   }
 }

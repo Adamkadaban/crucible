@@ -292,3 +292,45 @@ go build ./...
 ## License
 
 [MIT](./LICENSE)
+
+## MCP server
+
+`crucible mcp --stdio` exposes the bootstrap tool set over an [MCP](https://modelcontextprotocol.io)
+stdio transport so an LLM client (Claude Desktop, opencode, etc.) can drive provisioning, snapshots,
+and guest commands.
+
+Add to `~/.config/Claude/claude_desktop_config.json` (or the equivalent client config):
+
+```json
+{
+  "mcpServers": {
+    "crucible": {
+      "command": "pnpm",
+      "args": ["--filter", "@crucible/cli", "exec", "crucible", "mcp", "--stdio"],
+      "cwd": "/path/to/crucible"
+    }
+  }
+}
+```
+
+The currently registered tools are:
+
+| Tool             | Purpose                                                      |
+| ---------------- | ------------------------------------------------------------ |
+| `host_check`     | Report Linux host prerequisites (QEMU/KVM, OVMF, virtio, …). |
+| `guest_health`   | Hit `/health` on the Crucible guest agent.                   |
+| `guest_exec`     | Run a bounded process inside the guest.                      |
+| `guest_upload`   | Write a base64 payload into the guest staging directory.     |
+| `guest_download` | Read a file back from staging.                               |
+
+Every tool returns a structured JSON envelope of the form
+`{ "ok": true, "result": { ... }, "auditLogPath": "..." }` on success and
+`{ "ok": false, "error": { "kind": "...", "message": "...", "auditLogPath": "..." } }` on failure.
+`error.kind` is one of `validation`, `host-prerequisite`, `vm-offline`, `guest-failed`, or
+`internal`.
+
+When mTLS material has been provisioned, point the guest tools at the live agent by exporting
+`CRUCIBLE_GUEST_BASE_URL`, `CRUCIBLE_GUEST_CA_PATH`, `CRUCIBLE_GUEST_CERT_PATH`, and
+`CRUCIBLE_GUEST_KEY_PATH` before launching `crucible mcp --stdio`. Without those, every guest tool
+returns the `guest-failed` error explaining that no guest client is configured — useful for
+dry-running the MCP wiring on hosts where no VM is online.
