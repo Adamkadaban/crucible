@@ -302,6 +302,156 @@ describe("QGA client and provisioning executor", () => {
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  it("writeFile transparently retries when qga drops the connection mid-write", async () => {
+    // First guest-file-open succeeds, then the very next request errors as
+    // if qga lost its handle (Windows rebooted), then a fresh open succeeds
+    // and the bytes land. The retry layer should hide this from the caller.
+    let opens = 0;
+    let writeAttempt = 0;
+    let lastHandle = 0;
+    const finalWrites: Array<{ path: string; bytes: number }> = [];
+    const fileBuffers: Record<number, { path: string; data: string }> = {};
+    const server = await startFakeQga((request) => {
+      const args = request.arguments ?? {};
+      if (request.execute === "guest-file-open") {
+        opens += 1;
+        lastHandle += 1;
+        fileBuffers[lastHandle] = { path: args.path as string, data: "" };
+        return { return: { handle: lastHandle } };
+      }
+      if (request.execute === "guest-file-write") {
+        writeAttempt += 1;
+        if (writeAttempt === 1) {
+          // Pretend qga dropped the handle after the agent restarted.
+          return { error: { class: "GenericError", desc: "Invalid file handle" } };
+        }
+        const handle = args.handle as number;
+        const entry = fileBuffers[handle];
+        if (entry !== undefined && typeof args["buf-b64"] === "string") {
+          entry.data += args["buf-b64"];
+        }
+        return { return: {} };
+      }
+      if (request.execute === "guest-file-close") {
+        const handle = args.handle as number;
+        const entry = fileBuffers[handle];
+        if (entry !== undefined) {
+          finalWrites.push({ path: entry.path, bytes: entry.data.length });
+        }
+        return { return: {} };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await client.writeFile("C:\\Test\\file.bin", Buffer.from("hello"));
+      expect(opens).toBeGreaterThanOrEqual(2);
+      const successful = finalWrites.find((w) => w.bytes > 0);
+      expect(successful).toBeDefined();
+      expect(successful?.path).toBe("C:\\Test\\file.bin");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("idempotent exec resubmits when qga reports the pid is gone", async () => {
+    // First guest-exec returns pid 100. The status poll says pid not found
+    // (Windows rebooted, agent forgot). The retry layer must resubmit
+    // guest-exec to get a fresh pid, then poll that one normally.
+    let execs = 0;
+    let statusCalls = 0;
+    const pidsIssued: number[] = [];
+    const server = await startFakeQga((request) => {
+      const args = request.arguments ?? {};
+      if (request.execute === "guest-exec") {
+        execs += 1;
+        const pid = 100 + execs;
+        pidsIssued.push(pid);
+        return { return: { pid } };
+      }
+      if (request.execute === "guest-exec-status") {
+        statusCalls += 1;
+        const pid = args.pid as number;
+        // First poll against the original pid: pretend the agent restarted.
+        if (statusCalls === 1 && pid === 101) {
+          return { error: { class: "GenericError", desc: "pid not found" } };
+        }
+        return { return: { exited: true, exitcode: 0, "out-data": "" } };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      const result = await client.exec("cmd.exe", ["/c", "echo hi"], { idempotent: true });
+      expect(result.exitCode).toBe(0);
+      expect(execs).toBe(2);
+      expect(pidsIssued).toEqual([101, 102]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("non-idempotent exec propagates 'pid not found' instead of resubmitting", async () => {
+    let execs = 0;
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-exec") {
+        execs += 1;
+        return { return: { pid: 200 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { error: { class: "GenericError", desc: "pid not found" } };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 1000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await expect(client.exec("cmd.exe", ["/c", "echo hi"])).rejects.toThrow(/guest-exec-status/);
+      expect(execs).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("retry budget exhaustion surfaces a PROCESS_TIMEOUT naming the operation", async () => {
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-file-open") {
+        return { return: { handle: 1 } };
+      }
+      if (request.execute === "guest-file-write") {
+        return { error: { class: "GenericError", desc: "invalid handle" } };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 50, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await expect(client.writeFile("C:\\Test\\file.bin", "x")).rejects.toThrow(
+        /retry budget exhausted/,
+      );
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 type QgaRequest = {
