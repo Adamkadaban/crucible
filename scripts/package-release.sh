@@ -5,10 +5,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="${ROOT}/dist/release"
-NODE_MODULES_DIR="${ROOT}/node_modules"
 
 mkdir -p "${RELEASE_DIR}"
-rm -f "${RELEASE_DIR}"/*.tar.gz "${RELEASE_DIR}"/*.exe "${RELEASE_DIR}"/release-manifest.json
+rm -f "${RELEASE_DIR}"/*.tgz "${RELEASE_DIR}"/*.exe "${RELEASE_DIR}"/release-manifest.json
 
 # 1. TypeScript build
 echo "[release] pnpm build" >&2

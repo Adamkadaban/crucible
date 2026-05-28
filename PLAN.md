@@ -443,7 +443,8 @@ succeeds, and the real-VM MVP checklist passes from README instructions.
 - [x] Add install docs for Linux host, Windows media, virtio drivers, and MCP client configuration.
 - [x] Add upgrade docs for guest agent and config migrations.
 - [x] Add teardown docs and `scripts/teardown.sh` implementation for project-owned processes,
-      sockets, firewall chains, and temporary artifacts.
+      sockets, and ephemeral artifacts. _(Firewall-chain teardown lives in the `crucible net:*`
+      commands wired during Phase 2; the script intentionally limits itself to artifacts/.)_
 - [x] Add final end-to-end README walkthrough using the MVP flow.
 - [x] Add changelog entry for beta readiness.
 

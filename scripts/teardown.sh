@@ -16,7 +16,11 @@ Usage: $(basename "$0") [--dry-run]
 Removes only project-owned crucible state:
   * Kills the QEMU pid recorded in ${ART}/run/*.pid (if any).
   * Removes ${ART}/qmp.sock, ${ART}/qga.sock, ${ART}/mon.sock.
-  * Removes ${ART}/state/, ${ART}/logs/, ${ART}/run/, ${ART}/dbg-*.png, ${ART}/dbg-*.ppm.
+  * Removes ${ART}/state/, ${ART}/logs/, ${ART}/run/.
+  * Removes ephemeral capture files: ${ART}/dbg-*.{png,ppm},
+    ${ART}/screen-*.{png,ppm}, ${ART}/poll*.log,
+    ${ART}/provision*.log.
+Leaves operator-owned bytes alone (disks/, boot/, secrets/, snapshots/).
 Pass --dry-run to print what would happen without touching the filesystem.
 EOF
       exit 0
