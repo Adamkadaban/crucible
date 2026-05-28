@@ -63,10 +63,22 @@ func TestRunHealthEndpointHandshake(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	ready := make(chan struct{})
+	cfg.ListenerReady = ready
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, cfg)
 	}()
+	// ListenerReady must close before the test can connect, which proves
+	// the signal fires after a successful bind. A bare goroutine + sleep
+	// would race; this select fails fast if Run errors out.
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run returned before ListenerReady: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("ListenerReady never closed")
+	}
 
 	clientTLSCert := tls.Certificate{
 		Certificate: [][]byte{clientCert.Raw},

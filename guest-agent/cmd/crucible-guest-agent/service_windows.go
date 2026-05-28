@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/Adamkadaban/crucible/guest-agent/internal/server"
 	"github.com/Adamkadaban/crucible/guest-agent/internal/service"
@@ -56,15 +55,25 @@ func (serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, sta
 	}
 
 	done := make(chan error, 1)
+	ready := make(chan struct{})
+	cfg.ListenerReady = ready
 	go func() {
 		done <- server.Run(ctx, cfg)
 	}()
 
-	// Give server.Run a moment to bind the listener before we report
-	// Running so the operator sees a meaningful error if the bind fails.
-	time.Sleep(200 * time.Millisecond)
-
-	status <- svc.Status{State: svc.Running, Accepts: accepts}
+	// Wait for either the listener to come up or server.Run to bail. This
+	// replaces a fixed sleep that raced against slow VMs (Running before
+	// the port was reachable) and fast errors (Running reported even
+	// though server.Run had already failed).
+	select {
+	case <-ready:
+		status <- svc.Status{State: svc.Running, Accepts: accepts}
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "server.Run:", err)
+		}
+		return false, 1
+	}
 
 	for {
 		select {
@@ -99,33 +108,41 @@ func parseServerArgsFromOsArgs(args []string) (server.Config, error) {
 		StagingDirectory: `C:\ProgramData\Crucible\staging`,
 		MaxRequestBytes:  64 * 1024 * 1024,
 	}
+	consume := func(i int, flag string) (string, error) {
+		if i+1 >= len(args) {
+			return "", fmt.Errorf("flag %s requires a value", flag)
+		}
+		return args[i+1], nil
+	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--listen":
-			i++
-			cfg.ListenAddress = args[i]
-		case "--tls-cert":
-			i++
-			cfg.ServerCertificatePath = args[i]
-		case "--tls-key":
-			i++
-			cfg.ServerPrivateKeyPath = args[i]
-		case "--tls-client-ca":
-			i++
-			cfg.ClientCACertificatePath = args[i]
-		case "--audit-log":
-			i++
-			cfg.AuditLogPath = args[i]
-		case "--staging-dir":
-			i++
-			cfg.StagingDirectory = args[i]
-		case "--max-request-bytes":
-			i++
-			n, err := strconv.ParseInt(args[i], 10, 64)
+		case "--listen", "--tls-cert", "--tls-key", "--tls-client-ca",
+			"--audit-log", "--staging-dir", "--max-request-bytes":
+			value, err := consume(i, args[i])
 			if err != nil {
-				return cfg, fmt.Errorf("invalid --max-request-bytes %q: %w", args[i], err)
+				return cfg, err
 			}
-			cfg.MaxRequestBytes = n
+			switch args[i] {
+			case "--listen":
+				cfg.ListenAddress = value
+			case "--tls-cert":
+				cfg.ServerCertificatePath = value
+			case "--tls-key":
+				cfg.ServerPrivateKeyPath = value
+			case "--tls-client-ca":
+				cfg.ClientCACertificatePath = value
+			case "--audit-log":
+				cfg.AuditLogPath = value
+			case "--staging-dir":
+				cfg.StagingDirectory = value
+			case "--max-request-bytes":
+				n, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return cfg, fmt.Errorf("invalid --max-request-bytes %q: %w", value, err)
+				}
+				cfg.MaxRequestBytes = n
+			}
+			i++
 		default:
 			return cfg, fmt.Errorf("unknown service flag: %s", args[i])
 		}

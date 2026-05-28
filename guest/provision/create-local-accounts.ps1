@@ -52,11 +52,6 @@ function Ensure-LocalAccount {
                 -PasswordNeverExpires:$true -UserMayChangePassword:$false `
                 -ErrorAction Stop
         }
-        catch [Microsoft.PowerShell.Commands.SetLocalUserCommand] {
-            if ($_.Exception.Message -notmatch "last Administrator") {
-                throw
-            }
-        }
         catch {
             if ($_.Exception.Message -notmatch "last Administrator") {
                 throw
