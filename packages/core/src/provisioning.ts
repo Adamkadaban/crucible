@@ -432,6 +432,17 @@ export async function prepareRealFirstBootProvisioning(
     "utf8",
   );
   await writeFile(path.join(bootDirectory, "startup.nsh"), buildStartupNsh(), "utf8");
+  await writeFile(
+    path.join(bootDirectory, "crucible-install.cmd"),
+    buildWinPeInstallScript(config),
+    "utf8",
+  );
+  await mkdir(path.join(bootDirectory, "$OEM$", "$$", "Setup", "Scripts"), { recursive: true });
+  await writeFile(
+    path.join(bootDirectory, "$OEM$", "$$", "Setup", "Scripts", "SetupComplete.cmd"),
+    buildSetupCompleteScript(),
+    "utf8",
+  );
   await copyVirtioDriverDirectories({
     virtioIsoPath,
     bootDirectory,
@@ -507,13 +518,6 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     '<?xml version="1.0" encoding="utf-8"?>',
     '<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">',
     '  <settings pass="windowsPE">',
-    '    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
-    "      <DriverPaths>",
-    '        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\\drivers\\vioscsi</Path></PathAndCredentials>',
-    '        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>D:\\drivers\\NetKVM</Path></PathAndCredentials>',
-    '        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>D:\\drivers\\vioserial</Path></PathAndCredentials>',
-    "      </DriverPaths>",
-    "    </component>",
     '    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     "      <RunSynchronous>",
     '        <RunSynchronousCommand wcm:action="add">',
@@ -528,31 +532,12 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     "          <Order>3</Order>",
     "          <Path>cmd /c reg add HKLM\\SYSTEM\\Setup\\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>",
     "        </RunSynchronousCommand>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>4</Order>",
+    "          <Path>cmd /c for %d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do @if exist %d:\\crucible-install.cmd %d:\\crucible-install.cmd</Path>",
+    "        </RunSynchronousCommand>",
     "      </RunSynchronous>",
     "      <UserData><AcceptEula>true</AcceptEula></UserData>",
-    "      <DiskConfiguration>",
-    '        <Disk wcm:action="add">',
-    "          <DiskID>0</DiskID>",
-    "          <WillWipeDisk>true</WillWipeDisk>",
-    "          <CreatePartitions>",
-    '            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>100</Size></CreatePartition>',
-    '            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>',
-    '            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>',
-    "          </CreatePartitions>",
-    "          <ModifyPartitions>",
-    '            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>',
-    '            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>',
-    "          </ModifyPartitions>",
-    "        </Disk>",
-    "        <WillShowUI>OnError</WillShowUI>",
-    "      </DiskConfiguration>",
-    "      <ImageInstall>",
-    "        <OSImage>",
-    '          <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData></InstallFrom>',
-    "          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>",
-    "          <WillShowUI>OnError</WillShowUI>",
-    "        </OSImage>",
-    "      </ImageInstall>",
     "    </component>",
     "  </settings>",
     '  <settings pass="oobeSystem">',
@@ -563,6 +548,53 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     "  </settings>",
     "</unattend>",
   ].join("\n");
+}
+
+function buildWinPeInstallScript(config: CrucibleConfig): string {
+  const osFolder = config.media.profile === "windows-server-2025-eval" ? "2k25" : "w11";
+  return [
+    "@echo off",
+    "setlocal EnableExtensions EnableDelayedExpansion",
+    "for %%d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
+    "  if exist %%d:\\sources\\install.wim set IMAGE_FILE=%%d:\\sources\\install.wim",
+    "  if exist %%d:\\sources\\install.esd set IMAGE_FILE=%%d:\\sources\\install.esd",
+    "  if exist %%d:\\drivers\\vioscsi\\vioscsi.inf set DRIVER_ROOT=%%d:\\drivers",
+    "  if exist %%d:\\Autounattend.xml set ANSWER_FILE=%%d:\\Autounattend.xml",
+    ")",
+    "if not defined IMAGE_FILE echo Missing Windows install image & pause & exit /b 1",
+    "if not defined DRIVER_ROOT echo Missing Crucible driver media & pause & exit /b 1",
+    "if not defined ANSWER_FILE echo Missing Crucible answer file & pause & exit /b 1",
+    `if exist %DRIVER_ROOT%\\vioscsi\\vioscsi.inf drvload %DRIVER_ROOT%\\vioscsi\\vioscsi.inf`,
+    `if exist %DRIVER_ROOT%\\NetKVM\\netkvm.inf drvload %DRIVER_ROOT%\\NetKVM\\netkvm.inf`,
+    `if exist %DRIVER_ROOT%\\vioserial\\vioser.inf drvload %DRIVER_ROOT%\\vioserial\\vioser.inf`,
+    ">X:\\diskpart-crucible.txt echo SELECT DISK=0",
+    ">>X:\\diskpart-crucible.txt echo CLEAN",
+    ">>X:\\diskpart-crucible.txt echo CONVERT GPT",
+    ">>X:\\diskpart-crucible.txt echo CREATE PARTITION EFI SIZE=100",
+    ">>X:\\diskpart-crucible.txt echo FORMAT QUICK FS=FAT32 LABEL=System",
+    ">>X:\\diskpart-crucible.txt echo ASSIGN LETTER=S",
+    ">>X:\\diskpart-crucible.txt echo CREATE PARTITION MSR SIZE=16",
+    ">>X:\\diskpart-crucible.txt echo CREATE PARTITION PRIMARY",
+    ">>X:\\diskpart-crucible.txt echo FORMAT QUICK FS=NTFS LABEL=Windows",
+    ">>X:\\diskpart-crucible.txt echo ASSIGN LETTER=W",
+    "diskpart /s X:\\diskpart-crucible.txt || pause & exit /b 1",
+    "dism /Apply-Image /ImageFile:%IMAGE_FILE% /Index:1 /ApplyDir:W:\\ || pause & exit /b 1",
+    "dism /Image:W:\\ /Add-Driver /Driver:%DRIVER_ROOT% /Recurse /ForceUnsigned || pause & exit /b 1",
+    "bcdboot W:\\Windows /s S: /f UEFI || pause & exit /b 1",
+    "mkdir W:\\Windows\\Panther",
+    "copy %ANSWER_FILE% W:\\Windows\\Panther\\Unattend.xml",
+    "wpeutil reboot",
+    `rem virtio profile ${osFolder}`,
+  ].join("\r\n");
+}
+
+function buildSetupCompleteScript(): string {
+  return [
+    "@echo off",
+    "if exist D:\\guest-agent\\qemu-ga-x86_64.msi msiexec /i D:\\guest-agent\\qemu-ga-x86_64.msi /qn",
+    "if exist E:\\guest-agent\\qemu-ga-x86_64.msi msiexec /i E:\\guest-agent\\qemu-ga-x86_64.msi /qn",
+    "if exist F:\\guest-agent\\qemu-ga-x86_64.msi msiexec /i F:\\guest-agent\\qemu-ga-x86_64.msi /qn",
+  ].join("\r\n");
 }
 
 async function copyVirtioDriverDirectories(options: {

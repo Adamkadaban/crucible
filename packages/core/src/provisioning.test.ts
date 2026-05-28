@@ -462,13 +462,23 @@ describe("provisioning contracts", () => {
     expect(autounattend).toContain("BypassTPMCheck");
     expect(autounattend).toContain("BypassSecureBootCheck");
     expect(autounattend).toContain("BypassRAMCheck");
-    expect(autounattend).toContain("Microsoft-Windows-PnpCustomizationsWinPE");
-    expect(autounattend).toContain("D:\\drivers\\vioscsi");
-    expect(autounattend).toContain("<DiskID>0</DiskID>");
-    expect(autounattend).toContain("/IMAGE/INDEX");
+    expect(autounattend).toContain("crucible-install.cmd");
     const startup = await readFile(join(root, "artifacts", "boot", "startup.nsh"), "utf8");
     expect(startup).toContain("for %a in (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)");
     expect(startup).toContain("bootx64.efi");
+    const installScript = await readFile(
+      join(root, "artifacts", "boot", "crucible-install.cmd"),
+      "utf8",
+    );
+    expect(installScript).toContain("drvload %DRIVER_ROOT%\\vioscsi\\vioscsi.inf");
+    expect(installScript).toContain("diskpart /s X:\\diskpart-crucible.txt");
+    expect(installScript).toContain("dism /Apply-Image /ImageFile:%IMAGE_FILE% /Index:1");
+    expect(installScript).toContain("bcdboot W:\\Windows /s S: /f UEFI");
+    const setupComplete = await readFile(
+      join(root, "artifacts", "boot", "$OEM$", "$$", "Setup", "Scripts", "SetupComplete.cmd"),
+      "utf8",
+    );
+    expect(setupComplete).toContain("qemu-ga-x86_64.msi");
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
