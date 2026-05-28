@@ -556,8 +556,9 @@ describe("provisioning contracts", () => {
     const ovmfCode = join(root, "OVMF_CODE.fd");
     const ovmfVars = join(root, "OVMF_VARS.fd");
     const artifactDirectory = join(root, "artifacts");
-    const staleDriver = join(artifactDirectory, "boot", "drivers", "vioscsi", "vioscsi.inf");
-    await mkdir(join(artifactDirectory, "boot", "drivers", "vioscsi"), { recursive: true });
+    const staleDriverDirectory = join(artifactDirectory, "boot", "drivers", "vioscsi");
+    const staleDriver = join(staleDriverDirectory, "vioscsi.inf");
+    await mkdir(staleDriverDirectory, { recursive: true });
     await Promise.all([
       writeFile(windowsIso, "windows", "utf8"),
       writeFile(virtioIso, "virtio", "utf8"),
@@ -566,6 +567,7 @@ describe("provisioning contracts", () => {
       writeFile(staleDriver, "stale", { encoding: "utf8", mode: 0o555 }),
     ]);
     await chmod(staleDriver, 0o555);
+    await chmod(staleDriverDirectory, 0o555);
     const commands: ProcessCommand[] = [];
 
     await prepareRealFirstBootProvisioning({
@@ -586,8 +588,19 @@ describe("provisioning contracts", () => {
       ovmfCodePath: ovmfCode,
       ovmfVarsTemplatePath: ovmfVars,
       processRunner: {
-        run(command) {
+        async run(command) {
           commands.push(command);
+          if (command.executable === "xorriso" && command.args.includes("-extract")) {
+            const destination = command.args.at(-1);
+            if (typeof destination === "string") {
+              await mkdir(destination, { recursive: true });
+              await writeFile(join(destination, "driver.inf"), "driver", {
+                encoding: "utf8",
+                mode: 0o555,
+              });
+              await chmod(join(destination, "driver.inf"), 0o555);
+            }
+          }
           return Promise.resolve({
             command,
             exitCode: 0,
@@ -602,6 +615,9 @@ describe("provisioning contracts", () => {
     });
 
     expect(commands.filter((command) => command.executable === "xorriso")).toHaveLength(4);
+    const extracted = join(artifactDirectory, "boot", "drivers", "vioscsi", "driver.inf");
+    const mode = (await stat(extracted)).mode & 0o777;
+    expect(mode & 0o200).toBe(0o200);
   });
 
   it("builds guest health reports from provisioning readiness contracts", () => {
