@@ -1,5 +1,6 @@
 param(
-    [switch]$Force
+    [switch]$Force,
+    [Parameter(Mandatory = $false)][string]$HostOnlySourceAddress = "192.0.2.1"
 )
 
 # Bootstrap fallback only. Enables Windows OpenSSH server so an operator can
@@ -25,11 +26,16 @@ if ($cap.State -ne "Installed") {
 Set-Service -Name sshd -StartupType Automatic
 Start-Service -Name sshd
 
-# Firewall rule already exists once the capability is installed; ensure
-# enabled and limit to the host-only network range.
+# Constrain the auto-created OpenSSH inbound rule to the host-only control
+# address so SSH cannot be reached from anywhere else, even though the
+# isolated network already drops outside traffic.
 $rule = Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
 if ($null -ne $rule) {
-    Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True -Profile Any | Out-Null
+    Set-NetFirewallRule `
+        -Name "OpenSSH-Server-In-TCP" `
+        -Enabled True `
+        -Profile Any `
+        -RemoteAddress $HostOnlySourceAddress | Out-Null
 }
 
 $service = Get-Service -Name sshd
@@ -37,5 +43,6 @@ $service = Get-Service -Name sshd
     enabled = $service.Status.ToString() -eq "Running"
     status = $service.Status.ToString()
     capabilityState = (Get-WindowsCapability -Online -Name "OpenSSH.Server~~~~0.0.1.0").State.ToString()
+    remoteAddress = $HostOnlySourceAddress
     note = "Bootstrap fallback only. Disable once Crucible guest service is healthy."
 } | ConvertTo-Json -Compress

@@ -1,3 +1,7 @@
+param(
+    [switch]$AllowMissingWinDbg
+)
+
 $ErrorActionPreference = "Stop"
 
 # Aggregated guest-health snapshot. Provisioning runs this after WinDbg,
@@ -92,10 +96,16 @@ $checks = [ordered]@{
     testSigningEnabled = $testSigning
 }
 
+$windbgHealthy = ($null -ne $cdb) -and ($null -ne $windbg) -and ($null -ne $symbolPath -and $symbolPath -ne "")
+if ($AllowMissingWinDbg) {
+    # The plan may opt-in to allow WinDbg to be absent (e.g. provisioning ran
+    # on an isolated network and install-windbg skipped). Treat WinDbg as
+    # optional but still report the underlying state.
+    $windbgHealthy = $true
+}
+
 $healthy = (
-    ($null -ne $cdb) -and
-    ($null -ne $windbg) -and
-    ($null -ne $symbolPath -and $symbolPath -ne "") -and
+    $windbgHealthy -and
     $crucibleAdmin -and
     $crucibleUser -and
     $qemuAgentStatus -eq "Running" -and

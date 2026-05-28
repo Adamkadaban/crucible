@@ -200,7 +200,10 @@ if (-not (Test-DebuggerToolingPresent)) {
                 skipped = $true
                 reason = $_.Exception.Message
             } | ConvertTo-Json -Compress
-            exit 0
+            # Exit 75 (EX_TEMPFAIL) signals an opt-in skip rather than a hard
+            # failure. The QGA executor maps this to a succeeded-but-skipped
+            # stage result so downstream stages (e.g. test-health) can branch.
+            exit 75
         }
         throw
     }
