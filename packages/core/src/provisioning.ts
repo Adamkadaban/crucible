@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -8,8 +8,11 @@ import {
   type AnalysisVmPolicyConfig,
 } from "./analysis-policy.js";
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
+import { CrucibleError } from "./errors.js";
 import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
 import { buildNetworkPlan } from "./network.js";
+import type { ProcessCommand, ProcessRunner } from "./process.js";
+import { buildQemuCommandPlan } from "./qemu.js";
 import { type SnapshotCreateResult } from "./snapshot.js";
 
 export const PROVISIONING_STAGE_IDS = [
@@ -186,6 +189,27 @@ export type ProvisioningCommandRunnerOptions = {
   readonly snapshotName?: string;
 };
 
+export type RealFirstBootProvisioningOptions = {
+  readonly config?: CrucibleConfig;
+  readonly processRunner: ProcessRunner;
+  readonly ovmfCodePath?: string;
+  readonly ovmfVarsTemplatePath?: string;
+  readonly swtpmExecutable?: string;
+  readonly qemuImgExecutable?: string;
+  readonly xorrisoExecutable?: string;
+  readonly timeoutMs?: number;
+};
+
+export type RealFirstBootProvisioningPlan = {
+  readonly diskPath: string;
+  readonly ovmfCodePath: string;
+  readonly ovmfVarsPath: string;
+  readonly swtpmSocketPath: string;
+  readonly swtpmStateDirectory: string;
+  readonly autounattendIsoPath: string;
+  readonly commands: readonly ProcessCommand[];
+};
+
 export type WindowsExecutionPrincipal = "standard" | "admin";
 
 export type WindowsAccountSecret = {
@@ -326,6 +350,183 @@ export async function runProvisioningCommand(
       now: options.now,
     }),
   };
+}
+
+export async function prepareRealFirstBootProvisioning(
+  options: RealFirstBootProvisioningOptions,
+): Promise<RealFirstBootProvisioningPlan> {
+  const config = options.config ?? defaultCrucibleConfig;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const qemuImgExecutable = options.qemuImgExecutable ?? "qemu-img";
+  const swtpmExecutable = options.swtpmExecutable ?? "swtpm";
+  const xorrisoExecutable = options.xorrisoExecutable ?? "xorriso";
+  const ovmfCodePath = options.ovmfCodePath ?? "/usr/share/OVMF/OVMF_CODE_4M.fd";
+  const ovmfVarsTemplatePath = options.ovmfVarsTemplatePath ?? "/usr/share/OVMF/OVMF_VARS_4M.fd";
+  const plan = buildQemuCommandPlan({ config });
+  const bootDirectory = path.join(config.artifacts.directory, "boot");
+  const ovmfVarsPath = path.join(bootDirectory, `${config.vm.name}.OVMF_VARS.fd`);
+  const swtpmStateDirectory = path.join(config.artifacts.directory, "swtpm", config.vm.name);
+  const swtpmSocketPath = path.join(swtpmStateDirectory, "swtpm.sock");
+  const autounattendIsoPath = path.join(bootDirectory, "autounattend.iso");
+  const windowsIsoPath = config.media.windowsIso?.path;
+  const virtioIsoPath = config.media.virtioIso?.path;
+
+  if (windowsIsoPath === undefined || virtioIsoPath === undefined) {
+    throw new CrucibleError(
+      "MEDIA_UNAVAILABLE",
+      "Real provisioning requires local Windows and virtio ISO paths",
+      {
+        windowsIsoPath,
+        virtioIsoPath,
+      },
+    );
+  }
+
+  await assertReadableFile("Windows ISO", windowsIsoPath);
+  await assertReadableFile("virtio ISO", virtioIsoPath);
+  await assertReadableFile("OVMF code", ovmfCodePath);
+  await assertReadableFile("OVMF vars template", ovmfVarsTemplatePath);
+  await mkdir(path.dirname(plan.disk.path), { recursive: true });
+  await mkdir(bootDirectory, { recursive: true });
+  await mkdir(swtpmStateDirectory, { recursive: true });
+  if (!(await pathExists(ovmfVarsPath))) {
+    await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
+  }
+  await writeFile(
+    path.join(bootDirectory, "Autounattend.xml"),
+    buildAutounattendXml(config),
+    "utf8",
+  );
+
+  const commands: ProcessCommand[] = [
+    ...((await pathExists(plan.disk.path))
+      ? []
+      : [
+          {
+            executable: qemuImgExecutable,
+            args: ["create", "-f", "qcow2", plan.disk.path, `${config.vm.diskGiB}G`],
+            timeoutMs,
+            maxOutputBytes: 1024 * 1024,
+          },
+        ]),
+    {
+      executable: xorrisoExecutable,
+      args: [
+        "-as",
+        "mkisofs",
+        "-o",
+        autounattendIsoPath,
+        "-V",
+        "AUTOUNATTEND",
+        path.join(bootDirectory, "Autounattend.xml"),
+      ],
+      timeoutMs,
+      maxOutputBytes: 1024 * 1024,
+    },
+    ...((await pathExists(swtpmSocketPath))
+      ? []
+      : [
+          {
+            executable: swtpmExecutable,
+            args: [
+              "socket",
+              "--tpm2",
+              "--tpmstate",
+              `dir=${swtpmStateDirectory}`,
+              "--ctrl",
+              `type=unixio,path=${swtpmSocketPath}`,
+              "--daemon",
+            ],
+            timeoutMs,
+            maxOutputBytes: 1024 * 1024,
+          },
+        ]),
+  ];
+
+  for (const command of commands) {
+    await runProvisioningProcess(options.processRunner, command);
+  }
+
+  return {
+    diskPath: plan.disk.path,
+    ovmfCodePath,
+    ovmfVarsPath,
+    swtpmSocketPath,
+    swtpmStateDirectory,
+    autounattendIsoPath,
+    commands,
+  };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function buildAutounattendXml(config: CrucibleConfig): string {
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<unattend xmlns="urn:schemas-microsoft-com:unattend">',
+    '  <settings pass="windowsPE">',
+    '    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    "      <UserData><AcceptEula>true</AcceptEula></UserData>",
+    "    </component>",
+    "  </settings>",
+    '  <settings pass="oobeSystem">',
+    '    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    `      <ComputerName>${escapeXml(config.vm.name.slice(0, 15))}</ComputerName>`,
+    "      <OOBE><HideEULAPage>true</HideEULAPage><ProtectYourPC>3</ProtectYourPC></OOBE>",
+    "    </component>",
+    "  </settings>",
+    "</unattend>",
+  ].join("\n");
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+async function assertReadableFile(label: string, filePath: string): Promise<void> {
+  try {
+    const info = await stat(filePath);
+    if (!info.isFile()) {
+      throw new Error(`${label} path is not a file`);
+    }
+  } catch (error) {
+    throw new CrucibleError("MEDIA_UNAVAILABLE", `${label} is not readable: ${filePath}`, error);
+  }
+}
+
+async function runProvisioningProcess(
+  processRunner: ProcessRunner,
+  command: ProcessCommand,
+): Promise<void> {
+  const result = await processRunner.run(command);
+  if (result.exitCode !== 0 || result.timedOut) {
+    throw new CrucibleError("PROCESS_FAILED", "Provisioning host command failed", {
+      command,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      stderr: result.stderr,
+    });
+  }
 }
 
 export function buildGuestHealthReport(options: {

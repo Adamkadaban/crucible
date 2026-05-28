@@ -118,6 +118,7 @@ export {
   PROVISIONING_SECRET_KINDS,
   PROVISIONING_STAGE_IDS,
   PROVISIONING_STAGE_TRANSITIONS,
+  prepareRealFirstBootProvisioning,
   runProvisioningCommand,
   writeWindowsAccountSecrets,
 } from "./provisioning.js";
@@ -146,6 +147,8 @@ export type {
   ProvisioningStageStatus,
   ProvisioningStageTransition,
   ProvisioningStateMachine,
+  RealFirstBootProvisioningOptions,
+  RealFirstBootProvisioningPlan,
   WindowsAccountSecret,
   WindowsAccountSecretOptions,
   WindowsAccountSecretSummary,
@@ -167,7 +170,14 @@ export type {
   QmpRequestId,
 } from "./qmp.js";
 export { buildQemuCommandPlan, renderQemuCreateDryRun, renderQemuStartDryRun } from "./qemu.js";
-export type { QemuCommandPlan, QemuDiskPlan, QemuPlanOptions, QemuSocketPlan } from "./qemu.js";
+export type {
+  QemuBootMediaOptions,
+  QemuBootMediaPlan,
+  QemuCommandPlan,
+  QemuDiskPlan,
+  QemuPlanOptions,
+  QemuSocketPlan,
+} from "./qemu.js";
 export { CLEAN_BASE_SNAPSHOT_NAME, normalizeSnapshotName, SnapshotManager } from "./snapshot.js";
 export type {
   SnapshotCreateResult,

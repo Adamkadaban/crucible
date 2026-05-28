@@ -12,6 +12,16 @@ export type QemuDiskPlan = {
   readonly bus: CrucibleConfig["virtio"]["diskBus"];
 };
 
+export type QemuBootMediaPlan = {
+  readonly windowsIsoPath?: string;
+  readonly virtioIsoPath?: string;
+  readonly driverBundlePath?: string;
+  readonly autounattendIsoPath?: string;
+  readonly ovmfCodePath?: string;
+  readonly ovmfVarsPath?: string;
+  readonly swtpmSocketPath?: string;
+};
+
 export type QemuSocketPlan = {
   readonly qmp: string;
   readonly qga: string;
@@ -26,6 +36,7 @@ export type QemuCommandPlan = {
   readonly disk: QemuDiskPlan;
   readonly sockets: QemuSocketPlan;
   readonly network: QemuNetworkPlan;
+  readonly bootMedia?: QemuBootMediaPlan;
   readonly extraArgs: readonly string[];
 };
 
@@ -33,6 +44,17 @@ export type QemuPlanOptions = {
   readonly config?: CrucibleConfig;
   readonly executable?: string;
   readonly diskPath?: string;
+  readonly bootMedia?: QemuBootMediaOptions;
+};
+
+export type QemuBootMediaOptions = {
+  readonly windowsIsoPath?: string;
+  readonly virtioIsoPath?: string;
+  readonly driverBundlePath?: string;
+  readonly autounattendIsoPath?: string;
+  readonly ovmfCodePath?: string;
+  readonly ovmfVarsPath?: string;
+  readonly swtpmSocketPath?: string;
 };
 
 export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommandPlan {
@@ -67,12 +89,16 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     String(config.vm.cpus),
     "-m",
     `${config.vm.memoryMiB}M`,
+    ...buildSataControllerArgs(options.bootMedia),
+    ...buildFirmwareArgs(options.bootMedia),
     ...buildDiskArgs(config, diskPath),
+    ...buildBootMediaArgs(options.bootMedia),
     ...network.args,
     ...buildGuestAgentArgs(config),
     "-qmp",
     `unix:${config.qmp.socketPath},server=on,wait=off`,
     ...buildOptionalVirtioDeviceArgs(config),
+    ...buildTpmArgs(options.bootMedia),
     ...config.vm.extraQemuArgs,
   ];
 
@@ -95,8 +121,85 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
       qga: config.qga.socketPath,
     },
     network,
+    bootMedia: options.bootMedia,
     extraArgs: config.vm.extraQemuArgs,
   };
+}
+
+function buildSataControllerArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
+  if (
+    bootMedia?.windowsIsoPath === undefined &&
+    bootMedia?.virtioIsoPath === undefined &&
+    bootMedia?.autounattendIsoPath === undefined
+  ) {
+    return [];
+  }
+
+  return ["-device", "ich9-ahci,id=crucible-sata0"];
+}
+
+function buildFirmwareArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
+  if (bootMedia?.ovmfCodePath === undefined || bootMedia.ovmfVarsPath === undefined) {
+    return [];
+  }
+
+  validateQemuSuboptionValue("bootMedia.ovmfCodePath", bootMedia.ovmfCodePath);
+  validateQemuSuboptionValue("bootMedia.ovmfVarsPath", bootMedia.ovmfVarsPath);
+  return [
+    "-drive",
+    `if=pflash,format=raw,readonly=on,file=${bootMedia.ovmfCodePath}`,
+    "-drive",
+    `if=pflash,format=raw,file=${bootMedia.ovmfVarsPath}`,
+  ];
+}
+
+function buildBootMediaArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
+  const args: string[] = [];
+
+  if (bootMedia?.windowsIsoPath !== undefined) {
+    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 2, true));
+  }
+
+  if (bootMedia?.virtioIsoPath !== undefined) {
+    args.push(...isoDriveArgs("crucible-virtio", bootMedia.virtioIsoPath, 3, false));
+  }
+
+  if (bootMedia?.autounattendIsoPath !== undefined) {
+    args.push(...isoDriveArgs("crucible-autounattend", bootMedia.autounattendIsoPath, 4, false));
+  }
+
+  return args;
+}
+
+function isoDriveArgs(
+  id: string,
+  filePath: string,
+  index: number,
+  boot: boolean,
+): readonly string[] {
+  validateQemuSuboptionValue(id, filePath);
+  return [
+    "-drive",
+    `file=${filePath},media=cdrom,if=none,readonly=on,id=${id}`,
+    "-device",
+    `ide-cd,drive=${id},bus=crucible-sata0.${index},bootindex=${boot ? 1 : index}`,
+  ];
+}
+
+function buildTpmArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
+  if (bootMedia?.swtpmSocketPath === undefined) {
+    return [];
+  }
+
+  validateQemuSuboptionValue("bootMedia.swtpmSocketPath", bootMedia.swtpmSocketPath);
+  return [
+    "-chardev",
+    `socket,id=crucible-tpm,path=${bootMedia.swtpmSocketPath}`,
+    "-tpmdev",
+    "emulator,id=crucible-tpmdev,chardev=crucible-tpm",
+    "-device",
+    "tpm-tis,tpmdev=crucible-tpmdev",
+  ];
 }
 
 function getDefaultDiskPath(config: CrucibleConfig): string {
