@@ -89,6 +89,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     String(config.vm.cpus),
     "-m",
     `${config.vm.memoryMiB}M`,
+    ...buildBootOrderArgs(options.bootMedia),
     ...buildSataControllerArgs(options.bootMedia),
     ...buildFirmwareArgs(options.bootMedia),
     ...buildDiskArgs(config, diskPath),
@@ -138,6 +139,14 @@ function buildSataControllerArgs(bootMedia?: QemuBootMediaOptions): readonly str
   return ["-device", "ich9-ahci,id=crucible-sata0"];
 }
 
+function buildBootOrderArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
+  if (bootMedia?.windowsIsoPath === undefined) {
+    return [];
+  }
+
+  return ["-boot", "once=d,order=c"];
+}
+
 function buildFirmwareArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
   if (bootMedia?.ovmfCodePath === undefined || bootMedia.ovmfVarsPath === undefined) {
     return [];
@@ -156,33 +165,28 @@ function buildFirmwareArgs(bootMedia?: QemuBootMediaOptions): readonly string[] 
 function buildBootMediaArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
   const args: string[] = [];
 
-  if (bootMedia?.autounattendIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-autounattend", bootMedia.autounattendIsoPath, 1, true));
+  if (bootMedia?.windowsIsoPath !== undefined) {
+    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 1));
   }
 
-  if (bootMedia?.windowsIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 2, false));
+  if (bootMedia?.autounattendIsoPath !== undefined) {
+    args.push(...isoDriveArgs("crucible-autounattend", bootMedia.autounattendIsoPath, 2));
   }
 
   if (bootMedia?.virtioIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-virtio", bootMedia.virtioIsoPath, 3, false));
+    args.push(...isoDriveArgs("crucible-virtio", bootMedia.virtioIsoPath, 3));
   }
 
   return args;
 }
 
-function isoDriveArgs(
-  id: string,
-  filePath: string,
-  index: number,
-  boot: boolean,
-): readonly string[] {
+function isoDriveArgs(id: string, filePath: string, index: number): readonly string[] {
   validateQemuSuboptionValue(id, filePath);
   return [
     "-drive",
     `file=${filePath},media=cdrom,if=none,readonly=on,id=${id}`,
     "-device",
-    `ide-cd,drive=${id},bus=crucible-sata0.${index},bootindex=${boot ? 1 : index}`,
+    `ide-cd,drive=${id},bus=crucible-sata0.${index}`,
   ];
 }
 
@@ -247,7 +251,7 @@ function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly strin
     "-drive",
     drive,
     "-device",
-    `scsi-hd,drive=${DEFAULT_DISK_ID},bus=scsi0.0`,
+    `scsi-hd,drive=${DEFAULT_DISK_ID},bus=scsi0.0,bootindex=1`,
   ];
 }
 
