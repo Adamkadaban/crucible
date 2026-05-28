@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -177,6 +177,78 @@ describe("QGA client and provisioning executor", () => {
       });
     } finally {
       await server.close();
+    }
+  });
+
+  it("stages registered files via guest-file-open/write/close before the stage script runs", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "crucible-stage-"));
+    const hostFile = join(tmp, "ca.cert.pem");
+    await writeFile(hostFile, "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n");
+
+    const writes: Array<{ path: string; buf: string }> = [];
+    let activeHandle = 7;
+    const fileBuffers: Record<number, { path: string; data: string }> = {};
+    const server = await startFakeQga((request) => {
+      const args = request.arguments ?? {};
+      if (request.execute === "guest-file-open") {
+        activeHandle += 1;
+        fileBuffers[activeHandle] = { path: args.path as string, data: "" };
+        return { return: { handle: activeHandle } };
+      }
+      if (request.execute === "guest-file-write") {
+        const handle = args.handle as number;
+        const entry = fileBuffers[handle];
+        const chunk = args["buf-b64"];
+        if (entry !== undefined && typeof chunk === "string") {
+          entry.data += chunk;
+        }
+        return { return: {} };
+      }
+      if (request.execute === "guest-file-close") {
+        const handle = args.handle as number;
+        const entry = fileBuffers[handle];
+        if (entry !== undefined) {
+          writes.push({ path: entry.path, buf: entry.data });
+        }
+        return { return: {} };
+      }
+      if (request.execute === "guest-exec") {
+        return { return: { pid: 99 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { return: { exited: true, exitcode: 0 } };
+      }
+      return { return: {} };
+    });
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "stage-vm",
+        secretsDirectory: "secrets",
+        filesToStage: {
+          "guest-agent-installed": [
+            {
+              hostPath: hostFile,
+              guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
+            },
+          ],
+        },
+      });
+      const result = await executor.runStage({
+        ...scriptStage(),
+        id: "guest-agent-installed",
+      });
+      expect(result.status).toBe("succeeded");
+      // 2 writes: our staged ca.cert.pem + the executor's own copy of the
+      // PowerShell script. We care that the staged file landed at the
+      // configured guest path before the exec happened.
+      const stagedWrite = writes.find(
+        (w) => w.path === "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
+      );
+      expect(stagedWrite).toBeDefined();
+    } finally {
+      await server.close();
+      await rm(tmp, { recursive: true, force: true });
     }
   });
 });

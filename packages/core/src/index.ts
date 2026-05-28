@@ -111,6 +111,8 @@ export { QgaClient, QgaProvisioningExecutor } from "./qga.js";
 export { GuestAgentClient } from "./guest-agent-client.js";
 export { runHostCheck } from "./host-check.js";
 export type { HostCheckProbeResult } from "./host-check.js";
+export { ensureMtlsBundle } from "./mtls.js";
+export type { MtlsBundlePaths, EnsureMtlsBundleOptions } from "./mtls.js";
 export { DebuggerSessionManager } from "./debugger.js";
 export type {
   DebuggerSession,
