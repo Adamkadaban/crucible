@@ -357,6 +357,7 @@ describe("provisioning contracts", () => {
             qcow2Commands: [],
           }),
       },
+      skipBootKeyNudge: true,
       now: () => new Date("2026-05-27T00:00:00.000Z"),
     });
 
@@ -385,6 +386,7 @@ describe("provisioning contracts", () => {
           throw new Error("snapshot should not run after blocked stage");
         },
       },
+      skipBootKeyNudge: true,
     });
 
     expect(result.status).toBe("blocked");

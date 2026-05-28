@@ -13,6 +13,7 @@ import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
 import { buildNetworkPlan } from "./network.js";
 import type { ProcessCommand, ProcessRunner } from "./process.js";
 import { buildQemuCommandPlan } from "./qemu.js";
+import { QmpClient } from "./qmp.js";
 import { type SnapshotCreateResult } from "./snapshot.js";
 
 export const PROVISIONING_STAGE_IDS = [
@@ -187,6 +188,7 @@ export type ProvisioningCommandRunnerOptions = {
   };
   readonly now?: () => Date;
   readonly snapshotName?: string;
+  readonly skipBootKeyNudge?: boolean;
 };
 
 export type RealFirstBootProvisioningOptions = {
@@ -309,6 +311,9 @@ export async function runProvisioningCommand(
   const steps: ProvisioningCommandStep[] = [];
 
   await options.lifecycleManager.start();
+  if (options.skipBootKeyNudge !== true) {
+    await sendFirstBootIsoKey(config);
+  }
 
   for (const stage of plan.stages) {
     const step = await executor.runStage(stage);
@@ -350,6 +355,35 @@ export async function runProvisioningCommand(
       now: options.now,
     }),
   };
+}
+
+async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
+  const deadline = Date.now() + 15_000;
+
+  while (Date.now() < deadline) {
+    const qmp = new QmpClient({
+      socketPath: config.qmp.socketPath,
+      timeoutMs: config.qmp.timeoutMs,
+    });
+    try {
+      await qmp.connect();
+      for (let index = 0; index < 20; index += 1) {
+        await qmp.execute("human-monitor-command", {
+          "command-line": "sendkey ret",
+        });
+        await sleep(250);
+      }
+      return;
+    } catch {
+      await sleep(500);
+    } finally {
+      qmp.close();
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function prepareRealFirstBootProvisioning(

@@ -191,6 +191,7 @@ describe("crucible CLI bootstrap", () => {
         },
       },
       snapshotManager: fakeSnapshotManager(config),
+      skipBootKeyNudge: true,
     });
 
     expect(result.exitCode).toBe(0);
