@@ -18,7 +18,7 @@ qemu-system-x86_64 \
   -device virtio-scsi-pci,id=scsi0 \
   -drive file="$DISK",if=none,format=qcow2,id=disk0,cache=none,discard=unmap \
   -device scsi-hd,drive=disk0,bus=scsi0.0,bootindex=1 \
-  -netdev user,id=net0,restrict=on \
+  -netdev user,id=net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443 \
   -device virtio-net-pci,netdev=net0 \
   -device virtio-serial-pci \
   -chardev socket,path="${ART}/qga.sock",server=on,wait=off,id=qga0 \

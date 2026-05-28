@@ -42,7 +42,26 @@ function Ensure-LocalAccount {
         New-LocalUser -Name $Username -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
     }
     else {
-        Set-LocalUser -Name $Username -Password $securePassword -PasswordNeverExpires:$true -UserMayChangePassword:$false
+        # Set-LocalUser may emit a non-terminating "Cannot remove the last
+        # Administrator" warning on the admin account (it's a protection
+        # against accidentally locking the box out, not an actual change).
+        # Surface real errors but swallow that specific protection so the
+        # password rotation still lands on every other field.
+        try {
+            Set-LocalUser -Name $Username -Password $securePassword `
+                -PasswordNeverExpires:$true -UserMayChangePassword:$false `
+                -ErrorAction Stop
+        }
+        catch [Microsoft.PowerShell.Commands.SetLocalUserCommand] {
+            if ($_.Exception.Message -notmatch "last Administrator") {
+                throw
+            }
+        }
+        catch {
+            if ($_.Exception.Message -notmatch "last Administrator") {
+                throw
+            }
+        }
         Enable-LocalUser -Name $Username
     }
 
