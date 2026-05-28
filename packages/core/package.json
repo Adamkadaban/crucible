@@ -15,5 +15,8 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "undici": "^7.16.0"
   }
 }
