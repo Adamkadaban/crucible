@@ -196,6 +196,27 @@ describe("provisioning contracts", () => {
     expect(snapshot?.script?.arguments).toContain("baseline");
   });
 
+  it("references PowerShell scripts that exist on disk", async () => {
+    const plan = buildProvisioningPlan({
+      vmName: "script-presence",
+      secretsDirectory: "secrets",
+      controlPort: 8443,
+      guestAddress: "192.0.2.2",
+      snapshotName: "clean-base",
+    });
+    const referenced = new Set<string>();
+    for (const stage of plan.stages) {
+      if (stage.script?.scriptPath !== undefined) {
+        referenced.add(stage.script.scriptPath);
+      }
+    }
+    expect(referenced.size).toBeGreaterThan(0);
+    for (const scriptPath of referenced) {
+      const contents = await readFile(scriptPath, "utf8");
+      expect(contents.length, `expected script body for ${scriptPath}`).toBeGreaterThan(0);
+    }
+  });
+
   it("passes optional analysis profile settings to policy provisioning", () => {
     const plan = buildProvisioningPlan({
       vmName: "analysis one",
