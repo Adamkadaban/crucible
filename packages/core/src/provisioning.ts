@@ -1,5 +1,15 @@
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, lstat, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -358,7 +368,8 @@ export async function runProvisioningCommand(
 }
 
 async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 90_000;
+  let bootIssued = false;
 
   while (Date.now() < deadline) {
     const qmp = new QmpClient({
@@ -367,19 +378,23 @@ async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
     });
     try {
       await qmp.connect();
-      for (const command of [
-        "fs0:\\efi\\boot\\bootx64.efi",
-        "fs1:\\efi\\boot\\bootx64.efi",
-        "fs2:\\efi\\boot\\bootx64.efi",
-      ]) {
-        await sendUefiShellCommand(qmp, command);
-        await sleep(1000);
+      if (!bootIssued) {
+        // Wait briefly for the UEFI Shell prompt to settle before typing.
+        await sleep(8000);
+        // Select the Windows installer's EFI System Partition. With ich9-ahci
+        // port 0 hosting the Windows ISO, OVMF enumerates it as FS0.
+        await sendUefiShellCommand(qmp, "fs0:");
+        await sleep(500);
+        await sendUefiShellCommand(qmp, "efi\\boot\\bootx64.efi");
+        bootIssued = true;
       }
+      // bootmgr prints "Press any key to boot from CD or DVD" with a short
+      // timeout; spam Enter until the installer takes over.
       for (let index = 0; index < 30; index += 1) {
         await qmp.execute("human-monitor-command", {
-          "command-line": "sendkey ret",
+          "command-line": "sendkey ret 20",
         });
-        await sleep(250);
+        await sleep(300);
       }
       return;
     } catch {
@@ -452,16 +467,22 @@ export async function prepareRealFirstBootProvisioning(
   await assertReadableFile("OVMF code", ovmfCodePath);
   await assertReadableFile("OVMF vars template", ovmfVarsTemplatePath);
   await mkdir(path.dirname(plan.disk.path), { recursive: true });
-  await mkdir(bootDirectory, { recursive: true });
+  await mkdir(bootDirectory, { recursive: true, mode: 0o700 });
+  await chmod(bootDirectory, 0o700);
   await mkdir(swtpmStateDirectory, { recursive: true });
   if (!(await pathExists(ovmfVarsPath))) {
     await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
   }
-  await writeFile(
-    path.join(bootDirectory, "Autounattend.xml"),
-    buildAutounattendXml(config),
-    "utf8",
-  );
+  const accounts = await ensureWindowsAccountSecrets({
+    vmName: config.vm.name,
+    secretsDirectory: config.artifacts.secretsDirectory,
+  });
+  const autounattendXmlPath = path.join(bootDirectory, "Autounattend.xml");
+  await writeFile(autounattendXmlPath, buildAutounattendXml(config, accounts), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(autounattendXmlPath, 0o600);
   await writeFile(path.join(bootDirectory, "startup.nsh"), buildStartupNsh(), "utf8");
   await writeFile(
     path.join(bootDirectory, "crucible-install.cmd"),
@@ -516,6 +537,18 @@ export async function prepareRealFirstBootProvisioning(
     await runProvisioningProcess(options.processRunner, command);
   }
 
+  // The autounattend ISO embeds plaintext local-account passwords. Pair the
+  // permissions on the rendered XML and bundled ISO so they stay
+  // user-readable only, matching artifacts/secrets/<vm>/. Tests stub the
+  // process runner and never produce the ISO, so a missing file is tolerated.
+  try {
+    await chmod(autounattendIsoPath, 0o600);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
   return {
     diskPath: plan.disk.path,
     ovmfCodePath,
@@ -555,7 +588,65 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
 
-function buildAutounattendXml(config: CrucibleConfig): string {
+type EmbeddedAccount = {
+  readonly username: string;
+  readonly password: string;
+  readonly principal: WindowsExecutionPrincipal;
+};
+
+async function ensureWindowsAccountSecrets(options: {
+  readonly vmName: string;
+  readonly secretsDirectory: string;
+}): Promise<readonly EmbeddedAccount[]> {
+  const contract = buildProvisioningSecretStorageContract(options.vmName, options.secretsDirectory);
+  const standardRef = requiredSecretRef(contract, "windows-standard-password");
+  const adminRef = requiredSecretRef(contract, "windows-admin-password");
+  if (!(await pathExists(standardRef.path)) || !(await pathExists(adminRef.path))) {
+    await writeWindowsAccountSecrets({
+      vmName: options.vmName,
+      secretsDirectory: options.secretsDirectory,
+    });
+  }
+  const [standardRaw, adminRaw] = await Promise.all([
+    readFile(standardRef.path, "utf8"),
+    readFile(adminRef.path, "utf8"),
+  ]);
+  const standard = JSON.parse(standardRaw) as WindowsAccountSecret;
+  const admin = JSON.parse(adminRaw) as WindowsAccountSecret;
+  return [
+    { username: admin.username, password: admin.password, principal: "admin" },
+    { username: standard.username, password: standard.password, principal: "standard" },
+  ];
+}
+
+function buildAutounattendXml(
+  config: CrucibleConfig,
+  accounts: readonly EmbeddedAccount[],
+): string {
+  const adminAccount = accounts.find((a) => a.principal === "admin");
+  if (adminAccount === undefined) {
+    throw new CrucibleError(
+      "STATE_INVALID",
+      "Autounattend generation requires an admin account secret",
+      {},
+    );
+  }
+  const computerName = config.vm.name.slice(0, 15);
+  const localAccountLines: string[] = [];
+  for (const account of accounts) {
+    const group = account.principal === "admin" ? "Administrators" : "Users";
+    localAccountLines.push(
+      '          <LocalAccount wcm:action="add">',
+      `            <Name>${escapeXml(account.username)}</Name>`,
+      `            <Group>${group}</Group>`,
+      `            <DisplayName>${escapeXml(account.username)}</DisplayName>`,
+      "            <Password>",
+      `              <Value>${escapeXml(account.password)}</Value>`,
+      "              <PlainText>true</PlainText>",
+      "            </Password>",
+      "          </LocalAccount>",
+    );
+  }
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">',
@@ -589,10 +680,53 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     "      <UserData><AcceptEula>true</AcceptEula></UserData>",
     "    </component>",
     "  </settings>",
-    '  <settings pass="oobeSystem">',
+    '  <settings pass="specialize">',
     '    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
-    `      <ComputerName>${escapeXml(config.vm.name.slice(0, 15))}</ComputerName>`,
-    "      <OOBE><HideEULAPage>true</HideEULAPage><ProtectYourPC>3</ProtectYourPC></OOBE>",
+    `      <ComputerName>${escapeXml(computerName)}</ComputerName>`,
+    "      <TimeZone>UTC</TimeZone>",
+    "    </component>",
+    '    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    "      <RunSynchronous>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>1</Order>",
+    '          <Path>reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>',
+    "        </RunSynchronousCommand>",
+    "      </RunSynchronous>",
+    "    </component>",
+    "  </settings>",
+    '  <settings pass="oobeSystem">',
+    '    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    "      <InputLocale>en-US</InputLocale>",
+    "      <SystemLocale>en-US</SystemLocale>",
+    "      <UILanguage>en-US</UILanguage>",
+    "      <UserLocale>en-US</UserLocale>",
+    "    </component>",
+    '    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
+    "      <OOBE>",
+    "        <HideEULAPage>true</HideEULAPage>",
+    "        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>",
+    "        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>",
+    "        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>",
+    "        <NetworkLocation>Work</NetworkLocation>",
+    "        <ProtectYourPC>3</ProtectYourPC>",
+    "        <SkipMachineOOBE>true</SkipMachineOOBE>",
+    "        <SkipUserOOBE>true</SkipUserOOBE>",
+    "      </OOBE>",
+    "      <UserAccounts>",
+    "        <LocalAccounts>",
+    ...localAccountLines,
+    "        </LocalAccounts>",
+    "      </UserAccounts>",
+    "      <AutoLogon>",
+    `        <Username>${escapeXml(adminAccount.username)}</Username>`,
+    "        <Enabled>true</Enabled>",
+    "        <LogonCount>3</LogonCount>",
+    "        <Password>",
+    `          <Value>${escapeXml(adminAccount.password)}</Value>`,
+    "          <PlainText>true</PlainText>",
+    "        </Password>",
+    "      </AutoLogon>",
+    "      <TimeZone>UTC</TimeZone>",
     "    </component>",
     "  </settings>",
     "</unattend>",

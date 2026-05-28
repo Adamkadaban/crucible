@@ -166,15 +166,15 @@ function buildBootMediaArgs(bootMedia?: QemuBootMediaOptions): readonly string[]
   const args: string[] = [];
 
   if (bootMedia?.windowsIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 1));
+    args.push(...isoDriveArgs("crucible-windows-install", bootMedia.windowsIsoPath, 0));
   }
 
   if (bootMedia?.autounattendIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-autounattend", bootMedia.autounattendIsoPath, 2));
+    args.push(...isoDriveArgs("crucible-autounattend", bootMedia.autounattendIsoPath, 1));
   }
 
   if (bootMedia?.virtioIsoPath !== undefined) {
-    args.push(...isoDriveArgs("crucible-virtio", bootMedia.virtioIsoPath, 3));
+    args.push(...isoDriveArgs("crucible-virtio", bootMedia.virtioIsoPath, 2));
   }
 
   return args;
