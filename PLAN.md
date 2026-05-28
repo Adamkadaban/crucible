@@ -238,10 +238,10 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 
 **Deliverable checklist:**
 
-- [ ] Add provisioning scripts for QEMU guest agent readiness and bootstrap checks.
+- [x] Add provisioning scripts for QEMU guest agent readiness and bootstrap checks.
 - [x] Add WinDbg installation script using `winget install Microsoft.WinDbg` when available and SDK
       Debugging Tools fallback when not.
-- [ ] Add OpenSSH enablement only as a bootstrap fallback, not as the steady-state control plane.
+- [x] Add OpenSSH enablement only as a bootstrap fallback, not as the steady-state control plane.
 - [x] Add Windows Defender disablement, code-integrity policy changes, and test-signing checks for
       isolated analysis VMs with clear audit output.
 - [x] Add optional malware-reversing environment profile flags for hostname, username, locale,
@@ -251,7 +251,7 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
       credentials stored only in host project secrets.
 - [x] Add guest agent installation script that registers the service, firewall rule limited to
       host-only control network, and mTLS certificate material.
-- [ ] Add readiness checks for CDB/WinDbg, symbol path configuration, PowerShell version, service
+- [x] Add readiness checks for CDB/WinDbg, symbol path configuration, PowerShell version, service
       status, admin/non-admin accounts, Defender state, code-integrity state, and test-signing
       state.
 - [x] Add snapshot creation and restore commands using qcow2/QMP semantics with metadata in the

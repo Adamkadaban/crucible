@@ -200,12 +200,22 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
       id: stage.id,
       title: stage.title,
       status:
-        result.exitCode === 0 && !result.timedOut ? ("succeeded" as const) : ("blocked" as const),
+        // exit 75 (EX_TEMPFAIL) is reserved for opt-in skip paths (e.g. WinDbg
+        // installer unreachable on an isolated network). Treat it as success
+        // so downstream stages still run; the underlying stdout JSON carries
+        // the skip reason for the operator.
+        result.exitCode === 0 || result.exitCode === 75
+          ? !result.timedOut
+            ? ("succeeded" as const)
+            : ("blocked" as const)
+          : ("blocked" as const),
       detail: result.timedOut
         ? "QGA guest-exec timed out"
         : result.exitCode === 0
           ? stage.script.scriptPath
-          : result.stderr || `guest-exec exit code ${result.exitCode ?? "unknown"}`,
+          : result.exitCode === 75
+            ? `${stage.script.scriptPath} (skipped)`
+            : result.stderr || `guest-exec exit code ${result.exitCode ?? "unknown"}`,
     };
   }
 

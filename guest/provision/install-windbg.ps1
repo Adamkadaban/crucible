@@ -2,7 +2,8 @@ param(
     [string]$SymbolCache = "C:\Symbols",
     [string]$SdkInstallerUrl = "https://go.microsoft.com/fwlink/?linkid=2271337",
     [string]$SdkInstallerPath = "$env:TEMP\winsdksetup.exe",
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$AllowSkipOnNetworkFailure
 )
 
 $ErrorActionPreference = "Stop"
@@ -180,12 +181,31 @@ function Test-DebuggerToolingPresent {
 }
 
 if (-not (Test-DebuggerToolingPresent)) {
-    if (-not (Install-WithWinget)) {
-        Install-WithSdkDebuggingTools
-    }
-    if (-not $DryRun -and -not (Test-DebuggerToolingPresent)) {
-        Write-Status "debugger tooling is still incomplete after winget; installing SDK Debugging Tools"
-        Install-WithSdkDebuggingTools
+    try {
+        if (-not (Install-WithWinget)) {
+            Install-WithSdkDebuggingTools
+        }
+        if (-not $DryRun -and -not (Test-DebuggerToolingPresent)) {
+            Write-Status "debugger tooling is still incomplete after winget; installing SDK Debugging Tools"
+            Install-WithSdkDebuggingTools
+        }
+    } catch {
+        if ($AllowSkipOnNetworkFailure) {
+            Write-Status "WinDbg installer unreachable ($($_.Exception.Message)); skipping per -AllowSkipOnNetworkFailure"
+            [ordered]@{
+                cdbPath = $null
+                windbgPath = $null
+                symbolPath = $null
+                altSymbolPath = $null
+                skipped = $true
+                reason = $_.Exception.Message
+            } | ConvertTo-Json -Compress
+            # Exit 75 (EX_TEMPFAIL) signals an opt-in skip rather than a hard
+            # failure. The QGA executor maps this to a succeeded-but-skipped
+            # stage result so downstream stages (e.g. test-health) can branch.
+            exit 75
+        }
+        throw
     }
 } else {
     Write-Status "WinDbg and CDB are already installed"
