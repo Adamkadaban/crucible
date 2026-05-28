@@ -54,12 +54,13 @@ describe("QGA client and provisioning executor", () => {
         "guest-exec",
         "guest-exec-status",
       ]);
-      // First guest-exec is the mkdir for C:\ProgramData\Crucible\stages.
-      expect(guestExecArgs[0]?.[0]).toBe("/c");
-      const mkdirInvocation = (guestExecArgs[0] ?? [])[1];
-      expect(typeof mkdirInvocation).toBe("string");
-      expect(mkdirInvocation as string).toContain("mkdir");
-      expect(mkdirInvocation as string).toContain("C:\\ProgramData\\Crucible\\stages");
+      // First guest-exec is the New-Item -Force for C:\ProgramData\Crucible\stages.
+      expect(guestExecArgs[0]?.[0]).toBe("-NoProfile");
+      const psCommand = (guestExecArgs[0] ?? []).find(
+        (entry): entry is string => typeof entry === "string" && entry.includes("New-Item"),
+      );
+      expect(psCommand).toBeDefined();
+      expect(psCommand as string).toContain("C:\\ProgramData\\Crucible\\stages");
       // Second guest-exec is the real powershell invocation.
       expect(guestExecArgs[1]).toContain("-File");
       const fileArg = (guestExecArgs[1] ?? []).find(
@@ -263,17 +264,16 @@ describe("QGA client and provisioning executor", () => {
       );
       expect(stagedWrite).toBeDefined();
 
-      // Regression for #119: cmd.exe mkdir must run for each guestPath's
-      // parent BEFORE the corresponding guest-file-open, otherwise
-      // qemu-ga errors with `guest-file-open` against a missing dir on
-      // first provision.
+      // Regression for #119: New-Item must run for each guestPath's parent
+      // BEFORE the corresponding guest-file-open, otherwise qemu-ga errors
+      // with `guest-file-open` against a missing dir on first provision.
       function indexOfFirst(matcher: (event: { kind: string; detail: string }) => boolean): number {
         return events.findIndex(matcher);
       }
       const certsMkdir = indexOfFirst(
         (e) =>
           e.kind === "exec" &&
-          e.detail.includes("mkdir") &&
+          e.detail.includes("New-Item") &&
           e.detail.includes("C:\\ProgramData\\Crucible\\Agent\\certs"),
       );
       const certsOpen = indexOfFirst(
@@ -288,7 +288,7 @@ describe("QGA client and provisioning executor", () => {
       const stagesMkdir = indexOfFirst(
         (e) =>
           e.kind === "exec" &&
-          e.detail.includes("mkdir") &&
+          e.detail.includes("New-Item") &&
           e.detail.includes("C:\\ProgramData\\Crucible\\stages"),
       );
       const scriptOpen = indexOfFirst(

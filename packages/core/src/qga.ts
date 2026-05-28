@@ -257,20 +257,23 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     if (guestPath === "") {
       return;
     }
-    // qemu-ga's guest-file-open does not create missing parent directories,
-    // so every staged file / script needs its parent provisioned first.
-    // cmd.exe mkdir creates intermediate dirs by default; the existence
-    // guard keeps repeated calls idempotent.
-    const command = `if not exist "${guestPath}" mkdir "${guestPath}"`;
-    const result = await this.#client.exec("cmd.exe", ["/c", command], {
-      timeoutMs: this.#timeoutMs,
-    });
+    // qemu-ga's guest-file-open does not create missing parent directories.
+    // PowerShell's New-Item -Force is idempotent (no error if the path
+    // already exists) and creates intermediate directories. Prefer it over
+    // cmd.exe `mkdir` because qemu-ga's spawn of cmd.exe has been flaky
+    // during the install/postinstall window (#119, #122 follow-up).
+    const psCommand = `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force -Path '${guestPath.replaceAll("'", "''")}' | Out-Null`;
+    const result = await this.#client.exec(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", psCommand],
+      { timeoutMs: this.#timeoutMs },
+    );
     if (result.timedOut || (result.exitCode !== 0 && result.exitCode !== undefined)) {
-      throw new CrucibleError("PROCESS_FAILED", `Failed to mkdir guest directory ${guestPath}`, {
-        exitCode: result.exitCode,
-        stderr: result.stderr,
-        stdout: result.stdout,
-      });
+      throw new CrucibleError(
+        "PROCESS_FAILED",
+        `Failed to mkdir guest directory ${guestPath}: exit=${result.exitCode ?? "none"} timedOut=${result.timedOut} stderr=${(result.stderr ?? "").slice(0, 500)}`,
+        { exitCode: result.exitCode, stderr: result.stderr, stdout: result.stdout },
+      );
     }
   }
 
