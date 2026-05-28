@@ -2,8 +2,9 @@
 // scenario results, and SHA-256s into a single tar.gz so the operator
 // can hand off a single file for downstream review.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { dirname } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -30,10 +31,9 @@ export type ArtifactExportResult = {
 };
 
 /**
- * Compute SHA-256 for every artifact and write a JSON manifest next to
- * the output archive describing each entry. The archive itself is
- * produced by shelling out to `tar` so we get streaming, deterministic
- * compression without taking on another dependency.
+ * Stream-hash every artifact, write a JSON manifest describing each
+ * entry, and shell out to `tar -czf` for the archive. Streaming avoids
+ * loading multi-GiB dumps / pcaps into memory.
  */
 export async function exportArtifactBundle(
   options: ArtifactExportOptions,
@@ -41,22 +41,22 @@ export async function exportArtifactBundle(
   if (options.artifacts.length === 0) {
     throw new Error("at least one artifact is required for export");
   }
+  const manifestPath = options.manifestPath ?? `${options.outputPath}.manifest.json`;
   await mkdir(dirname(options.outputPath), { recursive: true });
+  await mkdir(dirname(manifestPath), { recursive: true });
 
   const entries = await Promise.all(
     options.artifacts.map(async (artifact) => {
-      const data = await readFile(artifact.path);
-      const sha256 = createHash("sha256").update(data).digest("hex");
+      const { sha256, sizeBytes } = await streamHash(artifact.path);
       return {
         path: artifact.path,
         label: artifact.label,
         sha256,
-        sizeBytes: data.byteLength,
+        sizeBytes,
       };
     }),
   );
 
-  const manifestPath = options.manifestPath ?? `${options.outputPath}.manifest.json`;
   await writeFile(
     manifestPath,
     JSON.stringify(
@@ -77,6 +77,20 @@ export async function exportArtifactBundle(
   );
 
   return { outputPath: options.outputPath, manifestPath, entries };
+}
+
+async function streamHash(path: string): Promise<{ sha256: string; sizeBytes: number }> {
+  const stats = await stat(path);
+  const hash = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(path);
+    stream.on("data", (chunk: Buffer | string) => {
+      hash.update(chunk);
+    });
+    stream.once("error", reject);
+    stream.once("end", () => resolve());
+  });
+  return { sha256: hash.digest("hex"), sizeBytes: stats.size };
 }
 
 function runTar(outputPath: string, files: readonly string[]): Promise<void> {

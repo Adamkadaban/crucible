@@ -2,6 +2,8 @@
 // operator can't accidentally share a host directory, request a download
 // from an arbitrary location, or open egress on the analysis network.
 
+import { isAbsolute as nodeIsAbsolute, normalize, resolve } from "node:path";
+
 export type CruciblePolicy = {
   /** Absolute directories that the host is allowed to share with the guest. */
   readonly allowedHostShareDirectories: readonly string[];
@@ -22,7 +24,7 @@ export type PolicyDecision =
   | { readonly allowed: false; readonly reason: string };
 
 export function decideHostShare(policy: CruciblePolicy, hostPath: string): PolicyDecision {
-  if (!isAbsolute(hostPath)) {
+  if (!nodeIsAbsolute(hostPath)) {
     return { allowed: false, reason: "host share path must be absolute" };
   }
   if (policy.allowedHostShareDirectories.length === 0) {
@@ -31,11 +33,14 @@ export function decideHostShare(policy: CruciblePolicy, hostPath: string): Polic
       reason: "policy denies host directory sharing; populate allowedHostShareDirectories first",
     };
   }
+  // Resolve both candidate and allowlist entries so '..' segments cannot
+  // escape an allowed prefix (e.g. /var/lib/crucible/../secrets).
+  const candidate = resolve(hostPath);
   for (const allowed of policy.allowedHostShareDirectories) {
-    if (
-      hostPath === allowed ||
-      hostPath.startsWith(allowed.endsWith("/") ? allowed : `${allowed}/`)
-    ) {
+    if (!nodeIsAbsolute(allowed)) continue;
+    const allowedResolved = resolve(allowed);
+    const allowedWithSep = allowedResolved.endsWith("/") ? allowedResolved : `${allowedResolved}/`;
+    if (candidate === allowedResolved || candidate.startsWith(allowedWithSep)) {
       return { allowed: true };
     }
   }
@@ -43,31 +48,29 @@ export function decideHostShare(policy: CruciblePolicy, hostPath: string): Polic
 }
 
 export function decideDownloadTarget(policy: CruciblePolicy, hostPath: string): PolicyDecision {
-  if (isAbsolute(hostPath)) {
+  if (nodeIsAbsolute(hostPath)) {
     return {
       allowed: false,
       reason: "download target must be relative; use one of the configured download directories",
     };
   }
-  const first = hostPath.split(/[\\/]/u).filter(Boolean)[0];
-  if (first === undefined) {
-    return { allowed: false, reason: "download target is empty" };
+  // Normalize first so '..' segments resolve before we evaluate the prefix.
+  const normalized = normalize(hostPath).replaceAll("\\", "/");
+  if (normalized === "" || normalized === "." || normalized.startsWith("..")) {
+    return { allowed: false, reason: "download target escapes its directory" };
   }
-  const allowed = policy.allowedDownloadDirectories.some(
-    (dir) =>
-      hostPath === dir || hostPath.startsWith(dir.endsWith("/") ? dir : `${dir}/`) || dir === first,
-  );
-  return allowed
-    ? { allowed: true }
-    : { allowed: false, reason: "download target denied by policy" };
+  for (const dir of policy.allowedDownloadDirectories) {
+    const dirNormalized = normalize(dir).replaceAll("\\", "/").replace(/\/$/u, "");
+    if (dirNormalized === "" || dirNormalized === ".") continue;
+    if (normalized === dirNormalized || normalized.startsWith(`${dirNormalized}/`)) {
+      return { allowed: true };
+    }
+  }
+  return { allowed: false, reason: "download target denied by policy" };
 }
 
 export function decideInternetEgress(policy: CruciblePolicy): PolicyDecision {
   return policy.allowInternetEgress
     ? { allowed: true }
     : { allowed: false, reason: "internet egress is denied by policy" };
-}
-
-function isAbsolute(target: string): boolean {
-  return target.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(target);
 }

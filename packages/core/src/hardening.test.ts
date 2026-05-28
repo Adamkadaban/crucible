@@ -35,6 +35,14 @@ describe("policy", () => {
     expect(decideDownloadTarget(DEFAULT_POLICY, "../escape").allowed).toBe(false);
   });
 
+  it("rejects ../ traversal in host-share and download targets", () => {
+    const policy = { ...DEFAULT_POLICY, allowedHostShareDirectories: ["/var/lib/crucible"] };
+    expect(decideHostShare(policy, "/var/lib/crucible/../secrets").allowed).toBe(false);
+    expect(
+      decideDownloadTarget(DEFAULT_POLICY, "artifacts/downloads/../secrets/file").allowed,
+    ).toBe(false);
+  });
+
   it("blocks internet egress by default", () => {
     expect(decideInternetEgress(DEFAULT_POLICY).allowed).toBe(false);
     expect(decideInternetEgress({ ...DEFAULT_POLICY, allowInternetEgress: true }).allowed).toBe(
@@ -150,6 +158,25 @@ describe("audit aggregation", () => {
   it("tolerates missing files and malformed lines", async () => {
     const events = await aggregateAuditEvents({ hostLogs: ["/does/not/exist"] });
     expect(events).toEqual([]);
+  });
+
+  it("orders timestamps chronologically, not lexicographically", async () => {
+    const root = await mkdtemp(join(tmpdir(), "crucible-audit-order-"));
+    try {
+      const path = join(root, "host.jsonl");
+      await writeFile(
+        path,
+        [
+          '{"time":"2026-01-01T00:00:02Z","action":"second"}',
+          '{"time":"2026-01-01T00:00:00.500+00:00","action":"first"}',
+          '{"time":"2026-01-01T00:00:10Z","action":"third"}',
+        ].join("\n"),
+      );
+      const events = await aggregateAuditEvents({ hostLogs: [path] });
+      expect(events.map((event) => event.action)).toEqual(["first", "second", "third"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

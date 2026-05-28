@@ -22,9 +22,9 @@ export type AggregateAuditOptions = {
 };
 
 /**
- * Read JSONL audit logs from disk and return them sorted by timestamp.
- * Missing files are tolerated so a partial host run still produces a
- * useful trace.
+ * Read JSONL audit logs from disk and return them sorted by parsed
+ * timestamp. Missing files are tolerated so a partial host run still
+ * produces a useful trace; any other I/O error is surfaced.
  */
 export async function aggregateAuditEvents(
   options: AggregateAuditOptions,
@@ -36,7 +36,14 @@ export async function aggregateAuditEvents(
   for (const path of options.hostLogs ?? []) {
     events.push(...(await readJsonLines(path, "host")));
   }
-  events.sort((a, b) => a.time.localeCompare(b.time));
+  events.sort((a, b) => {
+    const aValue = Date.parse(a.time);
+    const bValue = Date.parse(b.time);
+    if (Number.isNaN(aValue) && Number.isNaN(bValue)) return a.time.localeCompare(b.time);
+    if (Number.isNaN(aValue)) return 1;
+    if (Number.isNaN(bValue)) return -1;
+    return aValue - bValue;
+  });
   return events;
 }
 
@@ -44,8 +51,9 @@ async function readJsonLines(path: string, source: AuditEvent["source"]): Promis
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
-  } catch {
-    return [];
+  } catch (error) {
+    if (isMissingFileError(error)) return [];
+    throw error;
   }
   const out: AuditEvent[] = [];
   for (const line of raw.split(/\r?\n/)) {
@@ -59,4 +67,10 @@ async function readJsonLines(path: string, source: AuditEvent["source"]): Promis
     }
   }
   return out;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }

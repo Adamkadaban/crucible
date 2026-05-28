@@ -5,7 +5,6 @@
 // scenario must restore *before* and *after* execution unless explicitly
 // opted out.
 
-import type { CruciblePolicy } from "./policy.js";
 import { decideDownloadTarget, decideHostShare, decideInternetEgress } from "./policy.js";
 
 export type ScenarioStepKind = "snapshot-restore-pre" | "scenario-step" | "snapshot-restore-post";
@@ -43,7 +42,6 @@ export type ScenarioResult = {
 export type ScenarioRunnerOptions = {
   readonly restoreSnapshot: (snapshotName: string) => Promise<void>;
   readonly now?: () => number;
-  readonly policy?: CruciblePolicy;
 };
 
 /**
