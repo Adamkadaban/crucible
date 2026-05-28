@@ -46,29 +46,35 @@ describe("QGA client and provisioning executor", () => {
 
       expect(result.status).toBe("succeeded");
       expect(requests).toEqual([
+        "guest-exec",
+        "guest-exec-status",
         "guest-file-open",
         "guest-file-write",
         "guest-file-close",
         "guest-exec",
         "guest-exec-status",
       ]);
-      expect(guestExecArgs[0]).toContain("-File");
-      const fileArg = (guestExecArgs[0] ?? []).find(
+      // First guest-exec is the mkdir for C:\ProgramData\Crucible\stages.
+      expect(guestExecArgs[0]?.[0]).toBe("/c");
+      const mkdirInvocation = (guestExecArgs[0] ?? [])[1];
+      expect(typeof mkdirInvocation).toBe("string");
+      expect(mkdirInvocation as string).toContain("mkdir");
+      expect(mkdirInvocation as string).toContain("C:\\ProgramData\\Crucible\\stages");
+      // Second guest-exec is the real powershell invocation.
+      expect(guestExecArgs[1]).toContain("-File");
+      const fileArg = (guestExecArgs[1] ?? []).find(
         (entry): entry is string =>
           typeof entry === "string" && entry.endsWith("install-windbg.ps1"),
       );
       expect(fileArg).toBeDefined();
       expect(fileArg).toContain("C:\\ProgramData\\Crucible\\stages\\");
-      expect(guestExecArgs[0]).not.toContain("guest/provision/install-windbg.ps1");
-      // -NoProfile / -ExecutionPolicy / Bypass / -File should appear exactly
-      // once each so we never pass the host-side prefix down as script args.
+      expect(guestExecArgs[1]).not.toContain("guest/provision/install-windbg.ps1");
       for (const flag of ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]) {
-        const occurrences = (guestExecArgs[0] ?? []).filter((arg) => arg === flag).length;
+        const occurrences = (guestExecArgs[1] ?? []).filter((arg) => arg === flag).length;
         expect(occurrences, `flag ${flag} should appear once`).toBe(1);
       }
-      // Trailing script arguments must be preserved.
-      expect(guestExecArgs[0]).toContain("-SymbolCache");
-      expect(guestExecArgs[0]).toContain("C:\\Symbols");
+      expect(guestExecArgs[1]).toContain("-SymbolCache");
+      expect(guestExecArgs[1]).toContain("C:\\Symbols");
     } finally {
       await server.close();
     }
@@ -186,13 +192,18 @@ describe("QGA client and provisioning executor", () => {
     await writeFile(hostFile, "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n");
 
     const writes: Array<{ path: string; buf: string }> = [];
+    const events: Array<{ kind: string; detail: string }> = [];
     let activeHandle = 7;
+    let execPid = 100;
     const fileBuffers: Record<number, { path: string; data: string }> = {};
+    const execCommands: Record<number, string> = {};
     const server = await startFakeQga((request) => {
       const args = request.arguments ?? {};
       if (request.execute === "guest-file-open") {
+        const p = args.path as string;
+        events.push({ kind: "file-open", detail: p });
         activeHandle += 1;
-        fileBuffers[activeHandle] = { path: args.path as string, data: "" };
+        fileBuffers[activeHandle] = { path: p, data: "" };
         return { return: { handle: activeHandle } };
       }
       if (request.execute === "guest-file-write") {
@@ -213,7 +224,12 @@ describe("QGA client and provisioning executor", () => {
         return { return: {} };
       }
       if (request.execute === "guest-exec") {
-        return { return: { pid: 99 } };
+        execPid += 1;
+        const argv = (args.arg as readonly string[] | undefined) ?? [];
+        const cmd = `${args.path as string} ${argv.join(" ")}`;
+        execCommands[execPid] = cmd;
+        events.push({ kind: "exec", detail: cmd });
+        return { return: { pid: execPid } };
       }
       if (request.execute === "guest-exec-status") {
         return { return: { exited: true, exitcode: 0 } };
@@ -246,6 +262,41 @@ describe("QGA client and provisioning executor", () => {
         (w) => w.path === "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
       );
       expect(stagedWrite).toBeDefined();
+
+      // Regression for #119: cmd.exe mkdir must run for each guestPath's
+      // parent BEFORE the corresponding guest-file-open, otherwise
+      // qemu-ga errors with `guest-file-open` against a missing dir on
+      // first provision.
+      function indexOfFirst(matcher: (event: { kind: string; detail: string }) => boolean): number {
+        return events.findIndex(matcher);
+      }
+      const certsMkdir = indexOfFirst(
+        (e) =>
+          e.kind === "exec" &&
+          e.detail.includes("mkdir") &&
+          e.detail.includes("C:\\ProgramData\\Crucible\\Agent\\certs"),
+      );
+      const certsOpen = indexOfFirst(
+        (e) =>
+          e.kind === "file-open" &&
+          e.detail === "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
+      );
+      expect(certsMkdir).toBeGreaterThanOrEqual(0);
+      expect(certsOpen).toBeGreaterThanOrEqual(0);
+      expect(certsMkdir).toBeLessThan(certsOpen);
+
+      const stagesMkdir = indexOfFirst(
+        (e) =>
+          e.kind === "exec" &&
+          e.detail.includes("mkdir") &&
+          e.detail.includes("C:\\ProgramData\\Crucible\\stages"),
+      );
+      const scriptOpen = indexOfFirst(
+        (e) => e.kind === "file-open" && e.detail.startsWith("C:\\ProgramData\\Crucible\\stages\\"),
+      );
+      expect(stagesMkdir).toBeGreaterThanOrEqual(0);
+      expect(scriptOpen).toBeGreaterThanOrEqual(0);
+      expect(stagesMkdir).toBeLessThan(scriptOpen);
     } finally {
       await server.close();
       await rm(tmp, { recursive: true, force: true });
