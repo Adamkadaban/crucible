@@ -58,6 +58,7 @@ type CliRuntime = {
   readonly provisioningExecutor?: ProvisioningExecutor;
   readonly snapshotManager?: CliSnapshotManager;
   readonly processRunner?: ProcessRunner;
+  readonly skipBootKeyNudge?: boolean;
 };
 
 type CliLifecycleManager = Pick<
@@ -327,6 +328,7 @@ async function runProvisionCommand(
         secretsDirectory: config.artifacts.secretsDirectory,
       }),
     snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
+    skipBootKeyNudge: runtime.skipBootKeyNudge,
   });
 
   return {

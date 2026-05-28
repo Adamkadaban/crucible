@@ -188,6 +188,7 @@ export type ProvisioningCommandRunnerOptions = {
   };
   readonly now?: () => Date;
   readonly snapshotName?: string;
+  readonly skipBootKeyNudge?: boolean;
 };
 
 export type RealFirstBootProvisioningOptions = {
@@ -310,7 +311,7 @@ export async function runProvisioningCommand(
   const steps: ProvisioningCommandStep[] = [];
 
   await options.lifecycleManager.start();
-  if (options.executor === undefined) {
+  if (options.skipBootKeyNudge !== true) {
     await sendFirstBootIsoKey(config);
   }
 
@@ -357,19 +358,27 @@ export async function runProvisioningCommand(
 }
 
 async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
-  const qmp = new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
-  try {
-    await qmp.connect();
-    for (let index = 0; index < 12; index += 1) {
-      await qmp.execute("human-monitor-command", {
-        "command-line": "sendkey ret",
-      });
-      await sleep(250);
+  const deadline = Date.now() + 15_000;
+
+  while (Date.now() < deadline) {
+    const qmp = new QmpClient({
+      socketPath: config.qmp.socketPath,
+      timeoutMs: config.qmp.timeoutMs,
+    });
+    try {
+      await qmp.connect();
+      for (let index = 0; index < 20; index += 1) {
+        await qmp.execute("human-monitor-command", {
+          "command-line": "sendkey ret",
+        });
+        await sleep(250);
+      }
+      return;
+    } catch {
+      await sleep(500);
+    } finally {
+      qmp.close();
     }
-  } catch {
-    return undefined;
-  } finally {
-    qmp.close();
   }
 }
 
