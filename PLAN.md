@@ -400,17 +400,19 @@ with a benign test binary.
 
 **Deliverable checklist:**
 
-- [ ] Add scenario runner that enforces restore-before-execution and restore-after-execution for
+- [x] Add scenario runner that enforces restore-before-execution and restore-after-execution for
       malware mode.
-- [ ] Add policy checks that block host path sharing, broad download paths, and Internet egress
+- [x] Add policy checks that block host path sharing, broad download paths, and Internet egress
       unless explicitly overridden.
-- [ ] Add audit log aggregation for host commands, guest commands, file hashes, snapshots, and
+- [x] Add audit log aggregation for host commands, guest commands, file hashes, snapshots, and
       network mode changes.
-- [ ] Add optional packet capture hook for capture mode with pcap artifact metadata.
-- [ ] Add credential rotation command for guest service certificates and local Windows accounts.
-- [ ] Add artifact export command for logs, transcripts, dumps, pcaps, and hashes.
-- [ ] Add docs for malware-analysis safe operating procedure.
-- [ ] Add tests for policy denial paths, audit log integrity, and scenario ordering.
+- [ ] Add optional packet capture hook for capture mode with pcap artifact metadata. _(Deferred:
+      Phase 2 added the network modes, but the pcap-capture hook + artifact wiring lands once
+      capture-mode is actually exercised by a real provisioning run.)_
+- [x] Add credential rotation command for guest service certificates and local Windows accounts.
+- [x] Add artifact export command for logs, transcripts, dumps, pcaps, and hashes.
+- [x] Add docs for malware-analysis safe operating procedure.
+- [x] Add tests for policy denial paths, audit log integrity, and scenario ordering.
 
 **Parallel-work split table:**
 
