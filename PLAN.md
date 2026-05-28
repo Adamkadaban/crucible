@@ -331,9 +331,8 @@ successfully.
 - [x] Add error mapping that distinguishes validation errors, host prerequisite errors, VM offline
       errors, guest service errors, timeout errors, and security policy denials.
 - [x] Add MCP smoke-test harness that drives stdio without a human client.
-- [ ] Add real-VM MCP integration tests gated by environment variables that verify every public MCP
-      tool against a locally provisioned VM. _(deferred until the Phase 3 exit test passes against a
-      real provisioned VM.)_
+- [x] Add real-VM MCP integration tests gated by environment variables that verify every public MCP
+      tool against a locally provisioned VM.
 - [x] Add README MCP configuration snippets for opencode/Claude-style clients.
 - [x] Add docs for safe malware-analysis workflow and snapshot restore before/after sample
       execution.
@@ -373,9 +372,7 @@ cleanly, and the matching MCP debugger tool returns structured output.
       since the session-spec discriminator is the only meaningful difference.)_
 - [x] Add output truncation, transcript capture, and artifact metadata for debugger sessions.
 - [x] Add tests with fake debugger executable and parser fixtures.
-- [ ] Add real-VM smoke test against a benign Windows process. _(Deferred until the Phase 3 exit
-      test passes; once a provisioned VM is reachable the manual recipe in `docs/debugger.md`
-      becomes the automated coverage path.)_
+- [x] Add real-VM smoke test against a benign Windows process.
 - [x] Document PoC debugging workflow and known limitations for kernel debugging and TTD as
       extension points.
 
@@ -406,9 +403,7 @@ with a benign test binary.
       unless explicitly overridden.
 - [x] Add audit log aggregation for host commands, guest commands, file hashes, snapshots, and
       network mode changes.
-- [ ] Add optional packet capture hook for capture mode with pcap artifact metadata. _(Deferred:
-      Phase 2 added the network modes, but the pcap-capture hook + artifact wiring lands once
-      capture-mode is actually exercised by a real provisioning run.)_
+- [x] Add optional packet capture hook for capture mode with pcap artifact metadata.
 - [x] Add credential rotation core API for guest service certificates and local Windows accounts.
       _(CLI subcommand wiring lands when CLI surface for these helpers is added in a follow-up.)_
 - [x] Add artifact export core API for logs, transcripts, dumps, pcaps, and hashes. _(CLI subcommand

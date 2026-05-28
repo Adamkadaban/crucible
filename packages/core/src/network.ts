@@ -16,6 +16,12 @@ export const networkConfigSchema = z
   .object({
     mode: networkModeSchema.default("isolated"),
     controlPort: z.number().int().min(1).max(65535).default(8443),
+    /**
+     * Optional pcap output path for capture mode. The host writes every
+     * frame on the tap netdev here via QEMU `-object filter-dump`.
+     * Ignored unless mode === "capture".
+     */
+    pcapPath: z.string().optional(),
   })
   .strict();
 
@@ -90,6 +96,7 @@ export type QemuNetworkPlan = {
   readonly controlAddress: ControlAddressAllocation;
   readonly portForwards: readonly QemuNetworkPortForward[];
   readonly owner: NetworkOwnerTag;
+  readonly pcapPath?: string;
 };
 
 export type NetworkTeardownPlan = {
@@ -171,6 +178,7 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
     netdevId,
     networkDevice: options.networkDevice ?? "virtio-net-pci",
     owner,
+    pcapPath: options.config.pcapPath,
   });
   const firewall = buildFirewallPlan(mode, owner, options.firewallBackend ?? "nftables");
 
@@ -355,23 +363,39 @@ function buildQemuNetworkPlan(options: {
   readonly netdevId: string;
   readonly networkDevice: "virtio-net-pci";
   readonly owner: NetworkOwnerTag;
+  /**
+   * Optional pcap output path. Only honoured for capture mode — emits an
+   * `-object filter-dump,...` so QEMU writes every frame seen on the tap
+   * netdev to disk for later analysis. Ignored for `isolated` / `nat`.
+   */
+  readonly pcapPath?: string;
 }): QemuNetworkPlan {
   const portForwards = buildQemuPortForwards(options.controlAddress);
+
+  const args: string[] = [
+    "-netdev",
+    qemuNetdevValue(options.mode, options.netdevId, options.controlAddress, portForwards),
+    "-device",
+    `${options.networkDevice},netdev=${options.netdevId}`,
+  ];
+  if (options.mode === "capture" && options.pcapPath !== undefined && options.pcapPath !== "") {
+    validateQemuSuboptionValue("pcapPath", options.pcapPath);
+    args.push(
+      "-object",
+      `filter-dump,id=${options.netdevId}-pcap,netdev=${options.netdevId},file=${options.pcapPath}`,
+    );
+  }
 
   return {
     mode: options.mode,
     backend: options.mode === "capture" ? "tap" : "user",
     netdevId: options.netdevId,
     deviceModel: options.networkDevice,
-    args: [
-      "-netdev",
-      qemuNetdevValue(options.mode, options.netdevId, options.controlAddress, portForwards),
-      "-device",
-      `${options.networkDevice},netdev=${options.netdevId}`,
-    ],
+    args,
     controlAddress: options.controlAddress,
     portForwards,
     owner: options.owner,
+    pcapPath: options.mode === "capture" ? options.pcapPath : undefined,
   };
 }
 

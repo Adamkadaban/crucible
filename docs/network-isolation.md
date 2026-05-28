@@ -116,6 +116,21 @@ resources outside the plan's teardown contract, and broad interface names such a
 - Treat host firewall apply mode as privileged host mutation once it lands. It must remain bounded
   to project-owned rules and interfaces.
 
-## Open Implementation Work
+## Capture mode pcap
 
-- Add packet capture artifact metadata for `capture` mode.
+Capture mode uses a tap netdev so the host can sniff the guest's traffic. Set `network.pcapPath` in
+`crucible.config.json` to have QEMU write every frame to disk via `-object filter-dump`:
+
+```json
+{
+  "network": {
+    "mode": "capture",
+    "pcapPath": "artifacts/captures/run-1.pcap"
+  }
+}
+```
+
+The path is honoured only when `mode === "capture"`; supplying it in isolated or NAT mode is a
+documented no-op (`plan.qemu.pcapPath` is `undefined` and no `-object filter-dump` is emitted). The
+pcap file lives where the operator configured it — Crucible does not delete it on teardown, since
+post-run analysis usually outlives the VM.
