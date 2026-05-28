@@ -205,6 +205,7 @@ export type RealFirstBootProvisioningPlan = {
   readonly ovmfCodePath: string;
   readonly ovmfVarsPath: string;
   readonly swtpmSocketPath: string;
+  readonly swtpmPidPath: string;
   readonly swtpmStateDirectory: string;
   readonly autounattendIsoPath: string;
   readonly commands: readonly ProcessCommand[];
@@ -367,6 +368,7 @@ export async function prepareRealFirstBootProvisioning(
   const ovmfVarsPath = path.join(bootDirectory, `${config.vm.name}.OVMF_VARS.fd`);
   const swtpmStateDirectory = path.join(config.artifacts.directory, "swtpm", config.vm.name);
   const swtpmSocketPath = path.join(swtpmStateDirectory, "swtpm.sock");
+  const swtpmPidPath = path.join(swtpmStateDirectory, "swtpm.pid");
   const autounattendIsoPath = path.join(bootDirectory, "autounattend.iso");
   const windowsIsoPath = config.media.windowsIso?.path;
   const virtioIsoPath = config.media.virtioIso?.path;
@@ -435,6 +437,11 @@ export async function prepareRealFirstBootProvisioning(
               `dir=${swtpmStateDirectory}`,
               "--ctrl",
               `type=unixio,path=${swtpmSocketPath}`,
+              "--pid",
+              `file=${swtpmPidPath}`,
+              "--terminate",
+              "--flags",
+              "not-need-init,startup-clear",
               "--daemon",
             ],
             timeoutMs,
@@ -452,6 +459,7 @@ export async function prepareRealFirstBootProvisioning(
     ovmfCodePath,
     ovmfVarsPath,
     swtpmSocketPath,
+    swtpmPidPath,
     swtpmStateDirectory,
     autounattendIsoPath,
     commands,
