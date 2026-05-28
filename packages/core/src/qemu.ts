@@ -107,7 +107,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     "-D",
     path.join(config.artifacts.logsDirectory, `${config.vm.name}.qemu.log`),
     "-d",
-    "guest_errors,unimp,cpu_reset",
+    "guest_errors,cpu_reset",
     "-debugcon",
     `file:${path.join(config.artifacts.logsDirectory, `${config.vm.name}.ovmf.log`)}`,
     "-global",

@@ -708,7 +708,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args[dFlag + 1]).toMatch(/\.qemu\.log$/);
     const traceFlag = plan.args.indexOf("-d");
     expect(traceFlag).toBeGreaterThanOrEqual(0);
-    expect(plan.args[traceFlag + 1]).toBe("guest_errors,unimp,cpu_reset");
+    expect(plan.args[traceFlag + 1]).toBe("guest_errors,cpu_reset");
     // -debugcon captures OVMF's debug output (boot path, NVRAM ops, etc.)
     const debugconIdx = plan.args.indexOf("-debugcon");
     expect(debugconIdx).toBeGreaterThanOrEqual(0);
