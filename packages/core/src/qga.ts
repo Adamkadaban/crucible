@@ -1,7 +1,13 @@
 import { createConnection, type Socket } from "node:net";
+import { readFile } from "node:fs/promises";
 
 import { CrucibleError } from "./errors.js";
-import type { ProvisioningExecutor, ProvisioningStageContract } from "./provisioning.js";
+import {
+  buildProvisioningSecretStorageContract,
+  type ProvisioningExecutor,
+  type ProvisioningSecretKind,
+  type ProvisioningStageContract,
+} from "./provisioning.js";
 
 const DEFAULT_QGA_TIMEOUT_MS = 10_000;
 const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60 * 1000;
@@ -37,11 +43,12 @@ export class QgaClient {
   async exec(
     executablePath: string,
     args: readonly string[],
-    options: { readonly timeoutMs?: number } = {},
+    options: { readonly timeoutMs?: number; readonly env?: Readonly<Record<string, string>> } = {},
   ): Promise<QgaGuestExecResult> {
     const started = await this.#request<{ readonly pid: number }>("guest-exec", {
       path: executablePath,
       arg: args,
+      env: Object.entries(options.env ?? {}).map(([name, value]) => `${name}=${value}`),
       "capture-output": true,
     });
     const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS);
@@ -86,15 +93,21 @@ export class QgaClient {
 
 export type QgaProvisioningExecutorOptions = {
   readonly client: QgaClient;
+  readonly vmName: string;
+  readonly secretsDirectory: string;
   readonly timeoutMs?: number;
 };
 
 export class QgaProvisioningExecutor implements ProvisioningExecutor {
   readonly #client: QgaClient;
+  readonly #vmName: string;
+  readonly #secretsDirectory: string;
   readonly #timeoutMs: number;
 
   constructor(options: QgaProvisioningExecutorOptions) {
     this.#client = options.client;
+    this.#vmName = options.vmName;
+    this.#secretsDirectory = options.secretsDirectory;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
   }
 
@@ -110,12 +123,14 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
 
     if (stage.id === "qga-ready") {
       await this.#client.ping();
-      return {
-        id: stage.id,
-        title: stage.title,
-        status: "succeeded" as const,
-        detail: "QGA guest-ping succeeded",
-      };
+      if (stage.script === undefined) {
+        return {
+          id: stage.id,
+          title: stage.title,
+          status: "succeeded" as const,
+          detail: "QGA guest-ping succeeded",
+        };
+      }
     }
 
     if (stage.script === undefined) {
@@ -127,8 +142,11 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
       };
     }
 
-    const result = await this.#client.exec(stage.script.executable, stage.script.arguments, {
+    const env = await this.#buildStageEnv(stage.script.environmentSecretRefs);
+    const args = await buildPowerShellStageArgs(stage.script.scriptPath);
+    const result = await this.#client.exec(stage.script.executable, args, {
       timeoutMs: Math.max(stage.script.timeoutMs, this.#timeoutMs),
+      env,
     });
 
     return {
@@ -143,6 +161,45 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
           : result.stderr || `guest-exec exit code ${result.exitCode ?? "unknown"}`,
     };
   }
+
+  async #buildStageEnv(
+    secretRefs: readonly ProvisioningSecretKind[],
+  ): Promise<Readonly<Record<string, string>>> {
+    const contract = buildProvisioningSecretStorageContract(this.#vmName, this.#secretsDirectory);
+    const env: Record<string, string> = {};
+
+    for (const secretRef of secretRefs) {
+      const ref = contract.secretRefs.find((entry) => entry.kind === secretRef);
+      if (ref === undefined) {
+        throw new CrucibleError("STATE_INVALID", `Missing secret reference: ${secretRef}`);
+      }
+      const parsed = JSON.parse(await readFile(ref.path, "utf8")) as {
+        readonly password?: unknown;
+      };
+      if (typeof parsed.password !== "string") {
+        throw new CrucibleError("STATE_INVALID", `Secret file lacks password: ${secretRef}`);
+      }
+      if (secretRef === "windows-standard-password") {
+        env.CRUCIBLE_STANDARD_PASSWORD = parsed.password;
+      }
+      if (secretRef === "windows-admin-password") {
+        env.CRUCIBLE_ADMIN_PASSWORD = parsed.password;
+      }
+    }
+
+    return env;
+  }
+}
+
+async function buildPowerShellStageArgs(scriptPath: string): Promise<readonly string[]> {
+  const script = await readFile(scriptPath, "utf8");
+  return [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    Buffer.from(script, "utf16le").toString("base64"),
+  ];
 }
 
 function connectSocket(socketPath: string, timeoutMs: number): Promise<Socket> {

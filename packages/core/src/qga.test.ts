@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,9 +23,11 @@ describe("QGA client and provisioning executor", () => {
 
   it("runs provisioning scripts through guest-exec", async () => {
     const requests: string[] = [];
+    const guestExecArgs: unknown[][] = [];
     const server = await startFakeQga((request) => {
       requests.push(request.execute);
       if (request.execute === "guest-exec") {
+        guestExecArgs.push((request.arguments?.arg as unknown[]) ?? []);
         return { return: { pid: 42 } };
       }
       if (request.execute === "guest-exec-status") {
@@ -36,12 +38,59 @@ describe("QGA client and provisioning executor", () => {
     try {
       const executor = new QgaProvisioningExecutor({
         client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
         timeoutMs: 1000,
       });
       const result = await executor.runStage(scriptStage());
 
       expect(result.status).toBe("succeeded");
       expect(requests).toEqual(["guest-exec", "guest-exec-status"]);
+      expect(guestExecArgs[0]).toContain("-EncodedCommand");
+      expect(guestExecArgs[0]).not.toContain("guest/provision/install-windbg.ps1");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("injects account secrets as guest-exec environment variables", async () => {
+    const root = await mkdtemp(join(tmpdir(), "crucible-qga-secrets-"));
+    await mkdir(join(root, "analysis-one", "windows"), { recursive: true });
+    await writeFile(
+      join(root, "analysis-one", "windows", "standard-user.json"),
+      JSON.stringify({ username: "CrucibleUser", password: "standard-secret" }),
+      "utf8",
+    );
+    await writeFile(
+      join(root, "analysis-one", "windows", "admin-user.json"),
+      JSON.stringify({ username: "CrucibleAdmin", password: "admin-secret" }),
+      "utf8",
+    );
+    let env: unknown;
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-exec") {
+        env = request.arguments?.env;
+        return { return: { pid: 42 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { return: { exited: true, exitcode: 0 } };
+      }
+      return { return: {} };
+    });
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: root,
+        timeoutMs: 1000,
+      });
+
+      await executor.runStage(accountStage());
+
+      expect(env).toEqual([
+        "CRUCIBLE_STANDARD_PASSWORD=standard-secret",
+        "CRUCIBLE_ADMIN_PASSWORD=admin-secret",
+      ]);
     } finally {
       await server.close();
     }
@@ -118,5 +167,17 @@ function scriptStage(): ProvisioningStageContract {
     },
     producesSecrets: [],
     producesSnapshot: false,
+  };
+}
+
+function accountStage(): ProvisioningStageContract {
+  return {
+    ...scriptStage(),
+    id: "local-accounts-created",
+    script: {
+      ...scriptStage().script!,
+      scriptPath: "guest/provision/create-local-accounts.ps1",
+      environmentSecretRefs: ["windows-standard-password", "windows-admin-password"],
+    },
   };
 }

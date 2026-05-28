@@ -323,6 +323,8 @@ async function runProvisionCommand(
           socketPath: config.qga.socketPath,
           timeoutMs: config.qga.timeoutMs,
         }),
+        vmName: config.vm.name,
+        secretsDirectory: config.artifacts.secretsDirectory,
       }),
     snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
   });
