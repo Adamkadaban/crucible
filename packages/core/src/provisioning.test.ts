@@ -573,6 +573,63 @@ describe("provisioning contracts", () => {
     await expect(stat(swtpmPid)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("treats malformed swtpm PID files as stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "crucible-malformed-swtpm-"));
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const artifactDirectory = join(root, "artifacts");
+    const swtpmDirectory = join(artifactDirectory, "swtpm", "first-boot");
+    const swtpmSocket = join(swtpmDirectory, "swtpm.sock");
+    const swtpmPid = join(swtpmDirectory, "swtpm.pid");
+    await mkdir(swtpmDirectory, { recursive: true });
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      writeFile(swtpmSocket, "stale socket", "utf8"),
+      writeFile(swtpmPid, `${process.pid}abc\n`, "utf8"),
+    ]);
+    const commands: ProcessCommand[] = [];
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "first-boot", diskGiB: 64 },
+        media: {
+          windowsIso: { path: windowsIso },
+          virtioIso: { path: virtioIso },
+        },
+        artifacts: {
+          directory: artifactDirectory,
+          manifestPath: join(artifactDirectory, "manifest.json"),
+          logsDirectory: join(artifactDirectory, "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          commands.push(command);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    expect(commands.map((command) => command.executable)).toContain("swtpm");
+  });
+
   it("builds guest health reports from provisioning readiness contracts", () => {
     const config = parseCrucibleConfig({ vm: { name: "analysis-one" } });
     const report = buildGuestHealthReport({

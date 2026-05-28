@@ -473,14 +473,27 @@ export async function prepareRealFirstBootProvisioning(
 async function isSwtpmAlive(pidPath: string): Promise<boolean> {
   try {
     const pidText = await readFile(pidPath, "utf8");
-    const pid = Number.parseInt(pidText.trim(), 10);
+    const trimmed = pidText.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      return false;
+    }
+    const pid = Number.parseInt(trimmed, 10);
     if (!Number.isInteger(pid) || pid <= 0) {
       return false;
     }
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ESRCH")) {
+      return false;
+    }
+    if (isNodeError(error) && error.code === "EPERM") {
+      return true;
+    }
+    if (error instanceof SyntaxError) {
+      return false;
+    }
+    throw error;
   }
 }
 
