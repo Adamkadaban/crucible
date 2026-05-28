@@ -560,7 +560,7 @@ describe("core bootstrap exports", () => {
     expect(plan.executable).toBe("qemu-system-x86_64");
     expect(plan.args).toContain("type=q35,accel=kvm");
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
-    expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0");
+    expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0,bootindex=1");
     expect(plan.args).toContain(
       "user,id=crucible-win11-net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
@@ -627,7 +627,7 @@ describe("core bootstrap exports", () => {
     const plan = buildQemuCommandPlan({ config, diskPath: "/var/lib/crucible/custom.qcow2" });
 
     expect(plan.args).toContain("custom lab");
-    expect(plan.args).toContain("virtio-blk-pci,drive=crucible-disk0");
+    expect(plan.args).toContain("virtio-blk-pci,drive=crucible-disk0,bootindex=1");
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
@@ -657,13 +657,10 @@ describe("core bootstrap exports", () => {
     });
 
     expect(plan.args).toContain("ich9-ahci,id=crucible-sata0");
-    expect(plan.args).toContain(
-      "ide-cd,drive=crucible-autounattend,bus=crucible-sata0.1,bootindex=1",
-    );
-    expect(plan.args).toContain(
-      "ide-cd,drive=crucible-windows-install,bus=crucible-sata0.2,bootindex=2",
-    );
-    expect(plan.args).toContain("ide-cd,drive=crucible-virtio,bus=crucible-sata0.3,bootindex=3");
+    expect(plan.args).toContain("once=d,order=c");
+    expect(plan.args).toContain("ide-cd,drive=crucible-windows-install,bus=crucible-sata0.1");
+    expect(plan.args).toContain("ide-cd,drive=crucible-autounattend,bus=crucible-sata0.2");
+    expect(plan.args).toContain("ide-cd,drive=crucible-virtio,bus=crucible-sata0.3");
     expect(plan.args).not.toContain("tpm-tis,tpmdev=crucible-tpmdev");
   });
 
