@@ -1,5 +1,6 @@
 import { createConnection, type Socket } from "node:net";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import { CrucibleError } from "./errors.js";
 import {
@@ -47,12 +48,20 @@ export class QgaClient {
     args: readonly string[],
     options: { readonly timeoutMs?: number; readonly env?: Readonly<Record<string, string>> } = {},
   ): Promise<QgaGuestExecResult> {
-    const started = await this.#request<{ readonly pid: number }>("guest-exec", {
+    const execArgs: Record<string, unknown> = {
       path: executablePath,
       arg: args,
-      env: Object.entries(options.env ?? {}).map(([name, value]) => `${name}=${value}`),
       "capture-output": true,
-    });
+    };
+    // qemu-ga's guest-exec replaces the entire environment when env is set.
+    // Passing an empty list strips PATH/SystemRoot and breaks loaders like
+    // powershell.exe. Only forward env when the caller actually has vars to
+    // inject so the inherited Windows environment is preserved otherwise.
+    const envEntries = Object.entries(options.env ?? {});
+    if (envEntries.length > 0) {
+      execArgs.env = envEntries.map(([name, value]) => `${name}=${value}`);
+    }
+    const started = await this.#request<{ readonly pid: number }>("guest-exec", execArgs);
     const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS);
 
     while (Date.now() < deadline) {
@@ -76,6 +85,28 @@ export class QgaClient {
     }
 
     return { stdout: "", stderr: "", timedOut: true };
+  }
+
+  async writeFile(guestPath: string, contents: Buffer | string): Promise<void> {
+    const data = typeof contents === "string" ? Buffer.from(contents, "utf8") : contents;
+    const opened = await this.#request<{ readonly handle: number }>("guest-file-open", {
+      path: guestPath,
+      mode: "wb",
+    });
+    try {
+      // qemu-ga caps a single guest-file-write at 48 KiB by default, so chunk
+      // larger payloads to keep big PowerShell scripts within the limit.
+      const chunkSize = 32 * 1024;
+      for (let offset = 0; offset < data.length; offset += chunkSize) {
+        const chunk = data.subarray(offset, offset + chunkSize);
+        await this.#request("guest-file-write", {
+          handle: opened.handle,
+          "buf-b64": chunk.toString("base64"),
+        });
+      }
+    } finally {
+      await this.#request("guest-file-close", { handle: opened.handle });
+    }
   }
 
   async #request<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -159,7 +190,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     }
 
     const env = await this.#buildStageEnv(stage.script.environmentSecretRefs);
-    const args = await buildPowerShellStageArgs(stage.script.scriptPath);
+    const args = await this.#stageScriptArgs(stage);
     const result = await this.#client.exec(stage.script.executable, args, {
       timeoutMs: Math.max(stage.script.timeoutMs, this.#timeoutMs),
       env,
@@ -197,6 +228,25 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     );
   }
 
+  async #stageScriptArgs(stage: ProvisioningStageContract): Promise<readonly string[]> {
+    if (stage.script === undefined) {
+      throw new CrucibleError("STATE_INVALID", `stage ${stage.id} has no script`);
+    }
+    const scriptBody = await readFile(stage.script.scriptPath, "utf8");
+    const guestPath = `C:\\ProgramData\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
+    await this.#client.writeFile(guestPath, scriptBody);
+    // The contract stores the full PowerShell invocation
+    // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
+    // so the host-side runner can spawn powershell.exe directly. The
+    // QGA-backed runner re-builds that prefix around the guest-staged
+    // copy, so peel off everything up to and including
+    // `-File <host-path>` and keep only the trailing user arguments.
+    const contractArgs = stage.script.arguments ?? [];
+    const fileFlagIndex = contractArgs.indexOf("-File");
+    const trailingArgs = fileFlagIndex >= 0 ? contractArgs.slice(fileFlagIndex + 2) : contractArgs;
+    return ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", guestPath, ...trailingArgs];
+  }
+
   async #buildStageEnv(
     secretRefs: readonly ProvisioningSecretKind[],
   ): Promise<Readonly<Record<string, string>>> {
@@ -224,17 +274,6 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
 
     return env;
   }
-}
-
-async function buildPowerShellStageArgs(scriptPath: string): Promise<readonly string[]> {
-  const script = await readFile(scriptPath, "utf8");
-  return [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-EncodedCommand",
-    Buffer.from(script, "utf16le").toString("base64"),
-  ];
 }
 
 function connectSocket(socketPath: string, timeoutMs: number): Promise<Socket> {
