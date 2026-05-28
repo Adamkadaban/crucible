@@ -39,3 +39,9 @@ symbols/
 guest/agent/bin/
 guest/agent/crucible-agent
 guest/agent/*.exe
+
+# Local provisioning config (per-host paths)
+crucible.config.json
+
+# Research notes (not part of source)
+/research/

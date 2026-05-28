@@ -658,9 +658,9 @@ describe("core bootstrap exports", () => {
 
     expect(plan.args).toContain("ich9-ahci,id=crucible-sata0");
     expect(plan.args).toContain("once=d,order=c");
-    expect(plan.args).toContain("ide-cd,drive=crucible-windows-install,bus=crucible-sata0.1");
-    expect(plan.args).toContain("ide-cd,drive=crucible-autounattend,bus=crucible-sata0.2");
-    expect(plan.args).toContain("ide-cd,drive=crucible-virtio,bus=crucible-sata0.3");
+    expect(plan.args).toContain("ide-cd,drive=crucible-windows-install,bus=crucible-sata0.0");
+    expect(plan.args).toContain("ide-cd,drive=crucible-autounattend,bus=crucible-sata0.1");
+    expect(plan.args).toContain("ide-cd,drive=crucible-virtio,bus=crucible-sata0.2");
     expect(plan.args).not.toContain("tpm-tis,tpmdev=crucible-tpmdev");
   });
 
