@@ -645,6 +645,31 @@ describe("core bootstrap exports", () => {
     expect(plan.dryRunCommand).toContain("'events=/tmp/qemu events'");
   });
 
+  it("defaults to -display none so QEMU never pops a GTK window", () => {
+    const plan = buildQemuCommandPlan();
+    expect(plan.args).toContain("-display");
+    const displayIdx = plan.args.indexOf("-display");
+    expect(plan.args[displayIdx + 1]).toBe("none");
+    expect(plan.args).not.toContain("-vnc");
+  });
+
+  it("renders -vnc unix:<path> when vm.display.mode=vnc", () => {
+    const config = parseCrucibleConfig({
+      vm: { display: { mode: "vnc", vncSocketPath: "/tmp/crucible-vnc.sock" } },
+    });
+    const plan = buildQemuCommandPlan({ config });
+    expect(plan.args).toContain("-vnc");
+    expect(plan.args).toContain("unix:/tmp/crucible-vnc.sock");
+    expect(plan.args).not.toContain("none");
+  });
+
+  it("renders -display gtk when vm.display.mode=gtk", () => {
+    const config = parseCrucibleConfig({ vm: { display: { mode: "gtk" } } });
+    const plan = buildQemuCommandPlan({ config });
+    const displayIdx = plan.args.indexOf("-display");
+    expect(plan.args[displayIdx + 1]).toBe("gtk");
+  });
+
   it("attaches first-boot media using q35-compatible SATA devices", () => {
     const plan = buildQemuCommandPlan({
       bootMedia: {

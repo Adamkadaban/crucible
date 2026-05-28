@@ -100,6 +100,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     `unix:${config.qmp.socketPath},server=on,wait=off`,
     ...buildOptionalVirtioDeviceArgs(config),
     ...buildTpmArgs(options.bootMedia),
+    ...buildDisplayArgs(config),
     ...config.vm.extraQemuArgs,
   ];
 
@@ -210,6 +211,18 @@ function buildTpmArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
     "-device",
     "tpm-tis,tpmdev=crucible-tpmdev",
   ];
+}
+
+function buildDisplayArgs(config: CrucibleConfig): readonly string[] {
+  const display = config.vm.display;
+  if (display.mode === "none") {
+    return ["-display", "none"];
+  }
+  if (display.mode === "gtk") {
+    return ["-display", "gtk"];
+  }
+  validateQemuSuboptionValue("vm.display.vncSocketPath", display.vncSocketPath);
+  return ["-vnc", `unix:${display.vncSocketPath}`];
 }
 
 function getDefaultDiskPath(config: CrucibleConfig): string {
