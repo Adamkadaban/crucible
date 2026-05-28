@@ -383,8 +383,20 @@ async function runNodeProcess(command: ProcessCommand): Promise<ProcessResult> {
     child.stderr.on("data", (chunk: string) => {
       stderr = boundedAppend(stderr, chunk, maxOutputBytes);
     });
-    child.on("error", reject);
+    let settled = false;
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.on("close", (exitCode, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       clearTimeout(timeout);
       resolve({
         command,
@@ -404,7 +416,7 @@ function boundedAppend(current: string, chunk: string, maxBytes: number): string
   if (Buffer.byteLength(next, "utf8") <= maxBytes) {
     return next;
   }
-  return next.slice(-maxBytes);
+  return Buffer.from(next, "utf8").subarray(-maxBytes).toString("utf8");
 }
 
 async function runGuestHealthCommand(

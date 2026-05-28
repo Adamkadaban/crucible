@@ -389,7 +389,9 @@ export async function prepareRealFirstBootProvisioning(
   await mkdir(path.dirname(plan.disk.path), { recursive: true });
   await mkdir(bootDirectory, { recursive: true });
   await mkdir(swtpmStateDirectory, { recursive: true });
-  await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
+  if (!(await pathExists(ovmfVarsPath))) {
+    await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
+  }
   await writeFile(
     path.join(bootDirectory, "Autounattend.xml"),
     buildAutounattendXml(config),
@@ -397,12 +399,16 @@ export async function prepareRealFirstBootProvisioning(
   );
 
   const commands: ProcessCommand[] = [
-    {
-      executable: qemuImgExecutable,
-      args: ["create", "-f", "qcow2", plan.disk.path, `${config.vm.diskGiB}G`],
-      timeoutMs,
-      maxOutputBytes: 1024 * 1024,
-    },
+    ...((await pathExists(plan.disk.path))
+      ? []
+      : [
+          {
+            executable: qemuImgExecutable,
+            args: ["create", "-f", "qcow2", plan.disk.path, `${config.vm.diskGiB}G`],
+            timeoutMs,
+            maxOutputBytes: 1024 * 1024,
+          },
+        ]),
     {
       executable: xorrisoExecutable,
       args: [
@@ -417,20 +423,24 @@ export async function prepareRealFirstBootProvisioning(
       timeoutMs,
       maxOutputBytes: 1024 * 1024,
     },
-    {
-      executable: swtpmExecutable,
-      args: [
-        "socket",
-        "--tpm2",
-        "--tpmstate",
-        `dir=${swtpmStateDirectory}`,
-        "--ctrl",
-        `type=unixio,path=${swtpmSocketPath}`,
-        "--daemon",
-      ],
-      timeoutMs,
-      maxOutputBytes: 1024 * 1024,
-    },
+    ...((await pathExists(swtpmSocketPath))
+      ? []
+      : [
+          {
+            executable: swtpmExecutable,
+            args: [
+              "socket",
+              "--tpm2",
+              "--tpmstate",
+              `dir=${swtpmStateDirectory}`,
+              "--ctrl",
+              `type=unixio,path=${swtpmSocketPath}`,
+              "--daemon",
+            ],
+            timeoutMs,
+            maxOutputBytes: 1024 * 1024,
+          },
+        ]),
   ];
 
   for (const command of commands) {
@@ -446,6 +456,22 @@ export async function prepareRealFirstBootProvisioning(
     autounattendIsoPath,
     commands,
   };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function buildAutounattendXml(config: CrucibleConfig): string {

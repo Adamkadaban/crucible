@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -255,24 +255,24 @@ describe("provisioning contracts", () => {
     let counter = 0;
     const result = await writeWindowsAccountSecrets({
       vmName: "Analysis VM!",
-      secretsDirectory: path.join(root, "secrets"),
+      secretsDirectory: join(root, "secrets"),
       passwordLength: 24,
       generatedAt: new Date("2026-05-27T00:00:00.000Z"),
       randomBytes: (size) => Buffer.alloc(size, counter++),
     });
 
-    expect(result.rootDirectory).toBe(path.join(root, "secrets", "analysis-vm"));
+    expect(result.rootDirectory).toBe(join(root, "secrets", "analysis-vm"));
     expect(result.accounts).toEqual([
       expect.objectContaining({
         username: "CrucibleUser",
         principal: "standard",
-        path: path.join(root, "secrets", "analysis-vm", "windows", "standard-user.json"),
+        path: join(root, "secrets", "analysis-vm", "windows", "standard-user.json"),
         fileMode: "0600",
       }),
       expect.objectContaining({
         username: "CrucibleAdmin",
         principal: "admin",
-        path: path.join(root, "secrets", "analysis-vm", "windows", "admin-user.json"),
+        path: join(root, "secrets", "analysis-vm", "windows", "admin-user.json"),
         fileMode: "0600",
       }),
     ]);
@@ -396,11 +396,11 @@ describe("provisioning contracts", () => {
   });
 
   it("prepares first-boot host artifacts and commands", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-first-boot-"));
-    const windowsIso = path.join(root, "windows.iso");
-    const virtioIso = path.join(root, "virtio.iso");
-    const ovmfCode = path.join(root, "OVMF_CODE.fd");
-    const ovmfVars = path.join(root, "OVMF_VARS.fd");
+    const root = await mkdtemp(join(tmpdir(), "crucible-first-boot-"));
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
     await Promise.all([
       writeFile(windowsIso, "windows", "utf8"),
       writeFile(virtioIso, "virtio", "utf8"),
@@ -431,11 +431,11 @@ describe("provisioning contracts", () => {
           virtioIso: { path: virtioIso },
         },
         artifacts: {
-          directory: path.join(root, "artifacts"),
-          manifestPath: path.join(root, "artifacts", "manifest.json"),
-          logsDirectory: path.join(root, "artifacts", "logs"),
-          snapshotsDirectory: path.join(root, "snapshots"),
-          secretsDirectory: path.join(root, "secrets"),
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
         },
       }),
       ovmfCodePath: ovmfCode,
@@ -448,6 +448,67 @@ describe("provisioning contracts", () => {
     expect(plan.swtpmSocketPath).toContain("swtpm.sock");
     expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso", "swtpm"]);
     expect(commands[0]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
+  });
+
+  it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "crucible-first-boot-existing-"));
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const artifactDirectory = join(root, "artifacts");
+    const diskDirectory = join(artifactDirectory, "disks");
+    const bootDirectory = join(artifactDirectory, "boot");
+    const diskPath = join(diskDirectory, "first-boot.qcow2");
+    const existingVars = join(bootDirectory, "first-boot.OVMF_VARS.fd");
+    await mkdir(diskDirectory, { recursive: true });
+    await mkdir(bootDirectory, { recursive: true });
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      writeFile(diskPath, "existing disk", "utf8"),
+      writeFile(existingVars, "existing vars", "utf8"),
+    ]);
+    const commands: ProcessCommand[] = [];
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "first-boot", diskGiB: 64 },
+        media: {
+          windowsIso: { path: windowsIso },
+          virtioIso: { path: virtioIso },
+        },
+        artifacts: {
+          directory: artifactDirectory,
+          manifestPath: join(artifactDirectory, "manifest.json"),
+          logsDirectory: join(artifactDirectory, "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          commands.push(command);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    expect(commands.map((command) => command.executable)).toEqual(["xorriso", "swtpm"]);
+    await expect(readFile(diskPath, "utf8")).resolves.toBe("existing disk");
+    await expect(readFile(existingVars, "utf8")).resolves.toBe("existing vars");
   });
 
   it("builds guest health reports from provisioning readiness contracts", () => {
@@ -497,7 +558,7 @@ describe("provisioning contracts", () => {
 });
 
 async function mkdtempPath(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), "crucible-provisioning-"));
+  return mkdtemp(join(tmpdir(), "crucible-provisioning-"));
 }
 
 function fakeVmStatus(

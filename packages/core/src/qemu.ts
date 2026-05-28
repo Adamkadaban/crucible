@@ -89,6 +89,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     String(config.vm.cpus),
     "-m",
     `${config.vm.memoryMiB}M`,
+    ...buildSataControllerArgs(options.bootMedia),
     ...buildFirmwareArgs(options.bootMedia),
     ...buildDiskArgs(config, diskPath),
     ...buildBootMediaArgs(options.bootMedia),
@@ -123,6 +124,18 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     bootMedia: options.bootMedia,
     extraArgs: config.vm.extraQemuArgs,
   };
+}
+
+function buildSataControllerArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
+  if (
+    bootMedia?.windowsIsoPath === undefined &&
+    bootMedia?.virtioIsoPath === undefined &&
+    bootMedia?.autounattendIsoPath === undefined
+  ) {
+    return [];
+  }
+
+  return ["-device", "ich9-ahci,id=crucible-sata0"];
 }
 
 function buildFirmwareArgs(bootMedia?: QemuBootMediaOptions): readonly string[] {
@@ -169,7 +182,7 @@ function isoDriveArgs(
     "-drive",
     `file=${filePath},media=cdrom,if=none,readonly=on,id=${id}`,
     "-device",
-    `ide-cd,drive=${id},bus=ide.${index},bootindex=${boot ? 1 : index}`,
+    `ide-cd,drive=${id},bus=crucible-sata0.${index},bootindex=${boot ? 1 : index}`,
   ];
 }
 
