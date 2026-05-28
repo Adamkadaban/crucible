@@ -393,12 +393,12 @@ async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
 async function sendUefiShellCommand(qmp: QmpClient, command: string): Promise<void> {
   for (const key of commandToQemuKeys(command)) {
     await qmp.execute("human-monitor-command", {
-      "command-line": `sendkey ${key}`,
+      "command-line": `sendkey ${key} 20`,
     });
-    await sleep(35);
+    await sleep(60);
   }
   await qmp.execute("human-monitor-command", {
-    "command-line": "sendkey ret",
+    "command-line": "sendkey ret 20",
   });
 }
 
