@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -611,6 +611,9 @@ async function copyVirtioDriverDirectories(options: {
   await mkdir(driverRoot, { recursive: true });
 
   for (const driver of ["vioscsi", "NetKVM", "vioserial"] as const) {
+    const destination = path.join(driverRoot, driver);
+    await chmodTreeWritable(destination);
+    await rm(destination, { recursive: true, force: true });
     await runProvisioningProcess(options.processRunner, {
       executable: "xorriso",
       args: [
@@ -620,11 +623,32 @@ async function copyVirtioDriverDirectories(options: {
         options.virtioIsoPath,
         "-extract",
         `/${driver}/${osFolder}/amd64`,
-        path.join(driverRoot, driver),
+        destination,
       ],
       timeoutMs: options.timeoutMs,
       maxOutputBytes: 1024 * 1024,
     });
+    await chmodTreeWritable(destination);
+  }
+}
+
+async function chmodTreeWritable(targetPath: string): Promise<void> {
+  try {
+    const info = await lstat(targetPath);
+    if (!info.isDirectory()) {
+      await chmod(targetPath, 0o644);
+      return;
+    }
+    await chmod(targetPath, 0o755);
+    const entries = await readdir(targetPath, { withFileTypes: true });
+    for (const entry of entries) {
+      await chmodTreeWritable(path.join(targetPath, entry.name));
+    }
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
   }
 }
 
