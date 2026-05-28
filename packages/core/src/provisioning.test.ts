@@ -447,9 +447,13 @@ describe("provisioning contracts", () => {
     expect(plan.autounattendIsoPath).toContain("autounattend.iso");
     expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso"]);
     expect(commands[0]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
-    await expect(
-      readFile(join(root, "artifacts", "boot", "Autounattend.xml"), "utf8"),
-    ).resolves.toContain("BypassTPMCheck");
+    const autounattend = await readFile(
+      join(root, "artifacts", "boot", "Autounattend.xml"),
+      "utf8",
+    );
+    expect(autounattend).toContain("BypassTPMCheck");
+    expect(autounattend).toContain("BypassSecureBootCheck");
+    expect(autounattend).toContain("BypassRAMCheck");
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
