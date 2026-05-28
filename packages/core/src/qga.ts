@@ -154,6 +154,7 @@ export class QgaClient {
       path: guestPath,
       mode: "wb",
     });
+    let primaryError: unknown;
     try {
       // qemu-ga caps a single guest-file-write at 48 KiB by default, so chunk
       // larger payloads to keep big PowerShell scripts within the limit.
@@ -165,11 +166,29 @@ export class QgaClient {
           "buf-b64": chunk.toString("base64"),
         });
       }
-    } finally {
-      // Best-effort close. If the agent already restarted, the handle is
-      // gone and close will error — but the retry wrapper around
-      // writeFile catches that as transient and re-opens fresh.
+    } catch (error) {
+      primaryError = error;
+    }
+    try {
       await this.#requestOnce("guest-file-close", { handle: opened.handle });
+    } catch (closeError) {
+      // Close errors only matter when the write itself succeeded — otherwise
+      // the original write failure is the real signal and must not be masked
+      // by a close failure (the handle may already be invalid because qga
+      // restarted, which is exactly what triggered the write failure).
+      if (primaryError === undefined) {
+        throw closeError;
+      }
+    }
+    if (primaryError !== undefined) {
+      if (primaryError instanceof Error) {
+        throw primaryError;
+      }
+      throw new CrucibleError(
+        "PROCESS_FAILED",
+        `writeFile failed with non-Error value`,
+        primaryError,
+      );
     }
   }
 
@@ -234,6 +253,12 @@ function isTransientQgaError(error: unknown): boolean {
     return false;
   }
   if (error.message.startsWith("Unable to connect to QGA")) {
+    return true;
+  }
+  if (error.message === "QGA socket error") {
+    // Mid-flight socket error (e.g. ECONNRESET / EPIPE) — qemu-ga went
+    // away while we held an open connection, exactly what a reboot looks
+    // like from the host side.
     return true;
   }
   const desc = (error.details as { desc?: string } | undefined)?.desc ?? "";

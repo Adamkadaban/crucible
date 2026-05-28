@@ -452,6 +452,77 @@ describe("QGA client and provisioning executor", () => {
       await server.close();
     }
   });
+
+  it("writeFile retries when the connection drops mid-request (socket error)", async () => {
+    // First open succeeds. First write triggers the fake to destroy the
+    // socket — that raises a 'QGA socket error' PROCESS_FAILED on the host
+    // side, which must be classified transient so the retry loop can
+    // re-open + re-write to a healthy fake.
+    let dropOnNextWrite = true;
+    const successfulWrites: number[] = [];
+    let nextHandle = 0;
+    const server = await startFakeQga((request, socket) => {
+      const args = request.arguments ?? {};
+      if (request.execute === "guest-file-open") {
+        nextHandle += 1;
+        return { return: { handle: nextHandle } };
+      }
+      if (request.execute === "guest-file-write") {
+        if (dropOnNextWrite) {
+          dropOnNextWrite = false;
+          socket.destroy();
+          return undefined;
+        }
+        successfulWrites.push(args.handle as number);
+        return { return: {} };
+      }
+      if (request.execute === "guest-file-close") {
+        return { return: {} };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await client.writeFile("C:\\Test\\dropped.bin", Buffer.from("payload"));
+      expect(nextHandle).toBeGreaterThanOrEqual(2);
+      expect(successfulWrites.length).toBeGreaterThan(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("writeFile surfaces the original write error rather than a masking close error", async () => {
+    // The first write fails non-transiently. Close also fails (handle is
+    // gone). The caller must see the write error, not the close one.
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-file-open") {
+        return { return: { handle: 1 } };
+      }
+      if (request.execute === "guest-file-write") {
+        return { error: { class: "GenericError", desc: "disk full" } };
+      }
+      if (request.execute === "guest-file-close") {
+        return { error: { class: "GenericError", desc: "no such handle" } };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 50, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await expect(client.writeFile("C:\\Test\\file.bin", "x")).rejects.toThrow(/guest-file-write/);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 type QgaRequest = {
@@ -460,7 +531,10 @@ type QgaRequest = {
 };
 
 async function startFakeQga(
-  handler: (request: QgaRequest) => Promise<Record<string, unknown>> | Record<string, unknown>,
+  handler: (
+    request: QgaRequest,
+    socket: Socket,
+  ) => Promise<Record<string, unknown> | undefined> | Record<string, unknown> | undefined,
 ): Promise<{ readonly socketPath: string; readonly close: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), "crucible-qga-"));
   const socketPath = join(root, "qga.sock");
@@ -475,7 +549,10 @@ async function startFakeQga(
 
 function handleSocket(
   socket: Socket,
-  handler: (request: QgaRequest) => Promise<Record<string, unknown>> | Record<string, unknown>,
+  handler: (
+    request: QgaRequest,
+    socket: Socket,
+  ) => Promise<Record<string, unknown> | undefined> | Record<string, unknown> | undefined,
 ): void {
   let buffer = "";
   socket.setEncoding("utf8");
@@ -487,8 +564,15 @@ function handleSocket(
     }
     const line = buffer.slice(0, newline).trim();
     buffer = buffer.slice(newline + 1);
-    Promise.resolve(handler(JSON.parse(line) as QgaRequest))
-      .then((response) => socket.write(`${JSON.stringify(response)}\r\n`))
+    Promise.resolve(handler(JSON.parse(line) as QgaRequest, socket))
+      .then((response) => {
+        // A handler that returns undefined has already mutated the socket
+        // (e.g. destroyed it) to simulate a transport-level failure.
+        if (response === undefined) {
+          return;
+        }
+        socket.write(`${JSON.stringify(response)}\r\n`);
+      })
       .catch((error: unknown) => socket.destroy(error instanceof Error ? error : undefined));
   });
 }

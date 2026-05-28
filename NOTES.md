@@ -68,7 +68,7 @@ issue #58
 **Resolution:** Wrapped `QgaClient.writeFile` (always idempotent — same path, same bytes, mode=wb
 truncates) and `QgaClient.exec` (opt-in `idempotent: true`) in a transport-level retry layer that
 treats `PROCESS_TIMEOUT`, connect failures, and structured QGA errors mentioning
-`pid|handle|not found|invalid` as transient. `QgaProvisioningExecutor` marks the New-Item mkdir
-and every provisioning stage script as `idempotent: true`; existing guest scripts in
-`guest/provision/*.ps1` were already designed idempotent. `packages/core/src/qga.ts:62-237` ·
-issue #67, PR #125
+`pid|handle|not found|invalid` as transient. `QgaProvisioningExecutor` marks the New-Item mkdir and
+every provisioning stage script as `idempotent: true`; existing guest scripts in
+`guest/provision/*.ps1` were already designed idempotent. `packages/core/src/qga.ts:62-237` · issue
+#67, PR #125

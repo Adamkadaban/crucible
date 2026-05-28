@@ -85,7 +85,6 @@ describe.runIf(liveConfigured)(
           stderr.toLowerCase().includes("cannot find") ||
           stderr.toLowerCase().includes("not found");
         if (missingCdb) {
-          // eslint-disable-next-line no-console
           console.warn(
             "cdb.exe was not on PATH inside the guest; mark this as the soft-skipped real-VM debugger case",
           );
