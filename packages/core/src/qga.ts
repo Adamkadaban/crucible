@@ -249,7 +249,29 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
 
   async #stageFile(file: StagedFile): Promise<void> {
     const contents = await readFile(file.hostPath);
+    await this.#ensureGuestDirectory(guestParentDir(file.guestPath));
     await this.#client.writeFile(file.guestPath, contents);
+  }
+
+  async #ensureGuestDirectory(guestPath: string): Promise<void> {
+    if (guestPath === "") {
+      return;
+    }
+    // qemu-ga's guest-file-open does not create missing parent directories,
+    // so every staged file / script needs its parent provisioned first.
+    // cmd.exe mkdir creates intermediate dirs by default; the existence
+    // guard keeps repeated calls idempotent.
+    const command = `if not exist "${guestPath}" mkdir "${guestPath}"`;
+    const result = await this.#client.exec("cmd.exe", ["/c", command], {
+      timeoutMs: this.#timeoutMs,
+    });
+    if (result.timedOut || (result.exitCode !== 0 && result.exitCode !== undefined)) {
+      throw new CrucibleError("PROCESS_FAILED", `Failed to mkdir guest directory ${guestPath}`, {
+        exitCode: result.exitCode,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      });
+    }
   }
 
   async #waitForGuestReadiness(): Promise<void> {
@@ -277,6 +299,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     }
     const scriptBody = await readFile(stage.script.scriptPath, "utf8");
     const guestPath = `C:\\ProgramData\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
+    await this.#ensureGuestDirectory(guestParentDir(guestPath));
     await this.#client.writeFile(guestPath, scriptBody);
     // The contract stores the full PowerShell invocation
     // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
@@ -375,4 +398,9 @@ function decodeBase64(value: string | undefined): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function guestParentDir(guestPath: string): string {
+  const idx = guestPath.lastIndexOf("\\");
+  return idx <= 0 ? "" : guestPath.slice(0, idx);
 }
