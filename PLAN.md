@@ -286,20 +286,20 @@ health checks, and privilege-separated execution primitives.
 
 **Deliverable checklist:**
 
-- [ ] Create Go module and Windows service entry point with install/uninstall/run modes.
-- [ ] Implement mTLS HTTP API with pinned host CA, request IDs, audit logging, bounded body sizes,
+- [x] Create Go module and Windows service entry point with install/uninstall/run modes.
+- [x] Implement mTLS HTTP API with pinned host CA, request IDs, audit logging, bounded body sizes,
       and timeouts.
-- [ ] Implement health endpoint reporting version, service identity, debugger tool paths, uptime,
+- [x] Implement health endpoint reporting version, service identity, debugger tool paths, uptime,
       and execution context availability.
-- [ ] Implement command execution endpoint with working directory, environment allowlist, timeout,
+- [x] Implement command execution endpoint with working directory, environment allowlist, timeout,
       stdout/stderr capture, exit code, and max-output truncation.
-- [ ] Implement standard-user execution path.
-- [ ] Implement admin execution path without interactive UAC prompts, using a preconfigured
+- [x] Implement standard-user execution path.
+- [x] Implement admin execution path without interactive UAC prompts, using a preconfigured
       service/helper boundary.
-- [ ] Implement file upload/download endpoints with staging directory constraints, hash reporting,
+- [x] Implement file upload/download endpoints with staging directory constraints, hash reporting,
       max size limits, and path traversal protection.
-- [ ] Add host TypeScript client for the guest API and integration tests against a fake server.
-- [ ] Document guest service API and security model.
+- [x] Add host TypeScript client for the guest API and integration tests against a fake server.
+- [x] Document guest service API and security model.
 
 **Parallel-work split table:**
 

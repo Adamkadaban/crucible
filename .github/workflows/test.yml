@@ -36,3 +36,24 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: guest-agent/go.mod
+          cache-dependency-path: guest-agent/go.sum
+
+      - name: Go vet
+        working-directory: guest-agent
+        run: go vet ./...
+
+      - name: Go test
+        working-directory: guest-agent
+        run: go test ./...
+
+      - name: Go cross-compile (windows/amd64)
+        working-directory: guest-agent
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -o crucible-guest-agent.exe ./cmd/crucible-guest-agent
