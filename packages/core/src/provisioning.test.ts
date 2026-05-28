@@ -500,6 +500,24 @@ describe("provisioning contracts", () => {
     );
     expect(autounattend).toContain("<InputLocale>en-US</InputLocale>");
     expect(autounattend).toContain("crucible-install.cmd");
+    expect(autounattend).toContain('<settings pass="specialize">');
+    expect(autounattend).toContain(
+      'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" /v BypassNRO',
+    );
+    expect(autounattend).toContain("<SkipMachineOOBE>true</SkipMachineOOBE>");
+    expect(autounattend).toContain("<SkipUserOOBE>true</SkipUserOOBE>");
+    expect(autounattend).toContain("<HideOnlineAccountScreens>true</HideOnlineAccountScreens>");
+    expect(autounattend).toContain("<Name>CrucibleAdmin</Name>");
+    expect(autounattend).toContain("<Group>Administrators</Group>");
+    expect(autounattend).toContain("<Name>CrucibleUser</Name>");
+    expect(autounattend).toContain("<Group>Users</Group>");
+    expect(autounattend).toContain("<AutoLogon>");
+    expect(autounattend).toContain("<Username>CrucibleAdmin</Username>");
+    const autounattendMode =
+      (await stat(join(root, "artifacts", "boot", "Autounattend.xml"))).mode & 0o777;
+    expect(autounattendMode).toBe(0o600);
+    const bootDirMode = (await stat(join(root, "artifacts", "boot"))).mode & 0o777;
+    expect(bootDirMode).toBe(0o700);
     const startup = await readFile(join(root, "artifacts", "boot", "startup.nsh"), "utf8");
     expect(startup).toContain("for %a in (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)");
     expect(startup).toContain("bootx64.efi");

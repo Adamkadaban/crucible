@@ -467,7 +467,8 @@ export async function prepareRealFirstBootProvisioning(
   await assertReadableFile("OVMF code", ovmfCodePath);
   await assertReadableFile("OVMF vars template", ovmfVarsTemplatePath);
   await mkdir(path.dirname(plan.disk.path), { recursive: true });
-  await mkdir(bootDirectory, { recursive: true });
+  await mkdir(bootDirectory, { recursive: true, mode: 0o700 });
+  await chmod(bootDirectory, 0o700);
   await mkdir(swtpmStateDirectory, { recursive: true });
   if (!(await pathExists(ovmfVarsPath))) {
     await copyFile(ovmfVarsTemplatePath, ovmfVarsPath);
@@ -476,11 +477,12 @@ export async function prepareRealFirstBootProvisioning(
     vmName: config.vm.name,
     secretsDirectory: config.artifacts.secretsDirectory,
   });
-  await writeFile(
-    path.join(bootDirectory, "Autounattend.xml"),
-    buildAutounattendXml(config, accounts),
-    "utf8",
-  );
+  const autounattendXmlPath = path.join(bootDirectory, "Autounattend.xml");
+  await writeFile(autounattendXmlPath, buildAutounattendXml(config, accounts), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(autounattendXmlPath, 0o600);
   await writeFile(path.join(bootDirectory, "startup.nsh"), buildStartupNsh(), "utf8");
   await writeFile(
     path.join(bootDirectory, "crucible-install.cmd"),
@@ -533,6 +535,18 @@ export async function prepareRealFirstBootProvisioning(
 
   for (const command of commands) {
     await runProvisioningProcess(options.processRunner, command);
+  }
+
+  // The autounattend ISO embeds plaintext local-account passwords. Pair the
+  // permissions on the rendered XML and bundled ISO so they stay
+  // user-readable only, matching artifacts/secrets/<vm>/. Tests stub the
+  // process runner and never produce the ISO, so a missing file is tolerated.
+  try {
+    await chmod(autounattendIsoPath, 0o600);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ENOENT") {
+      throw error;
+    }
   }
 
   return {
