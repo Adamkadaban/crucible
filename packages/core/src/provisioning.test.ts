@@ -447,8 +447,14 @@ describe("provisioning contracts", () => {
 
     expect(plan.diskPath).toContain("first-boot.qcow2");
     expect(plan.autounattendIsoPath).toContain("autounattend.iso");
-    expect(commands.map((command) => command.executable)).toEqual(["qemu-img", "xorriso"]);
-    expect(commands[0]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
+    expect(commands.map((command) => command.executable)).toEqual([
+      "xorriso",
+      "xorriso",
+      "xorriso",
+      "qemu-img",
+      "xorriso",
+    ]);
+    expect(commands[3]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
     const autounattend = await readFile(
       join(root, "artifacts", "boot", "Autounattend.xml"),
       "utf8",
@@ -457,7 +463,7 @@ describe("provisioning contracts", () => {
     expect(autounattend).toContain("BypassSecureBootCheck");
     expect(autounattend).toContain("BypassRAMCheck");
     expect(autounattend).toContain("Microsoft-Windows-PnpCustomizationsWinPE");
-    expect(autounattend).toContain("E:\\vioscsi\\w11\\amd64");
+    expect(autounattend).toContain("D:\\drivers\\vioscsi");
     expect(autounattend).toContain("<DiskID>0</DiskID>");
     expect(autounattend).toContain("/IMAGE/INDEX");
     const startup = await readFile(join(root, "artifacts", "boot", "startup.nsh"), "utf8");
@@ -521,7 +527,12 @@ describe("provisioning contracts", () => {
       },
     });
 
-    expect(commands.map((command) => command.executable)).toEqual(["xorriso"]);
+    expect(commands.map((command) => command.executable)).toEqual([
+      "xorriso",
+      "xorriso",
+      "xorriso",
+      "xorriso",
+    ]);
     await expect(readFile(diskPath, "utf8")).resolves.toBe("existing disk");
     await expect(readFile(existingVars, "utf8")).resolves.toBe("existing vars");
   });

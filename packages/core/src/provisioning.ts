@@ -432,6 +432,13 @@ export async function prepareRealFirstBootProvisioning(
     "utf8",
   );
   await writeFile(path.join(bootDirectory, "startup.nsh"), buildStartupNsh(), "utf8");
+  await copyVirtioDriverDirectories({
+    virtioIsoPath,
+    bootDirectory,
+    profile: config.media.profile,
+    processRunner: options.processRunner,
+    timeoutMs,
+  });
 
   const commands: ProcessCommand[] = [
     ...((await pathExists(plan.disk.path))
@@ -502,9 +509,9 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     '  <settings pass="windowsPE">',
     '    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     "      <DriverPaths>",
-    '        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>E:\\vioscsi\\w11\\amd64</Path></PathAndCredentials>',
-    '        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>E:\\NetKVM\\w11\\amd64</Path></PathAndCredentials>',
-    '        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>E:\\vioserial\\w11\\amd64</Path></PathAndCredentials>',
+    '        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\\drivers\\vioscsi</Path></PathAndCredentials>',
+    '        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>D:\\drivers\\NetKVM</Path></PathAndCredentials>',
+    '        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>D:\\drivers\\vioserial</Path></PathAndCredentials>',
     "      </DriverPaths>",
     "    </component>",
     '    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
@@ -556,6 +563,35 @@ function buildAutounattendXml(config: CrucibleConfig): string {
     "  </settings>",
     "</unattend>",
   ].join("\n");
+}
+
+async function copyVirtioDriverDirectories(options: {
+  readonly virtioIsoPath: string;
+  readonly bootDirectory: string;
+  readonly profile: CrucibleConfig["media"]["profile"];
+  readonly processRunner: ProcessRunner;
+  readonly timeoutMs: number;
+}): Promise<void> {
+  const osFolder = options.profile === "windows-server-2025-eval" ? "2k25" : "w11";
+  const driverRoot = path.join(options.bootDirectory, "drivers");
+  await mkdir(driverRoot, { recursive: true });
+
+  for (const driver of ["vioscsi", "NetKVM", "vioserial"] as const) {
+    await runProvisioningProcess(options.processRunner, {
+      executable: "xorriso",
+      args: [
+        "-osirrox",
+        "on",
+        "-indev",
+        options.virtioIsoPath,
+        "-extract",
+        `/${driver}/${osFolder}/amd64`,
+        path.join(driverRoot, driver),
+      ],
+      timeoutMs: options.timeoutMs,
+      maxOutputBytes: 1024 * 1024,
+    });
+  }
 }
 
 function escapeXml(value: string): string {
