@@ -95,6 +95,69 @@ describe("QGA client and provisioning executor", () => {
       await server.close();
     }
   });
+
+  it("retries guest-ping for the qga-ready stage until the agent answers", async () => {
+    let pingCount = 0;
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-ping") {
+        pingCount += 1;
+        if (pingCount < 3) {
+          return { error: { class: "GenericError", desc: "agent not ready" } };
+        }
+        return { return: {} };
+      }
+      return { return: {} };
+    });
+    try {
+      const sleeps: number[] = [];
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath, timeoutMs: 200 }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        readinessTimeoutMs: 60_000,
+        readinessPollIntervalMs: 25,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+      });
+
+      const result = await executor.runStage(qgaReadyStage());
+
+      expect(result.status).toBe("succeeded");
+      expect(pingCount).toBeGreaterThanOrEqual(3);
+      expect(sleeps.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("surfaces a QMP_TIMEOUT when QGA never answers within the readiness window", async () => {
+    const server = await startFakeQga(() => ({
+      error: { class: "GenericError", desc: "guest unavailable" },
+    }));
+    try {
+      let now = 0;
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath, timeoutMs: 50 }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        readinessTimeoutMs: 200,
+        readinessPollIntervalMs: 25,
+        now: () => now,
+        sleep: (ms) => {
+          now += ms;
+          return Promise.resolve();
+        },
+      });
+
+      await expect(executor.runStage(qgaReadyStage())).rejects.toMatchObject({
+        code: "QMP_TIMEOUT",
+      });
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 type QgaRequest = {
@@ -146,6 +209,17 @@ function closeServer(server: Server): Promise<void> {
       resolve();
     });
   });
+}
+
+function qgaReadyStage(): ProvisioningStageContract {
+  return {
+    id: "qga-ready",
+    title: "QGA readiness",
+    dependsOn: ["vm-booted"],
+    readinessChecks: [],
+    producesSecrets: [],
+    producesSnapshot: false,
+  };
 }
 
 function scriptStage(): ProvisioningStageContract {
