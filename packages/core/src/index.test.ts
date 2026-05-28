@@ -645,7 +645,7 @@ describe("core bootstrap exports", () => {
     expect(plan.dryRunCommand).toContain("'events=/tmp/qemu events'");
   });
 
-  it("attaches first-boot media using q35-compatible SATA devices and TPM", () => {
+  it("attaches first-boot media using q35-compatible SATA devices", () => {
     const plan = buildQemuCommandPlan({
       bootMedia: {
         windowsIsoPath: "/isos/windows.iso",
@@ -653,19 +653,18 @@ describe("core bootstrap exports", () => {
         autounattendIsoPath: "artifacts/boot/autounattend.iso",
         ovmfCodePath: "/usr/share/OVMF/OVMF_CODE_4M.fd",
         ovmfVarsPath: "artifacts/boot/crucible-win11.OVMF_VARS.fd",
-        swtpmSocketPath: "artifacts/swtpm/crucible-win11/swtpm.sock",
       },
     });
 
     expect(plan.args).toContain("ich9-ahci,id=crucible-sata0");
     expect(plan.args).toContain(
-      "ide-cd,drive=crucible-windows-install,bus=crucible-sata0.2,bootindex=1",
+      "ide-cd,drive=crucible-autounattend,bus=crucible-sata0.1,bootindex=1",
+    );
+    expect(plan.args).toContain(
+      "ide-cd,drive=crucible-windows-install,bus=crucible-sata0.2,bootindex=2",
     );
     expect(plan.args).toContain("ide-cd,drive=crucible-virtio,bus=crucible-sata0.3,bootindex=3");
-    expect(plan.args).toContain(
-      "ide-cd,drive=crucible-autounattend,bus=crucible-sata0.4,bootindex=4",
-    );
-    expect(plan.args).toContain("tpm-tis,tpmdev=crucible-tpmdev");
+    expect(plan.args).not.toContain("tpm-tis,tpmdev=crucible-tpmdev");
   });
 
   it("rejects disk paths that QEMU drive suboptions would misparse", () => {

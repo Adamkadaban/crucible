@@ -397,6 +397,7 @@ export async function prepareRealFirstBootProvisioning(
     buildAutounattendXml(config),
     "utf8",
   );
+  await writeFile(path.join(bootDirectory, "startup.nsh"), buildStartupNsh(), "utf8");
 
   const commands: ProcessCommand[] = [
     ...((await pathExists(plan.disk.path))
@@ -411,15 +412,7 @@ export async function prepareRealFirstBootProvisioning(
         ]),
     {
       executable: xorrisoExecutable,
-      args: [
-        "-as",
-        "mkisofs",
-        "-o",
-        autounattendIsoPath,
-        "-V",
-        "AUTOUNATTEND",
-        path.join(bootDirectory, "Autounattend.xml"),
-      ],
+      args: ["-as", "mkisofs", "-o", autounattendIsoPath, "-V", "AUTOUNATTEND", bootDirectory],
       timeoutMs,
       maxOutputBytes: 1024 * 1024,
     },
@@ -439,6 +432,17 @@ export async function prepareRealFirstBootProvisioning(
     autounattendIsoPath,
     commands,
   };
+}
+
+function buildStartupNsh(): string {
+  return [
+    "@echo -off",
+    "for %a run (fs0 fs1 fs2 fs3 fs4 fs5 fs6 fs7 fs8 fs9)",
+    "  if exist %a:\\efi\\boot\\bootx64.efi then",
+    "    %a:\\efi\\boot\\bootx64.efi",
+    "  endif",
+    "endfor",
+  ].join("\r\n");
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
