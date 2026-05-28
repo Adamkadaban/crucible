@@ -121,6 +121,32 @@ export type {
   DebuggerSessionManagerOptions,
   RunResult,
 } from "./debugger.js";
+export {
+  DEFAULT_POLICY,
+  decideHostShare,
+  decideDownloadTarget,
+  decideInternetEgress,
+} from "./policy.js";
+export type { CruciblePolicy, PolicyDecision } from "./policy.js";
+export { runScenario } from "./scenario.js";
+export type {
+  ScenarioInput,
+  ScenarioResult,
+  ScenarioStep,
+  ScenarioStepKind,
+  ScenarioStepRecord,
+  ScenarioRunnerOptions,
+} from "./scenario.js";
+export { aggregateAuditEvents } from "./audit.js";
+export type { AuditEvent, AggregateAuditOptions } from "./audit.js";
+export { rotateLocalAccountCredentials, rotateGuestServiceCertificatesPlan } from "./rotation.js";
+export type { RotateCredentialsOptions, RotateCredentialsResult } from "./rotation.js";
+export { exportArtifactBundle } from "./artifact-export.js";
+export type {
+  ArtifactDescriptor,
+  ArtifactExportOptions,
+  ArtifactExportResult,
+} from "./artifact-export.js";
 export type {
   GuestAgentClientOptions,
   GuestAgentHealth,
