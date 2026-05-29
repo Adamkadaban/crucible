@@ -62,6 +62,10 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&cfg.StagingDirectory, "staging-dir",
 		"C:\\\\ProgramData\\\\Crucible\\\\staging",
 		"Directory uploads must land in and downloads must come from")
+	cmd.Flags().StringVar(&cfg.CredentialsPath, "credentials", "",
+		"Path to execution account credentials JSON")
+	cmd.Flags().StringVar(&cfg.ExecDirectory, "exec-dir", "C:\\ProgramData\\Crucible\\Exec",
+		"Directory used for cross-account execution shims")
 	return cmd
 }
 

@@ -20,6 +20,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+trap {
+    $invocation = $_.InvocationInfo
+    $line = if ($invocation) { $invocation.Line } else { "(unknown)" }
+    throw "install-agent.ps1 failed at line $($invocation.ScriptLineNumber): $line`n$($_.Exception.Message)"
+}
 
 function Assert-SingleHostAddress {
     param(
@@ -34,6 +39,82 @@ function Assert-SingleHostAddress {
 
     if ($parsedAddress.Equals([System.Net.IPAddress]::Any) -or $parsedAddress.Equals([System.Net.IPAddress]::IPv6Any)) {
         throw "HostOnlySourceAddress must not be a wildcard address"
+    }
+}
+
+function Require-SecretEnvironment {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $value = [Environment]::GetEnvironmentVariable($Name, "Process")
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "Missing required secret environment variable: $Name"
+    }
+    return $value
+}
+
+function Remove-ServiceRegistration {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $sc = "$env:SystemRoot\System32\sc.exe"
+    $proc = Start-Process -FilePath $sc -ArgumentList @("delete", $Name) -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1060) {
+        throw "sc.exe delete failed (exit $($proc.ExitCode))"
+    }
+}
+
+function Invoke-NativeQuiet {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [int[]]$AllowedExitCodes = @(0)
+    )
+    $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -Wait -PassThru -NoNewWindow
+    if ($AllowedExitCodes -notcontains $proc.ExitCode) {
+        throw "$FilePath failed (exit $($proc.ExitCode))"
+    }
+}
+
+function Set-SystemAndAdministratorsOnlyAcl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+    foreach ($identity in @("NT AUTHORITY\SYSTEM", "BUILTIN\Administrators")) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, "FullControl", "Allow")
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Grant-IdentityModifyAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Identity
+    )
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+    foreach ($baseIdentity in @("NT AUTHORITY\SYSTEM", "BUILTIN\Administrators")) {
+        $baseRule = New-Object System.Security.AccessControl.FileSystemAccessRule($baseIdentity, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+        $acl.AddAccessRule($baseRule)
+    }
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $Identity,
+        "Modify",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Allow"
+    )
+    $acl.AddAccessRule($rule)
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Remove-ExistingStagedFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    try {
+        Set-SystemAndAdministratorsOnlyAcl -Path $Path
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    } catch {
+        throw "Failed to remove existing staged file ${Path}: $($_.Exception.Message)"
     }
 }
 
@@ -72,6 +153,16 @@ foreach ($source in @($payloadAgent, $payloadCa, $payloadServerCert, $payloadSer
 # file — no sharing-violation race.
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $AgentPath) | Out-Null
 New-Item -ItemType Directory -Force -Path $CertDirectory | Out-Null
+New-Item -ItemType Directory -Force -Path "C:\ProgramData\Crucible\Agent" | Out-Null
+$tempDirectory = if ([string]::IsNullOrWhiteSpace($env:TEMP)) { "C:\ProgramData\Crucible\Temp" } else { $env:TEMP }
+New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
+$execDirectory = "C:\ProgramData\Crucible\Exec"
+New-Item -ItemType Directory -Force -Path $execDirectory | Out-Null
+$standardExecDirectory = Join-Path $execDirectory "standard"
+$adminExecDirectory = Join-Path $execDirectory "admin"
+New-Item -ItemType Directory -Force -Path $standardExecDirectory, $adminExecDirectory | Out-Null
+Grant-IdentityModifyAcl -Path $standardExecDirectory -Identity "CrucibleUser"
+Grant-IdentityModifyAcl -Path $adminExecDirectory -Identity "CrucibleAdmin"
 
 # Stop a previous-run agent service / process FIRST so it releases its
 # handle to $AgentPath before Copy-Item tries to overwrite. Without
@@ -85,7 +176,7 @@ if ($null -ne $priorService) {
     if ($priorService.Status -ne "Stopped") {
         Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     }
-    & "$env:SystemRoot\System32\sc.exe" delete $ServiceName 2>&1 | Out-Null
+    Remove-ServiceRegistration -Name $ServiceName
     Start-Sleep -Seconds 1
 }
 Get-Process -ErrorAction SilentlyContinue |
@@ -146,23 +237,39 @@ Copy-Item -LiteralPath $payloadAgent -Destination $AgentPath -Force
 $caCertificate = Join-Path $CertDirectory "ca.cert.pem"
 $serverCertificate = Join-Path $CertDirectory "guest-server.cert.pem"
 $serverPrivateKey = Join-Path $CertDirectory "guest-server.key.pem"
-# Pre-clear any read-only ACL the previous provision left on the
-# private key so Copy-Item can overwrite it. icacls /reset re-applies
-# inherited ACEs from the parent dir which grants SYSTEM full control.
-# Safe to run when the file doesn't exist yet — icacls returns
-# non-zero, which we swallow.
 foreach ($target in @($caCertificate, $serverCertificate, $serverPrivateKey)) {
-    if (Test-Path -LiteralPath $target) {
-        & "$env:SystemRoot\System32\icacls.exe" $target /reset 2>&1 | Out-Null
-    }
+    Remove-ExistingStagedFile -Path $target
 }
 Copy-Item -LiteralPath $payloadCa -Destination $caCertificate -Force
 Copy-Item -LiteralPath $payloadServerCert -Destination $serverCertificate -Force
 Copy-Item -LiteralPath $payloadServerKey -Destination $serverPrivateKey -Force
 
-# Lock down the mTLS private key: SYSTEM + Administrators read only.
-& "$env:SystemRoot\System32\icacls.exe" $serverPrivateKey /inheritance:r /grant:r `
-    "NT AUTHORITY\SYSTEM:(R)" "BUILTIN\Administrators:(R)" | Out-Null
+$credentialsPath = "C:\ProgramData\Crucible\Agent\credentials.json"
+$credentials = [ordered]@{
+    standard = [ordered]@{
+        username = "CrucibleUser"
+        password = (Require-SecretEnvironment -Name "CRUCIBLE_STANDARD_PASSWORD")
+    }
+    admin = [ordered]@{
+        username = "CrucibleAdmin"
+        password = (Require-SecretEnvironment -Name "CRUCIBLE_ADMIN_PASSWORD")
+    }
+}
+$credentialsJson = $credentials | ConvertTo-Json -Depth 4
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($credentialsPath, $credentialsJson, $utf8NoBom)
+$credAcl = Get-Acl -LiteralPath $credentialsPath
+$credAcl.SetAccessRuleProtection($true, $false)
+$credAcl.Access | ForEach-Object { $credAcl.RemoveAccessRule($_) | Out-Null }
+foreach ($identity in @("NT AUTHORITY\SYSTEM", "BUILTIN\Administrators")) {
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, "FullControl", "Allow")
+    $credAcl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $credentialsPath -AclObject $credAcl
+
+# Lock down the mTLS private key to SYSTEM + Administrators while keeping
+# FullControl so future re-provision runs can overwrite the file cleanly.
+Set-SystemAndAdministratorsOnlyAcl -Path $serverPrivateKey
 
 foreach ($path in @($caCertificate, $serverCertificate, $serverPrivateKey)) {
     if (-not (Test-Path -LiteralPath $path)) {
@@ -181,8 +288,8 @@ if (-not (Test-Path -LiteralPath $AgentPath)) {
 # antimalware quarantine, TLS cert/key parse error, audit log path issue)
 # with a clear stderr instead of an opaque "service stopped" later.
 $smokePort = 18443
-$smokeOut = Join-Path $env:TEMP "crucible-agent-smoke.out"
-$smokeErr = Join-Path $env:TEMP "crucible-agent-smoke.err"
+$smokeOut = Join-Path $tempDirectory "crucible-agent-smoke.out"
+$smokeErr = Join-Path $tempDirectory "crucible-agent-smoke.err"
 Remove-Item $smokeOut, $smokeErr -ErrorAction SilentlyContinue
 $smokeArgs = @(
     "run",
@@ -225,6 +332,8 @@ $binaryPath = @(
     "--tls-key", ('"{0}"' -f $serverPrivateKey),
     "--tls-client-ca", ('"{0}"' -f $caCertificate),
     "--staging-dir", '"C:\ProgramData\Crucible\staging"',
+    "--credentials", ('"{0}"' -f $credentialsPath),
+    "--exec-dir", ('"{0}"' -f $execDirectory),
     "--audit-log", '"C:\ProgramData\Crucible\Agent\audit.jsonl"'
 ) -join " "
 
@@ -238,10 +347,7 @@ if ($null -ne $existingService) {
     if ($existingService.Status -ne "Stopped") {
         Stop-Service -Name $ServiceName -Force
     }
-    & $scExe delete $ServiceName | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "sc.exe delete failed (exit $LASTEXITCODE)"
-    }
+    Remove-ServiceRegistration -Name $ServiceName
     Start-Sleep -Seconds 1
 }
 
@@ -253,13 +359,13 @@ if ($null -ne $existingService) {
 # that via cmd.exe — cmd.exe parses the command line directly without
 # PowerShell's argv re-encoding.
 $cmdBinPath = $binaryPath -replace '"', '\"'
-$cmdPath = Join-Path $env:TEMP "crucible-install-agent-$([guid]::NewGuid().ToString('n')).cmd"
-$cmdContent = @"
-@echo off
-"$scExe" create $ServiceName binPath= "$cmdBinPath" start= auto DisplayName= "Crucible Guest Agent"
-exit /b %ERRORLEVEL%
-"@
-$cmdContent | Out-File -FilePath $cmdPath -Encoding ASCII
+$cmdPath = Join-Path $tempDirectory "crucible-install-agent-$([guid]::NewGuid().ToString('n')).cmd"
+$cmdContent = @(
+    "@echo off",
+    ('"{0}" create {1} binPath= "{2}" start= auto DisplayName= "Crucible Guest Agent"' -f $scExe, $ServiceName, $cmdBinPath),
+    "exit /b %ERRORLEVEL%"
+)
+$cmdContent | Set-Content -LiteralPath $cmdPath -Encoding ASCII
 try {
     # Use Start-Process synchronously so we get a deterministic exit code
     # back regardless of PowerShell's native-command pipeline quirks.
@@ -341,8 +447,8 @@ if (-not $confirmedRunning) {
     # would normally have to talk to SCM. This sidesteps the SCM
     # process-state black box and surfaces the real crash cause
     # (port-bind error, cert read error, key parse error, ...).
-    $directOut = Join-Path $env:TEMP "crucible-agent-direct.out"
-    $directErr = Join-Path $env:TEMP "crucible-agent-direct.err"
+    $directOut = Join-Path $tempDirectory "crucible-agent-direct.out"
+    $directErr = Join-Path $tempDirectory "crucible-agent-direct.err"
     Remove-Item $directOut, $directErr -ErrorAction SilentlyContinue
     $directArgs = @(
         "run",
@@ -351,6 +457,8 @@ if (-not $confirmedRunning) {
         "--tls-key", $serverPrivateKey,
         "--tls-client-ca", $caCertificate,
         "--staging-dir", "C:\ProgramData\Crucible\staging",
+        "--credentials", $credentialsPath,
+        "--exec-dir", $execDirectory,
         "--audit-log", "C:\ProgramData\Crucible\Agent\audit.jsonl"
     )
     try {

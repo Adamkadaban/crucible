@@ -32,6 +32,8 @@ type Config struct {
 	ClientCACertificatePath string
 	AuditLogPath            string
 	StagingDirectory        string
+	CredentialsPath         string
+	ExecDirectory           string
 	MaxRequestBytes         int64
 	Version                 string
 	// Internal hooks so tests can inject a listener (e.g., 127.0.0.1:0).
@@ -72,13 +74,14 @@ func Run(parent context.Context, cfg Config) error {
 		}
 	}
 	defer listener.Close()
-	if cfg.ListenerReady != nil {
-		close(cfg.ListenerReady)
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health.Handler(cfg.Version))
-	mux.HandleFunc("/exec", exec.Handler(auditor, cfg.MaxRequestBytes))
+	execRunner, err := exec.NewRunner(cfg.CredentialsPath, cfg.ExecDirectory)
+	if err != nil {
+		return err
+	}
+	mux.HandleFunc("/exec", exec.Handler(auditor, cfg.MaxRequestBytes, execRunner))
 	mux.HandleFunc("/upload", files.UploadHandler(auditor, cfg.StagingDirectory, cfg.MaxRequestBytes))
 	mux.HandleFunc("/download", files.DownloadHandler(auditor, cfg.StagingDirectory))
 
@@ -86,6 +89,9 @@ func Run(parent context.Context, cfg Config) error {
 		Handler:           withRequestID(withClientIdentity(auditor, mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+	if cfg.ListenerReady != nil {
+		close(cfg.ListenerReady)
 	}
 
 	ctx, cancel := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)

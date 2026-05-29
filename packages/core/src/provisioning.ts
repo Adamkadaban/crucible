@@ -32,9 +32,9 @@ export const PROVISIONING_STAGE_IDS = [
   "vm-booted",
   "qga-ready",
   "windbg-installed",
+  "local-accounts-created",
   "guest-agent-installed",
   "policy-configured",
-  "local-accounts-created",
   "health-checked",
   "snapshot-prepared",
 ] as const;
@@ -315,10 +315,10 @@ export const PROVISIONING_STAGE_TRANSITIONS: readonly ProvisioningStageTransitio
   { from: "media-ready", onSuccess: "vm-booted", onFailure: "blocked" },
   { from: "vm-booted", onSuccess: "qga-ready", onFailure: "blocked" },
   { from: "qga-ready", onSuccess: "windbg-installed", onFailure: "blocked" },
-  { from: "windbg-installed", onSuccess: "guest-agent-installed", onFailure: "blocked" },
+  { from: "windbg-installed", onSuccess: "local-accounts-created", onFailure: "blocked" },
+  { from: "local-accounts-created", onSuccess: "guest-agent-installed", onFailure: "blocked" },
   { from: "guest-agent-installed", onSuccess: "policy-configured", onFailure: "blocked" },
-  { from: "policy-configured", onSuccess: "local-accounts-created", onFailure: "blocked" },
-  { from: "local-accounts-created", onSuccess: "health-checked", onFailure: "blocked" },
+  { from: "policy-configured", onSuccess: "health-checked", onFailure: "blocked" },
   { from: "health-checked", onSuccess: "snapshot-prepared", onFailure: "blocked" },
   { from: "snapshot-prepared", onSuccess: "complete", onFailure: "blocked" },
 ];
@@ -1241,9 +1241,29 @@ function buildProvisioningStageContracts(
       producesSnapshot: false,
     },
     {
+      id: "local-accounts-created",
+      title: "Local execution accounts",
+      dependsOn: ["windbg-installed"],
+      readinessChecks: [
+        requiredCheck("standard-account", "Standard execution account exists and can log on"),
+        requiredCheck("admin-account", "Admin execution account exists and can run elevated tasks"),
+      ],
+      script: script(
+        "create-local-accounts",
+        "guest-agent-powershell",
+        "guest/provision/create-local-accounts.ps1",
+        {
+          elevated: true,
+          environmentSecretRefs: ["windows-standard-password", "windows-admin-password"],
+        },
+      ),
+      producesSecrets: ["windows-standard-password", "windows-admin-password"],
+      producesSnapshot: false,
+    },
+    {
       id: "guest-agent-installed",
       title: "Guest agent installation",
-      dependsOn: ["windbg-installed"],
+      dependsOn: ["local-accounts-created"],
       readinessChecks: [
         requiredCheck("service-installed", "Crucible guest service is installed"),
         requiredCheck("service-running", "Crucible guest service is running"),
@@ -1262,6 +1282,7 @@ function buildProvisioningStageContracts(
         ],
         timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
         elevated: true,
+        environmentSecretRefs: ["windows-standard-password", "windows-admin-password"],
       }),
       producesSecrets: [
         "mtls-ca-private-key",
@@ -1301,26 +1322,6 @@ function buildProvisioningStageContracts(
         },
       ),
       producesSecrets: [],
-      producesSnapshot: false,
-    },
-    {
-      id: "local-accounts-created",
-      title: "Local execution accounts",
-      dependsOn: ["policy-configured"],
-      readinessChecks: [
-        requiredCheck("standard-account", "Standard execution account exists and can log on"),
-        requiredCheck("admin-account", "Admin execution account exists and can run elevated tasks"),
-      ],
-      script: script(
-        "create-local-accounts",
-        "guest-agent-powershell",
-        "guest/provision/create-local-accounts.ps1",
-        {
-          elevated: true,
-          environmentSecretRefs: ["windows-standard-password", "windows-admin-password"],
-        },
-      ),
-      producesSecrets: ["windows-standard-password", "windows-admin-password"],
       producesSnapshot: false,
     },
     {
