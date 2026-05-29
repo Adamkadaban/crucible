@@ -329,7 +329,7 @@ if (-not $confirmedRunning) {
         "(no audit log at $auditLog)"
     }
     $eventTail = try {
-        Get-WinEvent -LogName System -MaxEvents 10 -FilterHashtable @{LogName='System';ProviderName='Service Control Manager'} -ErrorAction Stop |
+        Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Service Control Manager'} -MaxEvents 50 -ErrorAction Stop |
             Where-Object { $_.Message -match $ServiceName } |
             Select-Object -First 5 TimeCreated, Message |
             Format-List | Out-String

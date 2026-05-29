@@ -35,7 +35,7 @@ describe("SnapshotManager", () => {
       devices: ["crucible-disk0"],
     });
     expect((harness.qmp.calls[1]?.args as { "job-id"?: string })?.["job-id"]).toMatch(
-      /^crucible-snapshot-save-\d+$/,
+      /^crucible-snapshot-save-\d+-[0-9a-f]{8}$/,
     );
     expect(result.qcow2Commands).toEqual([]);
     expect(result.snapshot).toMatchObject({
@@ -105,7 +105,7 @@ describe("SnapshotManager", () => {
       devices: ["crucible-disk0"],
     });
     expect((harness.qmp.calls[1]?.args as { "job-id"?: string })?.["job-id"]).toMatch(
-      /^crucible-snapshot-load-\d+$/,
+      /^crucible-snapshot-load-\d+-[0-9a-f]{8}$/,
     );
     expect(result.restoredAt).toBe("2026-05-27T00:00:00.000Z");
     const manifest = await readJson<ArtifactManifest>(harness.config.artifacts.manifestPath);

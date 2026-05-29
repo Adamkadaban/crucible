@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -17,6 +18,8 @@ import { QmpClient } from "./qmp.js";
 
 export const CLEAN_BASE_SNAPSHOT_NAME = "clean-base";
 const DEFAULT_QEMU_IMG_TIMEOUT_MS = 30_000;
+
+const jobIdSuffix = (): string => `${Date.now()}-${randomBytes(4).toString("hex")}`;
 
 export type SnapshotMode = "online-qmp" | "offline-qcow2";
 
@@ -81,7 +84,7 @@ export class SnapshotManager {
           // The CRUCIBLE disk node id is configured in QemuCommandPlan
           // via -drive ...,id=crucible-disk0; that node holds both the
           // VM state and the data, so it's the same id for both.
-          "job-id": `crucible-snapshot-save-${Date.now()}`,
+          "job-id": `crucible-snapshot-save-${jobIdSuffix()}`,
           tag: snapshotName,
           vmstate: "crucible-disk0",
           devices: ["crucible-disk0"],
@@ -131,7 +134,7 @@ export class SnapshotManager {
           qmp,
           "snapshot-load",
           {
-            "job-id": `crucible-snapshot-load-${Date.now()}`,
+            "job-id": `crucible-snapshot-load-${jobIdSuffix()}`,
             tag: snapshotName,
             vmstate: "crucible-disk0",
             devices: ["crucible-disk0"],
