@@ -8,7 +8,6 @@ import {
   type ProvisioningExecutor,
   type ProvisioningSecretKind,
   type ProvisioningStageContract,
-  type ProvisioningStageId,
 } from "./provisioning.js";
 
 const DEFAULT_QGA_TIMEOUT_MS = 60_000;
@@ -473,20 +472,6 @@ export type QgaProvisioningExecutorOptions = {
   readonly readinessPollIntervalMs?: number;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
-  /**
-   * Map of host-side stage IDs → list of (hostPath, guestPath) pairs to
-   * upload before that stage's PowerShell script runs. Lets the CLI stage
-   * mTLS material + the agent binary before `install-guest-agent` fires,
-   * without bundling them into the autounattend ISO. Keyed by the
-   * concrete `ProvisioningStageId` union so a misspelled stage id is a
-   * compile error instead of a silent no-op.
-   */
-  readonly filesToStage?: Partial<Record<ProvisioningStageId, readonly StagedFile[]>>;
-};
-
-export type StagedFile = {
-  readonly hostPath: string;
-  readonly guestPath: string;
 };
 
 export class QgaProvisioningExecutor implements ProvisioningExecutor {
@@ -498,7 +483,6 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
   readonly #readinessPollIntervalMs: number;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  readonly #filesToStage: Partial<Record<ProvisioningStageId, readonly StagedFile[]>>;
 
   constructor(options: QgaProvisioningExecutorOptions) {
     this.#client = options.client;
@@ -511,29 +495,9 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     this.#now = options.now ?? (() => Date.now());
     this.#sleep =
       options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-    this.#filesToStage = options.filesToStage ?? {};
   }
 
   async runStage(stage: ProvisioningStageContract) {
-    // Upload any files registered for this stage before the script runs.
-    // Used by the CLI to push mTLS material + the agent binary into the
-    // guest immediately before install-guest-agent fires, so the script
-    // sees them in place.
-    const staged = this.#filesToStage[stage.id];
-    if (staged !== undefined && staged.length > 0) {
-      for (const file of staged) {
-        try {
-          await this.#stageFile(file);
-        } catch (error) {
-          throw new CrucibleError(
-            "PROCESS_FAILED",
-            `Failed to stage file for stage '${stage.id}': ${file.hostPath} -> ${file.guestPath}: ${error instanceof Error ? error.message : String(error)}`,
-            error,
-          );
-        }
-      }
-    }
-
     if (stage.id === "media-ready" || stage.id === "vm-booted") {
       return {
         id: stage.id,
@@ -565,7 +529,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     }
 
     const env = await this.#buildStageEnv(stage.script.environmentSecretRefs);
-    const args = await this.#stageScriptArgs(stage);
+    const args = this.#stageScriptArgs(stage);
     const result = await this.#client.exec(stage.script.executable, args, {
       timeoutMs: Math.max(stage.script.timeoutMs, this.#timeoutMs),
       env,
@@ -599,36 +563,6 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     };
   }
 
-  async #stageFile(file: StagedFile): Promise<void> {
-    const contents = await readFile(file.hostPath);
-    await this.#ensureGuestDirectory(guestParentDir(file.guestPath));
-    await this.#client.writeFile(file.guestPath, contents);
-  }
-
-  async #ensureGuestDirectory(guestPath: string): Promise<void> {
-    if (guestPath === "") {
-      return;
-    }
-    // qemu-ga's guest-file-open does not create missing parent directories.
-    // PowerShell's New-Item -Force is idempotent (no error if the path
-    // already exists) and creates intermediate directories. Prefer it over
-    // cmd.exe `mkdir` because qemu-ga's spawn of cmd.exe has been flaky
-    // during the install/postinstall window (#119, #122 follow-up).
-    const psCommand = `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force -Path '${guestPath.replaceAll("'", "''")}' | Out-Null`;
-    const result = await this.#client.exec(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", psCommand],
-      { timeoutMs: this.#timeoutMs, idempotent: true },
-    );
-    if (result.timedOut || (result.exitCode !== 0 && result.exitCode !== undefined)) {
-      throw new CrucibleError(
-        "PROCESS_FAILED",
-        `Failed to mkdir guest directory ${guestPath}: exit=${result.exitCode ?? "none"} timedOut=${result.timedOut} stderr=${(result.stderr ?? "").slice(0, 500)}`,
-        { exitCode: result.exitCode, stderr: result.stderr, stdout: result.stdout },
-      );
-    }
-  }
-
   async #waitForGuestReadiness(): Promise<void> {
     const deadline = this.#now() + this.#readinessTimeoutMs;
     let lastError: unknown;
@@ -648,32 +582,50 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     );
   }
 
-  async #stageScriptArgs(stage: ProvisioningStageContract): Promise<readonly string[]> {
+  #stageScriptArgs(stage: ProvisioningStageContract): readonly string[] {
     if (stage.script === undefined) {
       throw new CrucibleError("STATE_INVALID", `stage ${stage.id} has no script`);
     }
-    const scriptBody = await readFile(stage.script.scriptPath, "utf8");
-    const guestPath = `C:\\ProgramData\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
-    try {
-      await this.#ensureGuestDirectory(guestParentDir(guestPath));
-      await this.#client.writeFile(guestPath, scriptBody);
-    } catch (error) {
-      throw new CrucibleError(
-        "PROCESS_FAILED",
-        `Failed to stage script for stage '${stage.id}': ${stage.script.scriptPath} -> ${guestPath}: ${error instanceof Error ? error.message : String(error)}`,
-        error,
-      );
-    }
+    // The per-stage PowerShell script ships on crucible-payload.iso —
+    // mounted as a CD-ROM by QEMU, NOT uploaded over qemu-ga writeFile.
+    // The guest-side resolveCruciblePayloadDrive helper finds the drive
+    // letter (CD with volume label 'CRUCIBLE') so we don't have to
+    // depend on a fixed assignment. See #130 for why we don't writeFile.
+    const scriptName = path.basename(stage.script.scriptPath);
+    const psPrelude = [
+      "$ErrorActionPreference='Stop';",
+      "$payload=Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5'|" +
+        "?{ $_.VolumeName -eq 'CRUCIBLE' }|Select-Object -First 1;",
+      "if(-not $payload){throw 'CRUCIBLE payload CD not found'};",
+      `$script=Join-Path "$($payload.DeviceID)\\\\stages" '${scriptName}';`,
+      "if(-not(Test-Path -LiteralPath $script)){" +
+        'throw "Stage script not on payload CD: $script"};',
+      // & $script in PowerShell terminates the script's scope only — its
+      // `exit N` does NOT propagate to our wrapping powershell -Command
+      // process by default. Capture $LASTEXITCODE (set by the script's
+      // exit statement) and propagate it explicitly so the QGA executor
+      // can map exit 75 (EX_TEMPFAIL = opt-in skip) to a succeeded stage.
+      "& $script @args;",
+      "exit $LASTEXITCODE",
+    ].join("");
     // The contract stores the full PowerShell invocation
     // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
-    // so the host-side runner can spawn powershell.exe directly. The
-    // QGA-backed runner re-builds that prefix around the guest-staged
-    // copy, so peel off everything up to and including
-    // `-File <host-path>` and keep only the trailing user arguments.
+    // so the host-side runner can spawn powershell.exe directly. Peel
+    // off everything up to and including `-File <host-path>` and keep
+    // only the trailing user arguments — those become `@args` to the
+    // CD-resident script.
     const contractArgs = stage.script.arguments ?? [];
     const fileFlagIndex = contractArgs.indexOf("-File");
     const trailingArgs = fileFlagIndex >= 0 ? contractArgs.slice(fileFlagIndex + 2) : contractArgs;
-    return ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", guestPath, ...trailingArgs];
+    return [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      psPrelude,
+      ...trailingArgs,
+    ];
   }
 
   async #buildStageEnv(
@@ -746,9 +698,4 @@ function describeAbortReason(reason: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function guestParentDir(guestPath: string): string {
-  const idx = guestPath.lastIndexOf("\\");
-  return idx <= 0 ? "" : guestPath.slice(0, idx);
 }

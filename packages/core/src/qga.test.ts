@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,37 +45,28 @@ describe("QGA client and provisioning executor", () => {
       const result = await executor.runStage(scriptStage());
 
       expect(result.status).toBe("succeeded");
-      expect(requests).toEqual([
-        "guest-exec",
-        "guest-exec-status",
-        "guest-file-open",
-        "guest-file-write",
-        "guest-file-close",
-        "guest-exec",
-        "guest-exec-status",
-      ]);
-      // First guest-exec is the New-Item -Force for C:\ProgramData\Crucible\stages.
+      // The stage script ships on crucible-payload.iso (CD-ROM, volume
+      // label CRUCIBLE) so the executor only needs ONE guest-exec /
+      // guest-exec-status pair — no upload via writeFile / file-open /
+      // file-write / file-close. The exec args are a powershell
+      // -Command that looks up the CD by label and invokes the script
+      // from there.
+      expect(requests).toEqual(["guest-exec", "guest-exec-status"]);
       expect(guestExecArgs[0]?.[0]).toBe("-NoProfile");
-      const psCommand = (guestExecArgs[0] ?? []).find(
-        (entry): entry is string => typeof entry === "string" && entry.includes("New-Item"),
-      );
-      expect(psCommand).toBeDefined();
-      expect(psCommand as string).toContain("C:\\ProgramData\\Crucible\\stages");
-      // Second guest-exec is the real powershell invocation.
-      expect(guestExecArgs[1]).toContain("-File");
-      const fileArg = (guestExecArgs[1] ?? []).find(
+      expect(guestExecArgs[0]).toContain("-Command");
+      const psBlock = (guestExecArgs[0] ?? []).find(
         (entry): entry is string =>
-          typeof entry === "string" && entry.endsWith("install-windbg.ps1"),
+          typeof entry === "string" && entry.includes("Win32_LogicalDisk"),
       );
-      expect(fileArg).toBeDefined();
-      expect(fileArg).toContain("C:\\ProgramData\\Crucible\\stages\\");
-      expect(guestExecArgs[1]).not.toContain("guest/provision/install-windbg.ps1");
-      for (const flag of ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]) {
-        const occurrences = (guestExecArgs[1] ?? []).filter((arg) => arg === flag).length;
-        expect(occurrences, `flag ${flag} should appear once`).toBe(1);
-      }
-      expect(guestExecArgs[1]).toContain("-SymbolCache");
-      expect(guestExecArgs[1]).toContain("C:\\Symbols");
+      expect(psBlock).toBeDefined();
+      // The PowerShell block discovers the CRUCIBLE CD by volume label
+      // and executes the named script from there.
+      expect(psBlock as string).toContain("VolumeName -eq 'CRUCIBLE'");
+      expect(psBlock as string).toContain("install-windbg.ps1");
+      // User-supplied script arguments are appended after the PowerShell
+      // -Command block as @args to the invocation.
+      expect(guestExecArgs[0]).toContain("-SymbolCache");
+      expect(guestExecArgs[0]).toContain("C:\\Symbols");
     } finally {
       await server.close();
     }
@@ -184,122 +175,6 @@ describe("QGA client and provisioning executor", () => {
       });
     } finally {
       await server.close();
-    }
-  });
-
-  it("stages registered files via guest-file-open/write/close before the stage script runs", async () => {
-    const tmp = await mkdtemp(join(tmpdir(), "crucible-stage-"));
-    const hostFile = join(tmp, "ca.cert.pem");
-    await writeFile(hostFile, "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n");
-
-    const writes: Array<{ path: string; buf: string }> = [];
-    const events: Array<{ kind: string; detail: string }> = [];
-    let activeHandle = 7;
-    let execPid = 100;
-    const fileBuffers: Record<number, { path: string; data: string }> = {};
-    const execCommands: Record<number, string> = {};
-    const server = await startFakeQga((request) => {
-      const args = request.arguments ?? {};
-      if (request.execute === "guest-file-open") {
-        const p = args.path as string;
-        events.push({ kind: "file-open", detail: p });
-        activeHandle += 1;
-        fileBuffers[activeHandle] = { path: p, data: "" };
-        return { return: { handle: activeHandle } };
-      }
-      if (request.execute === "guest-file-write") {
-        const handle = args.handle as number;
-        const entry = fileBuffers[handle];
-        const chunk = args["buf-b64"];
-        if (entry !== undefined && typeof chunk === "string") {
-          entry.data += chunk;
-        }
-        return { return: {} };
-      }
-      if (request.execute === "guest-file-close") {
-        const handle = args.handle as number;
-        const entry = fileBuffers[handle];
-        if (entry !== undefined) {
-          writes.push({ path: entry.path, buf: entry.data });
-        }
-        return { return: {} };
-      }
-      if (request.execute === "guest-exec") {
-        execPid += 1;
-        const argv = (args.arg as readonly string[] | undefined) ?? [];
-        const cmd = `${args.path as string} ${argv.join(" ")}`;
-        execCommands[execPid] = cmd;
-        events.push({ kind: "exec", detail: cmd });
-        return { return: { pid: execPid } };
-      }
-      if (request.execute === "guest-exec-status") {
-        return { return: { exited: true, exitcode: 0 } };
-      }
-      return { return: {} };
-    });
-    try {
-      const executor = new QgaProvisioningExecutor({
-        client: new QgaClient({ socketPath: server.socketPath }),
-        vmName: "stage-vm",
-        secretsDirectory: "secrets",
-        filesToStage: {
-          "guest-agent-installed": [
-            {
-              hostPath: hostFile,
-              guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
-            },
-          ],
-        },
-      });
-      const result = await executor.runStage({
-        ...scriptStage(),
-        id: "guest-agent-installed",
-      });
-      expect(result.status).toBe("succeeded");
-      // 2 writes: our staged ca.cert.pem + the executor's own copy of the
-      // PowerShell script. We care that the staged file landed at the
-      // configured guest path before the exec happened.
-      const stagedWrite = writes.find(
-        (w) => w.path === "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
-      );
-      expect(stagedWrite).toBeDefined();
-
-      // Regression for #119: New-Item must run for each guestPath's parent
-      // BEFORE the corresponding guest-file-open, otherwise qemu-ga errors
-      // with `guest-file-open` against a missing dir on first provision.
-      function indexOfFirst(matcher: (event: { kind: string; detail: string }) => boolean): number {
-        return events.findIndex(matcher);
-      }
-      const certsMkdir = indexOfFirst(
-        (e) =>
-          e.kind === "exec" &&
-          e.detail.includes("New-Item") &&
-          e.detail.includes("C:\\ProgramData\\Crucible\\Agent\\certs"),
-      );
-      const certsOpen = indexOfFirst(
-        (e) =>
-          e.kind === "file-open" &&
-          e.detail === "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
-      );
-      expect(certsMkdir).toBeGreaterThanOrEqual(0);
-      expect(certsOpen).toBeGreaterThanOrEqual(0);
-      expect(certsMkdir).toBeLessThan(certsOpen);
-
-      const stagesMkdir = indexOfFirst(
-        (e) =>
-          e.kind === "exec" &&
-          e.detail.includes("New-Item") &&
-          e.detail.includes("C:\\ProgramData\\Crucible\\stages"),
-      );
-      const scriptOpen = indexOfFirst(
-        (e) => e.kind === "file-open" && e.detail.startsWith("C:\\ProgramData\\Crucible\\stages\\"),
-      );
-      expect(stagesMkdir).toBeGreaterThanOrEqual(0);
-      expect(scriptOpen).toBeGreaterThanOrEqual(0);
-      expect(stagesMkdir).toBeLessThan(scriptOpen);
-    } finally {
-      await server.close();
-      await rm(tmp, { recursive: true, force: true });
     }
   });
 
