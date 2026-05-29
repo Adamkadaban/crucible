@@ -445,6 +445,17 @@ async function runProvisionCommand(
       executor,
       snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
       skipBootKeyNudge: runtime.skipBootKeyNudge,
+      afterStage: async (stage) => {
+        if (
+          stage.id !== "analysis-tools-installed" ||
+          lifecyclePrep.finalLifecycleManager === undefined
+        ) {
+          return;
+        }
+        await lifecyclePrep.lifecycleManager.stop();
+        await lifecyclePrep.finalLifecycleManager.start();
+        await waitForQgaAfterNetworkRestart(config, lifecycleAbort.signal);
+      },
     });
 
     return {
@@ -475,6 +486,33 @@ async function runProvisionCommand(
       );
     }
   }
+}
+
+async function waitForQgaAfterNetworkRestart(
+  config: CrucibleConfig,
+  signal: AbortSignal,
+): Promise<void> {
+  const client = new QgaClient({
+    socketPath: config.qga.socketPath,
+    timeoutMs: config.qga.timeoutMs,
+    signal,
+  });
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await client.ping();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+  throw new CrucibleError(
+    "QMP_TIMEOUT",
+    "Timed out waiting for QGA after final-network restart",
+    lastError,
+  );
 }
 
 type LifecycleLivenessHandle = { readonly stop: () => void };
@@ -546,6 +584,7 @@ async function tryKillLifecycle(manager: CliLifecycleManager): Promise<void> {
 
 type ProvisioningLifecyclePreparation = {
   readonly lifecycleManager: CliLifecycleManager;
+  readonly finalLifecycleManager?: CliLifecycleManager;
   readonly firstBootPlan?: Awaited<ReturnType<typeof prepareRealFirstBootProvisioning>>;
 };
 
@@ -613,7 +652,7 @@ async function getProvisioningLifecyclePreparation(
     agentBinaryPath: resolveGuestAgentBinaryPath(),
   });
   const qemuPlan = buildQemuCommandPlan({
-    config,
+    config: { ...config, network: { ...config.network, mode: "nat" } },
     diskPath: firstBootPlan.diskPath,
     bootMedia: {
       windowsIsoPath: config.media.windowsIso?.path,
@@ -625,9 +664,19 @@ async function getProvisioningLifecyclePreparation(
       ovmfVarsPath: firstBootPlan.ovmfVarsPath,
     },
   });
+  const finalQemuPlan = buildQemuCommandPlan({
+    config,
+    diskPath: firstBootPlan.diskPath,
+    bootMedia: {
+      ovmfCodePath: firstBootPlan.ovmfCodePath,
+      ovmfVarsPath: firstBootPlan.ovmfVarsPath,
+      payloadIsoPath: firstBootPlan.payloadIsoPath,
+    },
+  });
 
   return {
     lifecycleManager: new VmLifecycleManager({ config, plan: qemuPlan }),
+    finalLifecycleManager: new VmLifecycleManager({ config, plan: finalQemuPlan }),
     firstBootPlan,
   };
 }

@@ -201,6 +201,10 @@ export type ProvisioningCommandRunnerOptions = {
   readonly now?: () => Date;
   readonly snapshotName?: string;
   readonly skipBootKeyNudge?: boolean;
+  readonly afterStage?: (
+    stage: ProvisioningStageContract,
+    step: ProvisioningCommandStep,
+  ) => Promise<void>;
 };
 
 export type RealFirstBootProvisioningOptions = {
@@ -373,6 +377,7 @@ export async function runProvisioningCommand(
         }),
       };
     }
+    await options.afterStage?.(stage, step);
   }
 
   const snapshot = await options.snapshotManager.create(snapshotName);
@@ -1239,7 +1244,7 @@ function buildProvisioningStageContracts(
         requiredCheck("symbol-cache-writable", "Default symbol cache is writable"),
       ],
       script: script("install-windbg", "qga-powershell", "guest/provision/install-windbg.ps1", {
-        scriptArguments: ["-AllowSkipOnNetworkFailure"],
+        scriptArguments: ["-AllowSkipOnNetworkFailure", "$false"],
         timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
         elevated: true,
       }),
