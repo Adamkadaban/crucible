@@ -32,6 +32,7 @@ export const PROVISIONING_STAGE_IDS = [
   "vm-booted",
   "qga-ready",
   "windbg-installed",
+  "analysis-tools-installed",
   "local-accounts-created",
   "guest-agent-installed",
   "policy-configured",
@@ -315,7 +316,8 @@ export const PROVISIONING_STAGE_TRANSITIONS: readonly ProvisioningStageTransitio
   { from: "media-ready", onSuccess: "vm-booted", onFailure: "blocked" },
   { from: "vm-booted", onSuccess: "qga-ready", onFailure: "blocked" },
   { from: "qga-ready", onSuccess: "windbg-installed", onFailure: "blocked" },
-  { from: "windbg-installed", onSuccess: "local-accounts-created", onFailure: "blocked" },
+  { from: "windbg-installed", onSuccess: "analysis-tools-installed", onFailure: "blocked" },
+  { from: "analysis-tools-installed", onSuccess: "local-accounts-created", onFailure: "blocked" },
   { from: "local-accounts-created", onSuccess: "guest-agent-installed", onFailure: "blocked" },
   { from: "guest-agent-installed", onSuccess: "policy-configured", onFailure: "blocked" },
   { from: "policy-configured", onSuccess: "health-checked", onFailure: "blocked" },
@@ -1241,9 +1243,36 @@ function buildProvisioningStageContracts(
       producesSnapshot: false,
     },
     {
+      id: "analysis-tools-installed",
+      title: "Analysis tooling installation",
+      dependsOn: ["windbg-installed"],
+      readinessChecks: [
+        requiredCheck(
+          "sysinternals-reported",
+          "Sysinternals availability is installed or reported",
+        ),
+        requiredCheck(
+          "dynamic-tools-reported",
+          "Dynamic malware-analysis tool availability is installed or reported",
+        ),
+      ],
+      script: script(
+        "install-analysis-tools",
+        "qga-powershell",
+        "guest/provision/install-analysis-tools.ps1",
+        {
+          scriptArguments: ["-AllowSkipOnNetworkFailure"],
+          timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
+          elevated: true,
+        },
+      ),
+      producesSecrets: [],
+      producesSnapshot: false,
+    },
+    {
       id: "local-accounts-created",
       title: "Local execution accounts",
-      dependsOn: ["windbg-installed"],
+      dependsOn: ["analysis-tools-installed"],
       readinessChecks: [
         requiredCheck("standard-account", "Standard execution account exists and can log on"),
         requiredCheck("admin-account", "Admin execution account exists and can run elevated tasks"),
