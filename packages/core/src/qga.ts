@@ -91,7 +91,9 @@ export class QgaClient {
    * with their own deadline, so this intentionally does NOT retry.
    */
   async ping(): Promise<void> {
-    await this.#requestOnce("guest-ping", {});
+    await this.#withConnection("guest-ping", async (conn) => {
+      await conn.request("guest-ping", {});
+    });
   }
 
   async exec(
@@ -110,7 +112,13 @@ export class QgaClient {
   /**
    * writeFile is naturally idempotent (same path, same bytes, mode=wb
    * truncates on open) so the whole open + write + close sequence is
-   * always retried under the configured policy.
+   * always retried under the configured policy. The open/write/close
+   * runs over a SINGLE QGA connection so qemu-ga's global handle table
+   * (qga/commands-win32.c guest_file_state.filehandles) sees a clean
+   * sequence and never leaks handles — Windows qemu-ga has no per-client
+   * cleanup on disconnect, so issuing open and close on separate sockets
+   * leaves the file open forever on the guest, causing every retry to
+   * fail with ERROR_SHARING_VIOLATION against qemu-ga's own handle.
    */
   async writeFile(guestPath: string, contents: Buffer | string): Promise<void> {
     const data = typeof contents === "string" ? Buffer.from(contents, "utf8") : contents;
@@ -135,16 +143,23 @@ export class QgaClient {
     if (envEntries.length > 0) {
       execArgs.env = envEntries.map(([name, value]) => `${name}=${value}`);
     }
-    const started = await this.#requestOnce<{ readonly pid: number }>("guest-exec", execArgs);
+    // guest-exec returns a pid that survives across QGA connections —
+    // qemu-ga stores it in a global table — so the status-poll loop can
+    // use fresh connections without losing state.
+    const started = await this.#withConnection("guest-exec", (conn) =>
+      conn.request<{ readonly pid: number }>("guest-exec", execArgs),
+    );
     const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS);
 
     while (Date.now() < deadline) {
-      const status = await this.#requestOnce<{
-        readonly exited: boolean;
-        readonly exitcode?: number;
-        readonly "out-data"?: string;
-        readonly "err-data"?: string;
-      }>("guest-exec-status", { pid: started.pid });
+      const status = await this.#withConnection("guest-exec-status", (conn) =>
+        conn.request<{
+          readonly exited: boolean;
+          readonly exitcode?: number;
+          readonly "out-data"?: string;
+          readonly "err-data"?: string;
+        }>("guest-exec-status", { pid: started.pid }),
+      );
 
       if (status.exited) {
         return {
@@ -162,45 +177,58 @@ export class QgaClient {
   }
 
   async #writeFileOnce(guestPath: string, data: Buffer): Promise<void> {
-    const opened = await this.#requestOnce<{ readonly handle: number }>("guest-file-open", {
-      path: guestPath,
-      mode: "wb",
+    // CRITICAL: open + write* + close MUST share one connection. Issuing
+    // them on separate connections leaks the file handle inside qemu-ga
+    // on Windows (no per-client cleanup) and every subsequent attempt
+    // for the same path fails ERROR_SHARING_VIOLATION against the
+    // orphaned handle.
+    await this.#withConnection(`writeFile ${guestPath}`, async (conn) => {
+      const opened = await conn.request<{ readonly handle: number }>("guest-file-open", {
+        path: guestPath,
+        mode: "wb",
+      });
+      let primaryError: unknown;
+      try {
+        // qemu-ga caps a single guest-file-write at 48 KiB by default,
+        // so chunk larger payloads to stay within the limit.
+        const chunkSize = 32 * 1024;
+        for (let offset = 0; offset < data.length; offset += chunkSize) {
+          const chunk = data.subarray(offset, offset + chunkSize);
+          await conn.request("guest-file-write", {
+            handle: opened.handle,
+            "buf-b64": chunk.toString("base64"),
+          });
+        }
+      } catch (error) {
+        primaryError = error;
+      }
+      try {
+        await conn.request("guest-file-close", { handle: opened.handle });
+      } catch (closeError) {
+        if (primaryError === undefined) {
+          throw closeError;
+        }
+      }
+      if (primaryError !== undefined) {
+        if (primaryError instanceof Error) {
+          throw primaryError;
+        }
+        throw new CrucibleError(
+          "PROCESS_FAILED",
+          `writeFile failed with non-Error value`,
+          primaryError,
+        );
+      }
     });
-    let primaryError: unknown;
+  }
+
+  async #withConnection<T>(label: string, op: (conn: QgaConnection) => Promise<T>): Promise<T> {
+    const socket = await connectSocket(this.#socketPath, this.#timeoutMs);
+    const conn = new QgaConnection(socket, this.#timeoutMs);
     try {
-      // qemu-ga caps a single guest-file-write at 48 KiB by default, so chunk
-      // larger payloads to keep big PowerShell scripts within the limit.
-      const chunkSize = 32 * 1024;
-      for (let offset = 0; offset < data.length; offset += chunkSize) {
-        const chunk = data.subarray(offset, offset + chunkSize);
-        await this.#requestOnce("guest-file-write", {
-          handle: opened.handle,
-          "buf-b64": chunk.toString("base64"),
-        });
-      }
-    } catch (error) {
-      primaryError = error;
-    }
-    try {
-      await this.#requestOnce("guest-file-close", { handle: opened.handle });
-    } catch (closeError) {
-      // Close errors only matter when the write itself succeeded — otherwise
-      // the original write failure is the real signal and must not be masked
-      // by a close failure (the handle may already be invalid because qga
-      // restarted, which is exactly what triggered the write failure).
-      if (primaryError === undefined) {
-        throw closeError;
-      }
-    }
-    if (primaryError !== undefined) {
-      if (primaryError instanceof Error) {
-        throw primaryError;
-      }
-      throw new CrucibleError(
-        "PROCESS_FAILED",
-        `writeFile failed with non-Error value`,
-        primaryError,
-      );
+      return await op(conn);
+    } finally {
+      conn.dispose();
     }
   }
 
@@ -226,7 +254,7 @@ export class QgaClient {
     }
     throw new CrucibleError(
       "PROCESS_TIMEOUT",
-      `QGA ${label} retry budget exhausted (${this.#retryPolicy.budgetMs}ms)`,
+      `QGA ${label} retry budget exhausted (${this.#retryPolicy.budgetMs}ms); last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
       lastError,
     );
   }
@@ -268,36 +296,121 @@ export class QgaClient {
       this.#signal!.addEventListener("abort", onAbort, { once: true });
     });
   }
+}
 
-  async #requestOnce<T>(command: string, args: Record<string, unknown>): Promise<T> {
-    const socket = await connectSocket(this.#socketPath, this.#timeoutMs);
-    try {
-      socket.write(`${JSON.stringify({ execute: command, arguments: args })}\r\n`);
-      const response = await readResponse<T>(socket, this.#timeoutMs, command);
-      if (response.error !== undefined) {
-        // Surface qga's structured class/desc inline so operators see the
-        // actual failure cause (`The system cannot find the path
-        // specified.`, `Access is denied.`, …) instead of an opaque
-        // `QGA command failed: guest-file-open`. The structured object
-        // remains in `details` for programmatic consumers.
-        const desc = response.error.desc ?? "(no desc)";
-        const className = response.error.class ?? "GenericError";
-        throw new CrucibleError(
-          "PROCESS_FAILED",
-          `QGA command failed: ${command} — ${className}: ${desc}`,
-          response.error,
-        );
-      }
-      return response.return as T;
-    } finally {
-      // destroy(), not end(): end() sends FIN but leaves the libuv handle
-      // alive in FIN_WAIT until the peer also closes. When qemu-ga vanishes
-      // mid-request (Windows reboot), the peer never closes — and the
-      // dangling AF_UNIX handle keeps Node's event loop alive forever,
-      // wedging the CLI even after the orchestrator gives up. destroy()
-      // releases the libuv handle immediately so liveness loops can exit.
-      socket.destroy();
+/**
+ * A single open AF_UNIX connection to qemu-ga that can run multiple
+ * sequential RPCs. Critical for any stateful interaction (file handles,
+ * `guest-exec` pids) because qemu-ga on Windows has a process-global
+ * handle table with NO per-client cleanup on disconnect — closing the
+ * socket between guest-file-open and guest-file-close leaks the handle
+ * forever in qga.exe and every subsequent open for the same path
+ * collides with ERROR_SHARING_VIOLATION against qemu-ga's own handle.
+ */
+class QgaConnection {
+  readonly #socket: Socket;
+  readonly #timeoutMs: number;
+  #buffer = "";
+  #pending:
+    | { resolve: (line: string) => void; reject: (err: unknown) => void; timer: NodeJS.Timeout }
+    | undefined;
+  #closedError: Error | undefined;
+  #disposed = false;
+
+  constructor(socket: Socket, timeoutMs: number) {
+    this.#socket = socket;
+    this.#timeoutMs = timeoutMs;
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => this.#onData(chunk));
+    socket.on("error", (error) => this.#onTransportFailure(error, "QGA socket error"));
+    socket.on("close", () => this.#onTransportFailure(undefined, "QGA socket closed"));
+  }
+
+  async request<T>(command: string, args: Record<string, unknown>): Promise<T> {
+    if (this.#disposed) {
+      throw new CrucibleError("PROCESS_FAILED", `QGA connection disposed before ${command}`);
     }
+    if (this.#closedError !== undefined) {
+      throw this.#closedError;
+    }
+    this.#socket.write(`${JSON.stringify({ execute: command, arguments: args })}\r\n`);
+    const line = await this.#nextLine(command);
+    let response: QgaResponse<T>;
+    try {
+      response = JSON.parse(line) as QgaResponse<T>;
+    } catch (parseError) {
+      throw new CrucibleError("QMP_PARSE_ERROR", "Unable to parse QGA response", parseError);
+    }
+    if (response.error !== undefined) {
+      const desc = response.error.desc ?? "(no desc)";
+      const className = response.error.class ?? "GenericError";
+      throw new CrucibleError(
+        "PROCESS_FAILED",
+        `QGA command failed: ${command} — ${className}: ${desc}`,
+        response.error,
+      );
+    }
+    return response.return as T;
+  }
+
+  dispose(): void {
+    if (this.#disposed) {
+      return;
+    }
+    this.#disposed = true;
+    // destroy(), not end(): end() leaves the libuv handle in FIN_WAIT and
+    // wedges the event loop if the peer never closes.
+    this.#socket.destroy();
+  }
+
+  #onData(chunk: string): void {
+    this.#buffer += chunk;
+    while (true) {
+      const newline = this.#buffer.indexOf("\n");
+      if (newline === -1 || this.#pending === undefined) {
+        return;
+      }
+      const line = this.#buffer.slice(0, newline).trim();
+      this.#buffer = this.#buffer.slice(newline + 1);
+      const pending = this.#pending;
+      this.#pending = undefined;
+      clearTimeout(pending.timer);
+      pending.resolve(line);
+    }
+  }
+
+  #onTransportFailure(originalError: unknown, message: string): void {
+    if (this.#closedError !== undefined || this.#disposed) {
+      return;
+    }
+    this.#closedError = new CrucibleError("PROCESS_FAILED", message, originalError);
+    if (this.#pending !== undefined) {
+      const pending = this.#pending;
+      this.#pending = undefined;
+      clearTimeout(pending.timer);
+      pending.reject(this.#closedError);
+    }
+  }
+
+  #nextLine(command: string): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      if (this.#closedError !== undefined) {
+        reject(this.#closedError);
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (this.#pending !== undefined && this.#pending.timer === timer) {
+          this.#pending = undefined;
+        }
+        reject(
+          new CrucibleError(
+            "PROCESS_TIMEOUT",
+            `Timed out waiting for QGA response (${command}, ${this.#timeoutMs}ms)`,
+          ),
+        );
+      }, this.#timeoutMs);
+      this.#pending = { resolve, reject, timer };
+    });
   }
 }
 
@@ -323,10 +436,10 @@ function isTransientQgaError(error: unknown): boolean {
   if (error.message.startsWith("Unable to connect to QGA")) {
     return true;
   }
-  if (error.message === "QGA socket error") {
-    // Mid-flight socket error (e.g. ECONNRESET / EPIPE) — qemu-ga went
-    // away while we held an open connection, exactly what a reboot looks
-    // like from the host side.
+  if (error.message === "QGA socket error" || error.message === "QGA socket closed") {
+    // Mid-flight socket failure (ECONNRESET / EPIPE / peer-closed) —
+    // qemu-ga went away while we held an open connection. Exactly what
+    // a guest reboot looks like from the host side.
     return true;
   }
   const desc = (error.details as { desc?: string } | undefined)?.desc ?? "";
@@ -607,43 +720,6 @@ function connectSocket(socketPath: string, timeoutMs: number): Promise<Socket> {
     socket.once("error", (error) => {
       clearTimeout(timeout);
       reject(new CrucibleError("PROCESS_FAILED", `Unable to connect to QGA: ${socketPath}`, error));
-    });
-  });
-}
-
-function readResponse<T>(
-  socket: Socket,
-  timeoutMs: number,
-  command: string,
-): Promise<QgaResponse<T>> {
-  return new Promise((resolve, reject) => {
-    let buffer = "";
-    const timeout = setTimeout(() => {
-      reject(
-        new CrucibleError(
-          "PROCESS_TIMEOUT",
-          `Timed out waiting for QGA response (${command}, ${timeoutMs}ms)`,
-        ),
-      );
-    }, timeoutMs);
-
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      const newline = buffer.indexOf("\n");
-      if (newline === -1) {
-        return;
-      }
-      clearTimeout(timeout);
-      try {
-        resolve(JSON.parse(buffer.slice(0, newline)) as QgaResponse<T>);
-      } catch (error) {
-        reject(new CrucibleError("QMP_PARSE_ERROR", "Unable to parse QGA response", error));
-      }
-    });
-    socket.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(new CrucibleError("PROCESS_FAILED", "QGA socket error", error));
     });
   });
 }

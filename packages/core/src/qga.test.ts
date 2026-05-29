@@ -610,6 +610,46 @@ describe("QGA client and provisioning executor", () => {
     }
   });
 
+  it("writeFile runs guest-file-{open,write,close} on a single connection (qemu-ga handle-leak fix)", async () => {
+    // Regression for the second half of #130: qemu-ga on Windows
+    // (qga/commands-win32.c) has a process-global file-handle table
+    // with NO per-client cleanup on disconnect. Issuing open and close
+    // on separate sockets leaks the handle forever in qga.exe and
+    // every subsequent open for the same path fails
+    // ERROR_SHARING_VIOLATION against qemu-ga's own orphaned handle.
+    // The whole open/write/close MUST run on one socket.
+    const connectionsByCommand = new Map<string, number>();
+    const socketSeen = new Map<Socket, number>();
+    let socketCounter = 0;
+    const server = await startFakeQga((request, socket) => {
+      let id = socketSeen.get(socket);
+      if (id === undefined) {
+        socketCounter += 1;
+        id = socketCounter;
+        socketSeen.set(socket, id);
+      }
+      const command = request.execute;
+      connectionsByCommand.set(command, (connectionsByCommand.get(command) ?? 0) + id);
+      if (command === "guest-file-open") return { return: { handle: 42 } };
+      if (command === "guest-file-write") return { return: {} };
+      if (command === "guest-file-close") return { return: {} };
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 1000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await client.writeFile("C:\\Test\\a.bin", Buffer.from("payload"));
+      // Exactly ONE socket should have served open + write + close.
+      expect(socketCounter).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("propagates non-sharing-violation guest-file-open errors without retrying", async () => {
     let openAttempts = 0;
     const server = await startFakeQga((request) => {
