@@ -105,3 +105,11 @@ failed stage (was: infinite hang requiring SIGKILL). Empirical confirmation in
 `guest-file-open` call returning a structured qga error; needs separate investigation with
 stage-context in the error message. Filed as #130. `#67` remains open until the full provision ->
 snapshot -> restore -> health flow completes end-to-end.
+
+## 2026-05-29 — Phase 3 health command now queries live agent, but current restored VM wedged
+
+**Resolution:** `guest:health` now auto-discovers the provisioned mTLS bundle, calls the guest
+agent `/health`, and runs a bounded `/exec` PowerShell probe for debugger paths, service/account
+state, Defender RTP, and test-signing state; #67 remains open because the current restored local VM
+had QMP alive but QGA and the mTLS endpoint unresponsive after `snapshot:restore clean-base`, so a
+fresh provision/restore/health run is still required. `packages/cli/src/index.ts` · PR #137
