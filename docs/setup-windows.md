@@ -54,13 +54,14 @@ shows the launch argv only. Neither command downloads media, creates disks, or s
 
 ## Provisioning Outline
 
-Windows provisioning currently has contracts plus fixture-tested WinDbg, account, service, analysis
-policy, provision-command, snapshot, and health behavior. The planned flow is media readiness, VM
-boot, QGA readiness, WinDbg/CDB installation, guest agent installation, analysis policy changes,
-local account creation, health checks, and clean snapshot preparation. The WinDbg stage has
-PowerShell scripts for installing debugger tooling with `winget install Microsoft.WinDbg` or a
-Windows SDK Debugging Tools fallback, configuring `_NT_SYMBOL_PATH`, and detecting
-`cdb.exe`/`windbg.exe` readiness.
+Windows provisioning currently has contracts plus fixture-tested debugger/tooling, account, service,
+analysis policy, provision-command, snapshot, and health behavior. The flow is media readiness, VM
+boot, QGA readiness, WinDbg/CDB/KD/KDNET/GFlags installation, dynamic analysis tool reporting, local
+account creation, guest agent installation, analysis policy changes, health checks, and clean
+snapshot preparation. The WinDbg stage has PowerShell scripts for installing debugger tooling with
+`winget install Microsoft.WinDbg` or a Windows SDK Debugging Tools fallback, configuring
+`_NT_SYMBOL_PATH`, and detecting debugger readiness. The analysis-tools stage installs or reports
+Sysinternals and x64dbg availability; host-side static tools such as Ghidra stay on Linux.
 
 The analysis policy stage disables Defender policy, records observed code-integrity policy state,
 confirms test signing is disabled, and can apply optional malware-reversing profile settings such as
