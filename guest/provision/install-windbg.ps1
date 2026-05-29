@@ -110,7 +110,11 @@ function Install-WithSdkDebuggingTools {
         return
     }
 
-    Invoke-WebRequest -Uri $SdkInstallerUrl -OutFile $SdkInstallerPath -UseBasicParsing
+    # -ErrorAction Stop forces Invoke-WebRequest to throw a terminating
+    # error on DNS failure (otherwise it can write to the error stream
+    # without unwinding the stack on some PS5.1 builds, defeating the
+    # outer try/catch that maps offline runs to exit 75).
+    Invoke-WebRequest -Uri $SdkInstallerUrl -OutFile $SdkInstallerPath -UseBasicParsing -ErrorAction Stop
     & $SdkInstallerPath "/features" "OptionId.WindowsDesktopDebuggers" "/quiet" "/norestart"
     if ($LASTEXITCODE -ne 0) {
         throw "Windows SDK Debugging Tools installation failed with exit code $LASTEXITCODE"
