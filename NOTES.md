@@ -108,17 +108,17 @@ snapshot -> restore -> health flow completes end-to-end.
 
 ## 2026-05-29 — Phase 3 health command now queries live agent, but current restored VM wedged
 
-**Resolution:** `guest:health` now auto-discovers the provisioned mTLS bundle, calls the guest agent
-`/health`, and runs a bounded `/exec` PowerShell probe for debugger paths, service/account state,
-Defender RTP, and test-signing state; #67 remains open because the current restored local VM had QMP
-alive but QGA and the mTLS endpoint unresponsive after `snapshot:restore clean-base`, so a fresh
-provision/restore/health run is still required. `packages/cli/src/index.ts` · PR #137
+**Resolution:** At PR #137 time, `guest:health` started auto-discovering the provisioned mTLS
+bundle, calling the guest agent `/health`, and running a bounded `/exec` PowerShell probe for
+debugger paths, service/account state, Defender RTP, and test-signing state; #67 still remained open
+then because the current restored local VM had QMP alive but QGA and the mTLS endpoint unresponsive
+after `snapshot:restore clean-base`. `packages/cli/src/index.ts` · PR #137
 
 ## 2026-05-29 — Phase 3 real-VM exit passed
 
 **Resolution:** A fresh real-VM run on main completed `pnpm crucible provision`, explicit
-`snapshot:create clean-base`, `snapshot:restore clean-base`, and live `guest:health`; health
-reported the agent healthy, Defender RTP disabled, code-integrity state recorded/enforcement
-disabled/HVCI disabled, no code-integrity boot options, and test signing disabled. WinDbg/CDB
-availability was reported as missing because isolated offline provisioning skipped debugger
-download. `PLAN.md:272` · issue #67
+`pnpm crucible snapshot:create clean-base`, `pnpm crucible snapshot:restore clean-base`, and live
+`pnpm crucible guest:health`; health reported the agent healthy, Defender RTP disabled,
+code-integrity state recorded/enforcement disabled/HVCI disabled, no code-integrity boot options,
+and test signing disabled. WinDbg/CDB availability was reported as missing because isolated offline
+provisioning skipped debugger download. `PLAN.md:272` · issue #67

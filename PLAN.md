@@ -272,9 +272,9 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 Phase 3 real target outcome on 2026-05-29: `pnpm crucible provision`,
 `pnpm crucible snapshot:create clean-base`, `pnpm crucible snapshot:restore clean-base`, and
 `pnpm crucible guest:health` passed against the local Windows 11 KVM/QEMU VM. The final health
-output reported the live guest agent healthy, debugger availability, Defender RTP disabled,
-code-integrity state recorded and disabled, HVCI disabled, no code-integrity boot overrides, and
-test signing disabled.
+output reported the live guest agent healthy, debugger availability as missing due to offline
+provisioning, Defender RTP disabled, code-integrity state recorded and disabled, HVCI disabled, no
+code-integrity boot overrides, and test signing disabled.
 
 ### Phase 4 — Guest Control Service
 
