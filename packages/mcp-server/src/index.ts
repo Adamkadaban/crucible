@@ -12,6 +12,7 @@ import {
   buildNetworkModeChangePlan,
   buildNetworkPlan,
   buildNetworkRuntimeStatus,
+  type CrucibleConfig,
   defaultCrucibleConfig,
   type DebuggerSession,
   type DebuggerSessionSpec,
@@ -253,6 +254,7 @@ export type RegisterCrucibleToolsOptions = {
   readonly snapshotAdapter?: CrucibleSnapshotAdapter;
   readonly debuggerManager?: DebuggerSessionManager;
   readonly auditLogPath?: string;
+  readonly config?: CrucibleConfig;
   readonly networkMode?: NetworkMode;
 };
 
@@ -303,7 +305,8 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   registerVmTools(server, vmAdapter, auditLogPath);
   registerNetworkTools(
     server,
-    options.networkMode ?? defaultCrucibleConfig.network.mode,
+    options.config ?? defaultCrucibleConfig,
+    options.networkMode ?? options.config?.network.mode ?? defaultCrucibleConfig.network.mode,
     auditLogPath,
   );
   registerSnapshotTools(server, snapshotAdapter, auditLogPath);
@@ -501,14 +504,15 @@ function registerVmTools(
 
 function registerNetworkTools(
   server: McpServer,
+  config: CrucibleConfig,
   mode: NetworkMode,
   auditLogPath: string | undefined,
 ): void {
   const current = () =>
     buildNetworkPlan({
-      config: { ...defaultCrucibleConfig.network, mode },
-      vmName: defaultCrucibleConfig.vm.name,
-      networkDevice: defaultCrucibleConfig.virtio.networkDevice,
+      config: { ...config.network, mode },
+      vmName: config.vm.name,
+      networkDevice: config.virtio.networkDevice,
     });
 
   server.registerTool(
@@ -532,9 +536,9 @@ function registerNetworkTools(
     },
     (input: NetworkSetModeInputType) => {
       const requested = buildNetworkPlan({
-        config: { ...defaultCrucibleConfig.network, mode: input.mode },
-        vmName: defaultCrucibleConfig.vm.name,
-        networkDevice: defaultCrucibleConfig.virtio.networkDevice,
+        config: { ...config.network, mode: input.mode },
+        vmName: config.vm.name,
+        networkDevice: config.virtio.networkDevice,
       });
       return toJsonContent({
         ok: true,
@@ -824,6 +828,7 @@ export async function runStdioMcpServer(
     | "snapshotAdapter"
     | "debuggerManager"
     | "auditLogPath"
+    | "config"
     | "networkMode"
   >,
 ): Promise<void> {
@@ -841,6 +846,7 @@ export function createCrucibleMcpServer(
     | "snapshotAdapter"
     | "debuggerManager"
     | "auditLogPath"
+    | "config"
     | "networkMode"
   >,
 ): McpServer {

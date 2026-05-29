@@ -67,7 +67,16 @@ $gflags = Find-DebuggerExecutable -FileNames @("gflags.exe")
 $expectedSymbolPath = "srv*$SymbolCache*https://msdl.microsoft.com/download/symbols"
 $machineSymbolPath = [Environment]::GetEnvironmentVariable("_NT_SYMBOL_PATH", "Machine")
 $altSymbolPath = [Environment]::GetEnvironmentVariable("_NT_ALT_SYMBOL_PATH", "Machine")
-$symbolCacheWritable = Test-Path -LiteralPath $SymbolCache -PathType Container
+$symbolCacheWritable = $false
+try {
+    New-Item -ItemType Directory -Force -Path $SymbolCache | Out-Null
+    $probe = Join-Path $SymbolCache "crucible-symbol-cache.probe"
+    Set-Content -LiteralPath $probe -Value "ok" -Force
+    Remove-Item -LiteralPath $probe -Force
+    $symbolCacheWritable = $true
+} catch {
+    $symbolCacheWritable = $false
+}
 
 $checks = [ordered]@{
     cdbPath = $cdb

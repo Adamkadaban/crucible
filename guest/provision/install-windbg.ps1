@@ -170,6 +170,15 @@ function Test-WinDbgReadiness {
     if ($null -eq $windbg) {
         throw "windbg.exe is not discoverable after debugger installation"
     }
+    if ($null -eq $kd) {
+        throw "kd.exe is not discoverable after debugger installation"
+    }
+    if ($null -eq $kdnet) {
+        throw "kdnet.exe is not discoverable after debugger installation"
+    }
+    if ($null -eq $gflags) {
+        throw "gflags.exe is not discoverable after debugger installation"
+    }
 
     $machineSymbolPath = [Environment]::GetEnvironmentVariable("_NT_SYMBOL_PATH", "Machine")
     if ($machineSymbolPath -ne $ExpectedSymbolPath) {
@@ -178,6 +187,16 @@ function Test-WinDbgReadiness {
     $machineAltSymbolPath = [Environment]::GetEnvironmentVariable("_NT_ALT_SYMBOL_PATH", "Machine")
     if ($machineAltSymbolPath -ne $ExpectedAltSymbolPath) {
         throw "machine _NT_ALT_SYMBOL_PATH is not configured as expected"
+    }
+    $symbolCacheWritable = $false
+    try {
+        New-Item -ItemType Directory -Force -Path $ExpectedAltSymbolPath | Out-Null
+        $probe = Join-Path $ExpectedAltSymbolPath "crucible-symbol-cache.probe"
+        Set-Content -LiteralPath $probe -Value "ok" -Force
+        Remove-Item -LiteralPath $probe -Force
+        $symbolCacheWritable = $true
+    } catch {
+        throw "symbol cache is not writable: $($_.Exception.Message)"
     }
 
     return [ordered]@{
@@ -188,7 +207,7 @@ function Test-WinDbgReadiness {
         gflagsPath = $gflags
         symbolPath = $machineSymbolPath
         altSymbolPath = $machineAltSymbolPath
-        symbolCacheWritable = [bool](Test-Path -LiteralPath $ExpectedAltSymbolPath -PathType Container)
+        symbolCacheWritable = $symbolCacheWritable
     }
 }
 

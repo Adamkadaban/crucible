@@ -225,8 +225,8 @@ export function buildNetworkRuntimeStatus(plan: NetworkPlan): NetworkRuntimeStat
     controlPort: plan.qemu.controlAddress.guestApiPort,
     guestEgress:
       plan.mode === "isolated" ? "denied" : plan.mode === "capture" ? "captured" : "allowed",
-    liveSwitchSupported: plan.qemu.backend === "tap",
-    restartRequiredToChangeMode: plan.qemu.backend === "user",
+    liveSwitchSupported: false,
+    restartRequiredToChangeMode: true,
     warnings: plan.warnings,
   };
 }

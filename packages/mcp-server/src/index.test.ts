@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import { parseCrucibleConfig } from "@crucible/core";
 
 import {
   BOOTSTRAP_TOOLS,
@@ -141,7 +142,12 @@ describe("crucible MCP tools", () => {
   });
 
   it("reports network status and mode-change restart requirements", async () => {
-    const client = await harness({ networkMode: "isolated" });
+    const client = await harness({
+      config: parseCrucibleConfig({
+        vm: { name: "custom-vm" },
+        network: { mode: "isolated", controlPort: 9443 },
+      }),
+    });
     const statusResult = (await client.callTool({
       name: "network_status",
       arguments: {},
@@ -151,7 +157,11 @@ describe("crucible MCP tools", () => {
       result: { configuredMode: string; guestEgress: string };
     }>(statusResult);
     expect(status.ok).toBe(true);
-    expect(status.result).toMatchObject({ configuredMode: "isolated", guestEgress: "denied" });
+    expect(status.result).toMatchObject({
+      configuredMode: "isolated",
+      guestEgress: "denied",
+      controlPort: 9443,
+    });
 
     const setResult = (await client.callTool({
       name: "network_set_mode",
