@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	osexec "os/exec"
 	"strconv"
@@ -33,14 +34,15 @@ func (r *Runner) runCommand(ctx context.Context, req request, cmd *osexec.Cmd) e
 	if cred.Username == "" || cred.Password == "" {
 		return fmt.Errorf("%s execution credentials are incomplete", principal)
 	}
-	return runWithScheduledTask(ctx, req, cmd, cred, r.execDir)
+	return runWithScheduledTask(ctx, req, cmd, cred, principal, r.execDir)
 }
 
-func runWithScheduledTask(ctx context.Context, req request, cmd *osexec.Cmd, cred accountCredential, execDir string) error {
+func runWithScheduledTask(ctx context.Context, req request, cmd *osexec.Cmd, cred accountCredential, principal string, execDir string) error {
 	baseDir := execDir
 	if baseDir == "" {
 		baseDir = os.TempDir()
 	}
+	baseDir += `\` + principal
 	_ = os.MkdirAll(baseDir, 0o700)
 	stdoutPath := tempOutputPath(baseDir, "stdout")
 	stderrPath := tempOutputPath(baseDir, "stderr")
@@ -51,7 +53,7 @@ func runWithScheduledTask(ctx context.Context, req request, cmd *osexec.Cmd, cre
 	defer os.Remove(codePath)
 	defer os.Remove(scriptPath)
 	taskName := `\Crucible\Exec-` + strconv.FormatInt(time.Now().UnixNano(), 36)
-	defer runTool(ctx, "schtasks.exe", "/Delete", "/TN", taskName, "/F")
+	defer cleanupTask(taskName)
 	if err := os.WriteFile(scriptPath, []byte(buildCmdScript(req, cmd.Dir, stdoutPath, stderrPath, codePath)), 0o600); err != nil {
 		return err
 	}
@@ -62,6 +64,7 @@ func runWithScheduledTask(ctx context.Context, req request, cmd *osexec.Cmd, cre
 		return err
 	}
 	if err := runTool(ctx, "schtasks.exe", "/Run", "/TN", taskName); err != nil {
+		cleanupTask(taskName)
 		return err
 	}
 	if err := waitForFile(ctx, codePath); err != nil {
@@ -133,10 +136,12 @@ func copyFileToWriter(path string, writer interface{}) {
 	if !ok || w == nil {
 		return
 	}
-	data, err := os.ReadFile(path)
-	if err == nil && len(data) > 0 {
-		_, _ = w.Write(data)
+	f, err := os.Open(path)
+	if err != nil {
+		return
 	}
+	defer f.Close()
+	_, _ = io.Copy(w, f)
 }
 
 func waitForFile(ctx context.Context, path string) error {
@@ -158,7 +163,24 @@ func runTool(ctx context.Context, name string, args ...string) error {
 	cmd := osexec.CommandContext(ctx, name, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s %s failed: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s %s failed: %v: %s", name, strings.Join(redactArgs(args), " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func cleanupTask(taskName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = runTool(ctx, "schtasks.exe", "/End", "/TN", taskName)
+	_ = runTool(ctx, "schtasks.exe", "/Delete", "/TN", taskName, "/F")
+}
+
+func redactArgs(args []string) []string {
+	redacted := append([]string(nil), args...)
+	for i, arg := range redacted {
+		if strings.EqualFold(arg, "/RP") && i+1 < len(redacted) {
+			redacted[i+1] = "<redacted>"
+		}
+	}
+	return redacted
 }

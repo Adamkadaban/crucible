@@ -84,11 +84,20 @@ function Set-SystemAndAdministratorsOnlyAcl {
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
-function Grant-UsersModifyAcl {
-    param([Parameter(Mandatory = $true)][string]$Path)
+function Grant-IdentityModifyAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Identity
+    )
     $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+    foreach ($baseIdentity in @("NT AUTHORITY\SYSTEM", "BUILTIN\Administrators")) {
+        $baseRule = New-Object System.Security.AccessControl.FileSystemAccessRule($baseIdentity, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+        $acl.AddAccessRule($baseRule)
+    }
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "BUILTIN\Users",
+        $Identity,
         "Modify",
         "ContainerInherit,ObjectInherit",
         "None",
@@ -149,7 +158,11 @@ $tempDirectory = if ([string]::IsNullOrWhiteSpace($env:TEMP)) { "C:\ProgramData\
 New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
 $execDirectory = "C:\ProgramData\Crucible\Exec"
 New-Item -ItemType Directory -Force -Path $execDirectory | Out-Null
-Grant-UsersModifyAcl -Path $execDirectory
+$standardExecDirectory = Join-Path $execDirectory "standard"
+$adminExecDirectory = Join-Path $execDirectory "admin"
+New-Item -ItemType Directory -Force -Path $standardExecDirectory, $adminExecDirectory | Out-Null
+Grant-IdentityModifyAcl -Path $standardExecDirectory -Identity "CrucibleUser"
+Grant-IdentityModifyAcl -Path $adminExecDirectory -Identity "CrucibleAdmin"
 
 # Stop a previous-run agent service / process FIRST so it releases its
 # handle to $AgentPath before Copy-Item tries to overwrite. Without
