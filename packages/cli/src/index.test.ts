@@ -226,6 +226,46 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("debugger-health: unknown");
   });
 
+  it("restarts into the final lifecycle after analysis tools stage", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const events: string[] = [];
+    const setupLifecycle = fakeLifecycleManager(
+      config,
+      { processAlive: true, qmpAvailable: true },
+      events,
+      "setup",
+    );
+    const finalLifecycle = fakeLifecycleManager(
+      config,
+      { processAlive: true, qmpAvailable: true },
+      events,
+      "final",
+    );
+    const result = await runCrucibleCli(["provision"], {
+      config,
+      lifecycleManager: setupLifecycle,
+      finalLifecycleManager: finalLifecycle,
+      provisioningExecutor: {
+        runStage(stage) {
+          return Promise.resolve({
+            id: stage.id,
+            title: stage.title,
+            status: "succeeded",
+            detail: stage.script?.scriptPath ?? "readiness contract",
+          });
+        },
+      },
+      snapshotManager: fakeSnapshotManager(config),
+      skipBootKeyNudge: true,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(events).toContain("setup:start");
+    expect(events).toContain("setup:stop");
+    expect(events).toContain("final:start");
+    expect(events.at(-1)).toBe("final:status");
+  });
+
   it("rejects unknown provision options", async () => {
     const result = await runCrucibleCli(["provision", "--apply"], defaultRuntime);
 
@@ -803,6 +843,8 @@ describe("crucible CLI bootstrap", () => {
 function fakeLifecycleManager(
   config: ReturnType<typeof parseCrucibleConfig>,
   options: { readonly processAlive: boolean; readonly qmpAvailable: boolean },
+  events: string[] = [],
+  label = "lifecycle",
 ) {
   const paths = buildLifecyclePaths(config);
   const status: VmStatus = {
@@ -816,14 +858,19 @@ function fakeLifecycleManager(
 
   return {
     paths,
-    start: () => Promise.resolve({ pid: 1234, status }),
-    stop: () =>
-      Promise.resolve({
+    start: () => {
+      events.push(`${label}:start`);
+      return Promise.resolve({ pid: 1234, status });
+    },
+    stop: () => {
+      events.push(`${label}:stop`);
+      return Promise.resolve({
         status,
         mode: "stop" as const,
         qmpCommandSent: true,
         killedAfterTimeout: false,
-      }),
+      });
+    },
     poweroff: () =>
       Promise.resolve({
         status,
@@ -838,7 +885,10 @@ function fakeLifecycleManager(
         qmpCommandSent: false,
         killedAfterTimeout: true,
       }),
-    status: () => Promise.resolve(status),
+    status: () => {
+      events.push(`${label}:status`);
+      return Promise.resolve(status);
+    },
   };
 }
 
