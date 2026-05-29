@@ -244,6 +244,57 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("QMP is unavailable");
   });
 
+  it("reports live guest health when a guest client is configured", async () => {
+    const result = await runCrucibleCli(["guest:health"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () =>
+            Promise.resolve({
+              status: "ok",
+              version: "test-version",
+              hostName: "test-win",
+              startedAt: "2026-05-29T00:00:00.000Z",
+              uptimeSeconds: 42,
+              goVersion: "go1.test",
+              windbgInstalled: true,
+              cdbPath: "C:\\Debuggers\\cdb.exe",
+              windbgPath: "C:\\Debuggers\\windbg.exe",
+            }),
+          exec: () =>
+            Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: Buffer.from(
+                JSON.stringify({
+                  cdbPath: "C:\\Debuggers\\cdb.exe",
+                  windbgPath: "C:\\Debuggers\\windbg.exe",
+                  symbolPath: "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols",
+                  crucibleAdminPresent: true,
+                  crucibleUserPresent: true,
+                  qemuAgentStatus: "Running",
+                  crucibleAgentStatus: "Running",
+                  defenderRealTimeProtectionEnabled: false,
+                  testSigningEnabled: false,
+                  healthy: true,
+                }),
+              ).toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 10,
+              truncated: false,
+            }),
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Guest health: healthy");
+    expect(result.stdout).toContain("WinDbg installed: yes");
+    expect(result.stdout).toContain("CDB path: C:\\Debuggers\\cdb.exe");
+    expect(result.stdout).toContain("Defender real-time protection: no");
+    expect(result.stdout).toContain("test signing enabled: no");
+  });
+
   it("prints vm:create dry-run QEMU planning output", async () => {
     const result = await runCrucibleCli(["vm:create", "--dry-run"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),

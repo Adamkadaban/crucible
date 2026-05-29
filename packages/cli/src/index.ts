@@ -17,6 +17,7 @@ import {
   prepareRealFirstBootProvisioning,
   QgaClient,
   QgaProvisioningExecutor,
+  type GuestAgentExecResult,
   type ProcessCommand,
   type ProcessResult,
   type ProcessRunner,
@@ -28,6 +29,7 @@ import {
   type FirewallBackend,
   type FirewallCommandPlan,
   type FirewallOperationMode,
+  type GuestAgentHealth,
   type MediaCacheEntry,
   type MediaProfileName,
   type NetworkMode,
@@ -58,12 +60,36 @@ type CommandResult = {
   readonly stderr: string;
 };
 
+type CliGuestHealthClient = {
+  readonly health: () => Promise<GuestAgentHealth>;
+  readonly exec: (request: {
+    readonly executable: string;
+    readonly arguments?: readonly string[];
+    readonly timeoutMs?: number;
+  }) => Promise<GuestAgentExecResult>;
+  readonly close: () => Promise<void>;
+};
+
+type GuestPolicyHealth = {
+  readonly cdbPath?: string | null;
+  readonly windbgPath?: string | null;
+  readonly symbolPath?: string | null;
+  readonly crucibleAdminPresent?: boolean;
+  readonly crucibleUserPresent?: boolean;
+  readonly qemuAgentStatus?: string;
+  readonly crucibleAgentStatus?: string;
+  readonly defenderRealTimeProtectionEnabled?: boolean | null;
+  readonly testSigningEnabled?: boolean | null;
+  readonly healthy?: boolean;
+};
+
 type CliRuntime = {
   readonly config?: CrucibleConfig;
   readonly configPath?: string;
   readonly lifecycleManager?: CliLifecycleManager;
   readonly provisioningExecutor?: ProvisioningExecutor;
   readonly snapshotManager?: CliSnapshotManager;
+  readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
   readonly skipBootKeyNudge?: boolean;
 };
@@ -647,6 +673,33 @@ async function runGuestHealthCommand(
   }
 
   const config = getRuntimeConfig(runtime);
+  const guestClientFactory = runtime.guestClientFactory ?? buildDefaultGuestClientFactory(config);
+  if (guestClientFactory !== undefined) {
+    try {
+      const client = await guestClientFactory();
+      try {
+        const health = await client.health();
+        const policyHealth = await readGuestPolicyHealth(client);
+        const healthy = health.status === "ok" && (policyHealth?.healthy ?? true);
+        return {
+          exitCode: healthy ? 0 : 1,
+          stdout: renderGuestAgentHealth(health, policyHealth),
+          stderr: "",
+        };
+      } finally {
+        await client.close();
+      }
+    } catch (error) {
+      if (runtime.guestClientFactory !== undefined || hasExplicitGuestClientEnv()) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  }
+
   const report = buildGuestHealthReport({
     config,
     lifecycleStatus: await getLifecycleManager(runtime).status(),
@@ -733,6 +786,86 @@ function renderGuestHealth(report: GuestHealthReport): string {
       (check) => `- ${check.id}: ${check.status} (${check.detail ?? check.description})`,
     ),
   ].join("\n");
+}
+
+function renderGuestAgentHealth(
+  health: GuestAgentHealth,
+  policyHealth?: GuestPolicyHealth,
+): string {
+  const lines = [
+    `Guest health: ${health.status === "ok" ? "healthy" : health.status}`,
+    `guest agent status: ${health.status}`,
+    `version: ${health.version}`,
+    `host name: ${health.hostName}`,
+    `started at: ${health.startedAt}`,
+    `uptime seconds: ${health.uptimeSeconds}`,
+    `go version: ${health.goVersion}`,
+    `WinDbg installed: ${health.windbgInstalled ? "yes" : "no"}`,
+    `CDB path: ${health.cdbPath ?? "missing"}`,
+    `WinDbg path: ${health.windbgPath ?? "missing"}`,
+  ];
+
+  if (policyHealth !== undefined) {
+    lines.push(
+      "policy:",
+      `- CDB path: ${policyHealth.cdbPath ?? "missing"}`,
+      `- WinDbg path: ${policyHealth.windbgPath ?? "missing"}`,
+      `- symbol path: ${policyHealth.symbolPath ?? "missing"}`,
+      `- CrucibleAdmin present: ${policyHealth.crucibleAdminPresent ? "yes" : "no"}`,
+      `- CrucibleUser present: ${policyHealth.crucibleUserPresent ? "yes" : "no"}`,
+      `- qemu-ga service: ${policyHealth.qemuAgentStatus ?? "unknown"}`,
+      `- CrucibleGuestAgent service: ${policyHealth.crucibleAgentStatus ?? "unknown"}`,
+      `- Defender real-time protection: ${formatBoolean(policyHealth.defenderRealTimeProtectionEnabled)}`,
+      `- test signing enabled: ${formatBoolean(policyHealth.testSigningEnabled)}`,
+      `- policy health: ${policyHealth.healthy ? "healthy" : "unhealthy"}`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatBoolean(value: boolean | null | undefined): string {
+  if (value === undefined || value === null) {
+    return "unknown";
+  }
+  return value ? "yes" : "no";
+}
+
+async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<GuestPolicyHealth> {
+  const command = buildGuestPolicyHealthCommand();
+  const result = await client.exec({
+    executable: "powershell.exe",
+    arguments: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+    timeoutMs: 30_000,
+  });
+  const stdout = Buffer.from(result.stdoutBase64 ?? "", "base64")
+    .toString("utf8")
+    .trim();
+  if (result.exitCode !== 0 || result.timedOut) {
+    const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    throw new Error(
+      `guest policy health failed: exit=${result.exitCode} timedOut=${result.timedOut} ${stderr}`,
+    );
+  }
+  return JSON.parse(stdout) as GuestPolicyHealth;
+}
+
+function buildGuestPolicyHealthCommand(): string {
+  return `$ErrorActionPreference='Stop';
+function Find-Dbg([string[]]$Names){
+  foreach($name in $Names){$cmd=Get-Command $name -ErrorAction SilentlyContinue; if($null -ne $cmd){return $cmd.Source}}
+  $dirs=@("$env:ProgramFiles\\Windows Kits\\10\\Debuggers\\x64", "$([Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))\\Windows Kits\\10\\Debuggers\\x64", "$env:LOCALAPPDATA\\Microsoft\\WindowsApps")
+  foreach($dir in $dirs){if([string]::IsNullOrWhiteSpace($dir)-or -not(Test-Path -LiteralPath $dir)){continue}; foreach($name in $Names){$p=Join-Path $dir $name; if(Test-Path -LiteralPath $p -PathType Leaf){return $p}}}
+  return $null
+}
+function Test-User([string]$Name){try{$null=Get-LocalUser -Name $Name -ErrorAction Stop; return $true}catch{return $false}}
+function ServiceStatus([string]$Name){$s=Get-Service -Name $Name -ErrorAction SilentlyContinue; if($null -eq $s){return 'missing'}; return $s.Status.ToString()}
+function DefenderRtp(){try{$s=Get-MpComputerStatus -ErrorAction Stop; return [bool]$s.RealTimeProtectionEnabled}catch{return $null}}
+function TestSigning(){try{$b=& bcdedit /enum '{current}' 2>$null; if($LASTEXITCODE -ne 0){return $null}; return [bool]($b | Select-String -Pattern 'testsigning\\s+Yes' -Quiet)}catch{return $null}}
+$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $ts=TestSigning;
+[ordered]@{cdbPath=$cdb; windbgPath=$windbg; symbolPath=$symbol; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ts -eq $false)} | ConvertTo-Json -Compress`;
 }
 
 function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
@@ -1197,6 +1330,34 @@ function buildEnvGuestClientFactory():
       clientCertificatePath: certPath,
       clientPrivateKeyPath: keyPath,
     }),
+  );
+}
+
+function buildDefaultGuestClientFactory(
+  config: CrucibleConfig,
+): (() => Promise<CliGuestHealthClient>) | undefined {
+  const envFactory = buildEnvGuestClientFactory();
+  if (envFactory !== undefined) {
+    return envFactory;
+  }
+
+  const mtlsDirectory = resolvePath(config.artifacts.secretsDirectory, config.vm.name, "mtls");
+  return () =>
+    buildGuestAgentClientFromFiles({
+      baseUrl: `https://127.0.0.1:${config.network.controlPort}`,
+      caPath: resolvePath(mtlsDirectory, "ca.cert.pem"),
+      clientCertificatePath: resolvePath(mtlsDirectory, "host-client.cert.pem"),
+      clientPrivateKeyPath: resolvePath(mtlsDirectory, "host-client.key.pem"),
+      timeoutMs: 10_000,
+    });
+}
+
+function hasExplicitGuestClientEnv(): boolean {
+  return (
+    process.env.CRUCIBLE_GUEST_BASE_URL !== undefined ||
+    process.env.CRUCIBLE_GUEST_CA_PATH !== undefined ||
+    process.env.CRUCIBLE_GUEST_CERT_PATH !== undefined ||
+    process.env.CRUCIBLE_GUEST_KEY_PATH !== undefined
   );
 }
 
