@@ -55,6 +55,27 @@ function Find-DebuggerExecutable {
     return $null
 }
 
+function Find-ToolExecutable {
+    param([Parameter(Mandatory = $true)][string[]]$FileNames)
+    $toolDirs = @(
+        "C:\Tools",
+        "C:\Tools\Sysinternals",
+        "C:\Tools\Malware"
+    )
+    foreach ($name in $FileNames) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($null -ne $cmd) { return $cmd.Source }
+    }
+    foreach ($dir in $toolDirs) {
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($name in $FileNames) {
+            $candidate = Join-Path -Path $dir -ChildPath $name
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        }
+    }
+    return $null
+}
+
 function Get-DefenderRealTimeProtection {
     try {
         $status = Get-MpComputerStatus -ErrorAction Stop
@@ -76,7 +97,36 @@ function Get-TestSigningEnabled {
 
 $cdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
 $windbg = Find-DebuggerExecutable -FileNames @("windbg.exe", "WinDbgX.exe")
+$kd = Find-DebuggerExecutable -FileNames @("kd.exe")
+$kdnet = Find-DebuggerExecutable -FileNames @("kdnet.exe")
+$gflags = Find-DebuggerExecutable -FileNames @("gflags.exe")
 $symbolPath = [Environment]::GetEnvironmentVariable("_NT_SYMBOL_PATH", "Machine")
+$symbolCache = [Environment]::GetEnvironmentVariable("_NT_ALT_SYMBOL_PATH", "Machine")
+$symbolCacheWritable = $false
+if (-not [string]::IsNullOrWhiteSpace($symbolCache)) {
+    try {
+        New-Item -ItemType Directory -Force -Path $symbolCache | Out-Null
+        $probe = Join-Path $symbolCache "crucible-symbol-cache.probe"
+        Set-Content -LiteralPath $probe -Value "ok" -Force
+        Remove-Item -LiteralPath $probe -Force
+        $symbolCacheWritable = $true
+    } catch {
+        $symbolCacheWritable = $false
+    }
+}
+$sysinternals = [ordered]@{
+    procmon = Find-ToolExecutable -FileNames @("Procmon64.exe", "Procmon.exe")
+    procexp = Find-ToolExecutable -FileNames @("procexp64.exe", "procexp.exe")
+    handle = Find-ToolExecutable -FileNames @("handle64.exe", "handle.exe")
+    strings = Find-ToolExecutable -FileNames @("strings64.exe", "strings.exe")
+    tcpview = Find-ToolExecutable -FileNames @("Tcpview.exe", "Tcpview64.exe")
+}
+$malwareTools = [ordered]@{
+    x64dbg = Find-ToolExecutable -FileNames @("x64dbg.exe")
+    cutter = Find-ToolExecutable -FileNames @("cutter.exe")
+    ghidra = Find-ToolExecutable -FileNames @("ghidraRun.bat")
+    peStudio = Find-ToolExecutable -FileNames @("pestudio.exe")
+}
 
 $crucibleAdmin = Test-AccountExists -Name "CrucibleAdmin"
 $crucibleUser = Test-AccountExists -Name "CrucibleUser"
@@ -88,7 +138,14 @@ $testSigning = Get-TestSigningEnabled
 $checks = [ordered]@{
     cdbPath = $cdb
     windbgPath = $windbg
+    kdPath = $kd
+    kdnetPath = $kdnet
+    gflagsPath = $gflags
     symbolPath = $symbolPath
+    symbolCachePath = $symbolCache
+    symbolCacheWritable = $symbolCacheWritable
+    sysinternals = $sysinternals
+    malwareTools = $malwareTools
     crucibleAdminPresent = $crucibleAdmin
     crucibleUserPresent = $crucibleUser
     qemuAgentStatus = $qemuAgentStatus
@@ -97,7 +154,7 @@ $checks = [ordered]@{
     testSigningEnabled = $testSigning
 }
 
-$windbgHealthy = ($null -ne $cdb) -and ($null -ne $windbg) -and ($null -ne $symbolPath -and $symbolPath -ne "")
+$windbgHealthy = ($null -ne $cdb) -and ($null -ne $windbg) -and ($null -ne $kd) -and ($null -ne $kdnet) -and ($null -ne $gflags) -and ($null -ne $symbolPath -and $symbolPath -ne "") -and $symbolCacheWritable
 if ($AllowMissingWinDbg) {
     # The plan may opt-in to allow WinDbg to be absent (e.g. provisioning ran
     # on an isolated network and install-windbg skipped). Treat WinDbg as
