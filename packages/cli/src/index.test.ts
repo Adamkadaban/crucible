@@ -429,6 +429,29 @@ describe("crucible CLI bootstrap", () => {
     expect(requests[0]?.arguments).toContain("C:\\Windows\\System32\\notepad.exe");
   });
 
+  it("treats cdb exit code 1 as a successful smoke run", async () => {
+    const result = await runCrucibleCli(["debug:smoke", "--exe", "notepad.exe"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () => Promise.reject(new Error("unused")),
+          exec: () =>
+            Promise.resolve({
+              exitCode: 1,
+              stdoutBase64: Buffer.from("symbol warning").toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 12,
+              truncated: false,
+            }),
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("exit code: 1");
+  });
+
   it("prints the malware dry-run restore and collection order", async () => {
     const result = await runCrucibleCli(["scenario:malware-dry-run"], defaultRuntime);
 
@@ -464,6 +487,28 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Package command: bash scripts/package-release.sh");
     expect(commands).toEqual(["bash scripts/package-release.sh"]);
+  });
+
+  it("returns non-zero when package command times out", async () => {
+    const result = await runCrucibleCli(["package"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "timed out",
+            durationMs: 1,
+            timedOut: true,
+            signal: "SIGKILL",
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("timed out");
   });
 
   it("prints vm:create dry-run QEMU planning output", async () => {

@@ -806,8 +806,9 @@ async function runDebugSmokeCommand(
     });
     const session = manager.open({ mode: "launch", executable: parsed.executable });
     const result = await manager.command(session.id, ["~* k", "lm"]);
+    const smokeSucceeded = !result.timedOut && (result.exitCode === 0 || result.exitCode === 1);
     return {
-      exitCode: result.exitCode ?? 1,
+      exitCode: smokeSucceeded ? 0 : (result.exitCode ?? 1),
       stdout: renderDebuggerSmokeResult(session.id, result),
       stderr: "",
     };
@@ -890,7 +891,11 @@ async function runPackageCommand(
   };
   const result = await runner.run(command);
   if (result.exitCode !== 0 || result.timedOut) {
-    return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
+    return {
+      exitCode: result.timedOut ? 1 : (result.exitCode ?? 1),
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
   }
   return {
     exitCode: 0,
