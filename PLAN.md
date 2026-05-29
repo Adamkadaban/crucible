@@ -269,11 +269,12 @@ state recorded, and confirms test signing is disabled unless explicitly overridd
 | 3 (parallel x2) | snapshot-manager             | wave 2     | Completed in PR: snapshot create/list/restore metadata and QMP/qcow2 integration tests                      |
 | 3 (parallel x2) | provision-real-vm            | wave 2     | Completed in PR: end-to-end `crucible provision` command, guest health command, real-VM exit test docs      |
 
-Phase 3 real target outcome on 2026-05-27: host-only CI-safe tests cover `crucible provision`,
-`crucible snapshot:create clean-base`, `crucible snapshot:restore clean-base`, and
-`crucible guest:health` through fake lifecycle/provisioning/snapshot adapters. The real-VM exit test
-was not run in this worktree because no configured Windows VM/QGA/guest-service adapter was
-available; Phase 3 remains incomplete until the real command sequence passes on target hardware.
+Phase 3 real target outcome on 2026-05-29: `pnpm crucible provision`,
+`pnpm crucible snapshot:create clean-base`, `pnpm crucible snapshot:restore clean-base`, and
+`pnpm crucible guest:health` passed against the local Windows 11 KVM/QEMU VM. The final health
+output reported the live guest agent healthy, debugger availability as missing due to offline
+provisioning, Defender RTP disabled, code-integrity state recorded and disabled, HVCI disabled, no
+code-integrity boot overrides, and test signing disabled.
 
 ### Phase 4 — Guest Control Service
 
