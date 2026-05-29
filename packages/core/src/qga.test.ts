@@ -568,6 +568,72 @@ describe("QGA client and provisioning executor", () => {
       await server.close();
     }
   });
+
+  it("retries guest-file-open through Defender ERROR_SHARING_VIOLATION", async () => {
+    // Regression for #130 root cause: Windows Defender's on-access scanner
+    // briefly opens newly-created .ps1 files with FILE_SHARE_READ only,
+    // racing qemu-ga's GENERIC_WRITE open. qemu-ga surfaces the localized
+    // OS message ("The process cannot access the file because it is being
+    // used by another process."). Without classifying that as transient,
+    // writeFile fails on the very first stage that uploads a script and
+    // provisioning never reaches qga-ready's actual work.
+    let openAttempts = 0;
+    const server = await startFakeQga((request) => {
+      const args = request.arguments ?? {};
+      if (request.execute === "guest-file-open") {
+        openAttempts += 1;
+        if (openAttempts === 1) {
+          return {
+            error: {
+              class: "GenericError",
+              desc: `failed to open file '${args.path as string}': The process cannot access the file because it is being used by another process.`,
+            },
+          };
+        }
+        return { return: { handle: 42 } };
+      }
+      if (request.execute === "guest-file-write") return { return: {} };
+      if (request.execute === "guest-file-close") return { return: {} };
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5_000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await client.writeFile("C:\\Test\\probe.ps1", "Write-Host hi");
+      expect(openAttempts).toBeGreaterThanOrEqual(2);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("propagates non-sharing-violation guest-file-open errors without retrying", async () => {
+    let openAttempts = 0;
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-file-open") {
+        openAttempts += 1;
+        return {
+          error: { class: "GenericError", desc: "Access is denied." },
+        };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5_000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      await expect(client.writeFile("C:\\Test\\x.bin", "x")).rejects.toThrow(/Access is denied/);
+      expect(openAttempts).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 type QgaRequest = {

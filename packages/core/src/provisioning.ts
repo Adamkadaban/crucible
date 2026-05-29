@@ -511,6 +511,18 @@ export async function prepareRealFirstBootProvisioning(
     timeoutMs,
   });
 
+  // Remove any leftover autounattend.iso from a previous run before xorriso
+  // re-creates it. xorriso adds every file under the source directory to the
+  // ISO; including the previous-run's output ISO inside that directory makes
+  // it modify-while-reading, which exits with MISHAP (status 32) and the
+  // logspam "Size of file ... has changed. It will be padded with 0's".
+  try {
+    await rm(autounattendIsoPath, { force: true });
+  } catch {
+    // best-effort; xorriso will error loudly with stderr context if the
+    // unlink truly mattered.
+  }
+
   const commands: ProcessCommand[] = [
     ...((await pathExists(plan.disk.path))
       ? []
@@ -715,6 +727,29 @@ function buildAutounattendXml(
     "          <Order>1</Order>",
     '          <Path>reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>',
     "        </RunSynchronousCommand>",
+    // Disable Windows Defender real-time / on-access scanning via policy
+    // registry keys BEFORE the Defender service starts up in oobeSystem.
+    // Tamper Protection blocks Set-MpPreference at runtime but does NOT
+    // block these Policy keys when written in `specialize` ahead of the
+    // Defender service registering its minifilter. Without this, the
+    // first qemu-ga guest-file-open for any .ps1 we stage under
+    // C:\ProgramData\Crucible\stages\ races Defender's on-create scan
+    // and fails with ERROR_SHARING_VIOLATION (`The process cannot
+    // access the file because it is being used by another process.`).
+    // configure-policy.ps1 still runs at the regular stage to lock down
+    // the rest of the analysis-VM policy surface.
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>2</Order>",
+    '          <Path>reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 1 /f</Path>',
+    "        </RunSynchronousCommand>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>3</Order>",
+    '          <Path>reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f</Path>',
+    "        </RunSynchronousCommand>",
+    '        <RunSynchronousCommand wcm:action="add">',
+    "          <Order>4</Order>",
+    '          <Path>reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection" /v DisableOnAccessProtection /t REG_DWORD /d 1 /f</Path>',
+    "        </RunSynchronousCommand>",
     "      </RunSynchronous>",
     "    </component>",
     "  </settings>",
@@ -885,13 +920,19 @@ async function runProvisioningProcess(
 ): Promise<void> {
   const result = await processRunner.run(command);
   if (result.exitCode !== 0 || result.timedOut) {
-    throw new CrucibleError("PROCESS_FAILED", "Provisioning host command failed", {
-      command,
-      exitCode: result.exitCode,
-      signal: result.signal,
-      timedOut: result.timedOut,
-      stderr: result.stderr,
-    });
+    const argv = [command.executable, ...command.args].join(" ");
+    const stderrPreview = (result.stderr ?? "").slice(0, 800).trim();
+    throw new CrucibleError(
+      "PROCESS_FAILED",
+      `Provisioning host command failed: ${argv} (exit=${result.exitCode ?? "none"} timedOut=${result.timedOut}${stderrPreview !== "" ? `, stderr: ${stderrPreview}` : ""})`,
+      {
+        command,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        stderr: result.stderr,
+      },
+    );
   }
 }
 
