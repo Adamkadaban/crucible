@@ -825,8 +825,8 @@ function renderGuestAgentHealth(
       `- CrucibleGuestAgent service: ${policyHealth.crucibleAgentStatus ?? "unknown"}`,
       `- Defender real-time protection: ${formatBoolean(policyHealth.defenderRealTimeProtectionEnabled)}`,
       `- code-integrity state recorded: ${policyHealth.codeIntegrityStateRecorded ? "yes" : "no"}`,
-      `- code-integrity enforcement disabled: ${policyHealth.codeIntegrityEnforcementDisabled ? "yes" : "no"}`,
-      `- HVCI disabled: ${policyHealth.hypervisorEnforcedCodeIntegrityDisabled ? "yes" : "no"}`,
+      `- code-integrity enforcement disabled: ${formatRecordedBoolean(policyHealth.codeIntegrityEnforcementDisabled, policyHealth.codeIntegrityStateRecorded)}`,
+      `- HVCI disabled: ${formatRecordedBoolean(policyHealth.hypervisorEnforcedCodeIntegrityDisabled, policyHealth.codeIntegrityStateRecorded)}`,
       `- code-integrity boot options: ${policyHealth.codeIntegrityBootOptions.length > 0 ? policyHealth.codeIntegrityBootOptions.join(", ") : "none"}`,
       `- test signing enabled: ${formatBoolean(policyHealth.testSigningEnabled)}`,
       `- policy health: ${policyHealth.healthy ? "healthy" : "unhealthy"}`,
@@ -841,6 +841,10 @@ function formatBoolean(value: boolean | null | undefined): string {
     return "unknown";
   }
   return value ? "yes" : "no";
+}
+
+function formatRecordedBoolean(value: boolean, recorded: boolean): string {
+  return recorded ? formatBoolean(value) : "unknown";
 }
 
 async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<GuestPolicyHealth> {
