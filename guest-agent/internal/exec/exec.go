@@ -28,6 +28,7 @@ type request struct {
 	WorkingDir  string            `json:"workingDirectory,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	TimeoutMs   int               `json:"timeoutMs,omitempty"`
+	As          string            `json:"as,omitempty"`
 }
 
 type response struct {
@@ -90,6 +91,9 @@ func validate(req request) error {
 	}
 	if req.TimeoutMs > maxTimeoutMs {
 		return errors.New("timeoutMs exceeds maximum")
+	}
+	if req.As != "" && req.As != "standard" && req.As != "admin" {
+		return errors.New("as must be standard or admin")
 	}
 	return nil
 }

@@ -61,6 +61,11 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     description: "Run a process inside the Windows guest via the Crucible guest agent.",
   },
   {
+    name: "guest_exec_admin",
+    description:
+      "Run a process through the guest service's non-interactive admin execution boundary.",
+  },
+  {
     name: "guest_upload",
     description:
       "Upload a host file into the guest staging directory through the Crucible guest agent.",
@@ -122,6 +127,7 @@ const GuestExecInput = z
     workingDirectory: z.string().optional(),
     environment: z.record(z.string(), z.string()).optional(),
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
+    as: z.enum(["standard", "admin"]).optional(),
   })
   .strict();
 type GuestExecInputType = z.infer<typeof GuestExecInput>;
@@ -320,6 +326,37 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
           workingDirectory: input.workingDirectory,
           environment: input.environment,
           timeoutMs: input.timeoutMs,
+          as: input.as ?? "standard",
+        };
+        const result: GuestAgentExecResult = await client.exec(req);
+        return toJsonContent({ ok: true, result, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "guest_exec_admin",
+    {
+      title: "Run a guest command as admin",
+      description:
+        "Execute a process through the guest service's admin boundary without interactive UAC prompts.",
+      inputSchema: GuestExecInput.omit({ as: true }).shape,
+    },
+    async (input: Omit<GuestExecInputType, "as">) => {
+      try {
+        const client = await requireGuestClient(guestClientFactory);
+        const req: GuestAgentExecRequest = {
+          executable: input.executable,
+          arguments: input.arguments,
+          workingDirectory: input.workingDirectory,
+          environment: input.environment,
+          timeoutMs: input.timeoutMs,
+          as: "admin",
         };
         const result: GuestAgentExecResult = await client.exec(req);
         return toJsonContent({ ok: true, result, auditLogPath });

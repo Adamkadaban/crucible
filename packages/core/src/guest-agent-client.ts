@@ -36,6 +36,7 @@ export type GuestAgentExecRequest = {
   readonly workingDirectory?: string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
+  readonly as?: "standard" | "admin";
 };
 
 export type GuestAgentExecResult = {

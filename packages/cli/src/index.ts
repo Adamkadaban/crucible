@@ -66,6 +66,7 @@ type CliGuestHealthClient = {
     readonly executable: string;
     readonly arguments?: readonly string[];
     readonly timeoutMs?: number;
+    readonly as?: "standard" | "admin";
   }) => Promise<GuestAgentExecResult>;
   readonly close: () => Promise<void>;
 };
@@ -122,6 +123,12 @@ type NetTeardownArgs = {
   readonly operation: FirewallOperationMode;
 };
 
+type GuestExecArgs = {
+  readonly executable: string;
+  readonly arguments: readonly string[];
+  readonly as: "standard" | "admin";
+};
+
 export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
@@ -160,6 +167,8 @@ export async function runCrucibleCli(
       return runProvisionCommand(rest, runtime);
     case "guest:health":
       return runGuestHealthCommand(rest, runtime);
+    case "guest:exec":
+      return runGuestExecCommand(rest, runtime);
     case "mcp": {
       const wantsStdio = rest.includes("--stdio");
       if (wantsStdio) {
@@ -720,6 +729,38 @@ async function runGuestHealthCommand(
   };
 }
 
+async function runGuestExecCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseGuestExecArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const guestClientFactory = runtime.guestClientFactory ?? buildDefaultGuestClientFactory(config);
+  if (guestClientFactory === undefined) {
+    return { exitCode: 1, stdout: "", stderr: "guest client is not configured" };
+  }
+
+  const client = await guestClientFactory();
+  try {
+    const result = await client.exec({
+      executable: parsed.args.executable,
+      arguments: parsed.args.arguments,
+      as: parsed.args.as,
+    });
+    return {
+      exitCode: result.exitCode,
+      stdout: renderGuestExecResult(result),
+      stderr: "",
+    };
+  } finally {
+    await client.close();
+  }
+}
+
 function getRuntimeConfig(runtime: CliRuntime): CrucibleConfig {
   if (runtime.config !== undefined) {
     return runtime.config;
@@ -834,6 +875,25 @@ function renderGuestAgentHealth(
   }
 
   return lines.join("\n");
+}
+
+function renderGuestExecResult(result: GuestAgentExecResult): string {
+  const stdout = Buffer.from(result.stdoutBase64 ?? "", "base64")
+    .toString("utf8")
+    .trimEnd();
+  const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+    .toString("utf8")
+    .trimEnd();
+  return [
+    `exit code: ${result.exitCode}`,
+    `timed out: ${result.timedOut ? "yes" : "no"}`,
+    `duration ms: ${result.durationMs}`,
+    `truncated: ${result.truncated ? "yes" : "no"}`,
+    "stdout:",
+    stdout.length > 0 ? stdout : "(empty)",
+    "stderr:",
+    stderr.length > 0 ? stderr : "(empty)",
+  ].join("\n");
 }
 
 function formatBoolean(value: boolean | null | undefined): string {
@@ -1122,6 +1182,10 @@ type NetTeardownArgsResult =
   | { readonly ok: true; readonly args: NetTeardownArgs }
   | { readonly ok: false; readonly message: string };
 
+type GuestExecArgsResult =
+  | { readonly ok: true; readonly args: GuestExecArgs }
+  | { readonly ok: false; readonly message: string };
+
 type SnapshotNameArgsResult =
   | { readonly ok: true; readonly name: string }
   | { readonly ok: false; readonly message: string };
@@ -1144,6 +1208,44 @@ function parseSnapshotNameArgs(args: readonly string[], command: string): Snapsh
   }
 
   return { ok: false, message: `${command} accepts at most one snapshot name` };
+}
+
+function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
+  let as: GuestExecArgs["as"] = "standard";
+  const command: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--as") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --as" };
+      }
+      if (value !== "standard" && value !== "admin") {
+        return { ok: false, message: `Unknown guest execution principal: ${value}` };
+      }
+      as = value;
+      index += 1;
+      continue;
+    }
+
+    command.push(arg ?? "");
+  }
+
+  const [executable, ...commandArgs] = command;
+  if (executable === undefined || executable.length === 0) {
+    return { ok: false, message: "guest:exec requires an executable" };
+  }
+
+  if (commandArgs.length === 0 && /\s/.test(executable)) {
+    return {
+      ok: true,
+      args: { executable: "cmd.exe", arguments: ["/d", "/s", "/c", executable], as },
+    };
+  }
+
+  return { ok: true, args: { executable, arguments: commandArgs, as } };
 }
 
 function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): NetPlanArgsResult {
@@ -1390,6 +1492,7 @@ function getHelpText(): string {
     "  crucible snapshot:create clean-base",
     "  crucible snapshot:restore clean-base",
     "  crucible guest:health",
+    "  crucible guest:exec [--as standard|admin] <executable> [args...]",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",

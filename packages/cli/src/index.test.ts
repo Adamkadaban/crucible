@@ -301,6 +301,72 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("test signing enabled: no");
   });
 
+  it("executes guest commands with explicit standard/admin principals", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
+    const guestClientFactory = () =>
+      Promise.resolve({
+        health: () => Promise.reject(new Error("unused")),
+        exec: (request: { executable: string; arguments?: readonly string[]; as?: string }) => {
+          requests.push(request);
+          return Promise.resolve({
+            exitCode: 0,
+            stdoutBase64: Buffer.from(`ran ${request.executable}`).toString("base64"),
+            stderrBase64: "",
+            timedOut: false,
+            durationMs: 7,
+            truncated: false,
+          });
+        },
+        close: () => Promise.resolve(),
+      });
+    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+
+    const standard = await runCrucibleCli(["guest:exec", "whoami.exe"], {
+      config,
+      guestClientFactory,
+    });
+    const admin = await runCrucibleCli(["guest:exec", "--as", "admin", "whoami.exe", "/groups"], {
+      config,
+      guestClientFactory,
+    });
+
+    expect(standard.exitCode).toBe(0);
+    expect(admin.exitCode).toBe(0);
+    expect(standard.stdout).toContain("stdout:\nran whoami.exe");
+    expect(requests).toEqual([
+      { executable: "whoami.exe", arguments: [], as: "standard" },
+      { executable: "whoami.exe", arguments: ["/groups"], as: "admin" },
+    ]);
+  });
+
+  it("runs a quoted guest command through cmd.exe", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
+    const result = await runCrucibleCli(["guest:exec", "whoami /groups", "--as", "admin"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () => Promise.reject(new Error("unused")),
+          exec: (request: { executable: string; arguments?: readonly string[]; as?: string }) => {
+            requests.push(request);
+            return Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: Buffer.from("ok").toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 1,
+              truncated: false,
+            });
+          },
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(requests).toEqual([
+      { executable: "cmd.exe", arguments: ["/d", "/s", "/c", "whoami /groups"], as: "admin" },
+    ]);
+  });
+
   it("prints vm:create dry-run QEMU planning output", async () => {
     const result = await runCrucibleCli(["vm:create", "--dry-run"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),

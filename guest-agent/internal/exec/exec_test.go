@@ -67,6 +67,23 @@ func TestExecRejectsExcessiveTimeout(t *testing.T) {
 	}
 }
 
+func TestExecRejectsUnknownPrincipal(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024))
+	defer srv.Close()
+	body, _ := json.Marshal(map[string]any{
+		"executable": "/bin/true",
+		"as":         "system",
+	})
+	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 func TestRunTimeoutSurfaces(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
