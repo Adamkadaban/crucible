@@ -588,11 +588,24 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     }
     // The per-stage PowerShell script ships on crucible-payload.iso —
     // mounted as a CD-ROM by QEMU, NOT uploaded over qemu-ga writeFile.
-    // The guest-side resolveCruciblePayloadDrive helper finds the drive
-    // letter (CD with volume label 'CRUCIBLE') so we don't have to
-    // depend on a fixed assignment. See #130 for why we don't writeFile.
+    // The PowerShell block below finds the drive letter at runtime (CD
+    // with volume label 'CRUCIBLE') and executes the script from there.
+    // See #130 for why we don't writeFile.
     const scriptName = path.basename(stage.script.scriptPath);
-    const psPrelude = [
+    // The contract stores the full PowerShell invocation
+    // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
+    // so the host-side runner can spawn powershell.exe directly. Peel off
+    // everything up to and including `-File <host-path>` and keep only
+    // the trailing user arguments. They become a PowerShell @argv array
+    // embedded inside the -Command block (NOT trailing argv to
+    // powershell.exe — PowerShell -Command swallows everything after
+    // the script as part of the command source).
+    const contractArgs = stage.script.arguments ?? [];
+    const fileFlagIndex = contractArgs.indexOf("-File");
+    const trailingArgs = fileFlagIndex >= 0 ? contractArgs.slice(fileFlagIndex + 2) : contractArgs;
+    const quotedArgs = trailingArgs.map((arg) => `'${arg.replaceAll("'", "''")}'`).join(",");
+    const argvLiteral = quotedArgs.length > 0 ? `@(${quotedArgs})` : "@()";
+    const psScript = [
       "$ErrorActionPreference='Stop';",
       "$payload=Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5'|" +
         "?{ $_.VolumeName -eq 'CRUCIBLE' }|Select-Object -First 1;",
@@ -600,32 +613,16 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
       `$script=Join-Path "$($payload.DeviceID)\\\\stages" '${scriptName}';`,
       "if(-not(Test-Path -LiteralPath $script)){" +
         'throw "Stage script not on payload CD: $script"};',
-      // & $script in PowerShell terminates the script's scope only — its
-      // `exit N` does NOT propagate to our wrapping powershell -Command
-      // process by default. Capture $LASTEXITCODE (set by the script's
-      // exit statement) and propagate it explicitly so the QGA executor
-      // can map exit 75 (EX_TEMPFAIL = opt-in skip) to a succeeded stage.
-      "& $script @args;",
+      `$argv=${argvLiteral};`,
+      // & $script @argv runs the script's `exit N` in its OWN scope
+      // (script exit doesn't propagate to the wrapping -Command). Capture
+      // $LASTEXITCODE and explicitly exit so the QGA executor can map
+      // exit 75 (EX_TEMPFAIL = opt-in skip) to a succeeded-but-skipped
+      // stage.
+      "& $script @argv;",
       "exit $LASTEXITCODE",
     ].join("");
-    // The contract stores the full PowerShell invocation
-    // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
-    // so the host-side runner can spawn powershell.exe directly. Peel
-    // off everything up to and including `-File <host-path>` and keep
-    // only the trailing user arguments — those become `@args` to the
-    // CD-resident script.
-    const contractArgs = stage.script.arguments ?? [];
-    const fileFlagIndex = contractArgs.indexOf("-File");
-    const trailingArgs = fileFlagIndex >= 0 ? contractArgs.slice(fileFlagIndex + 2) : contractArgs;
-    return [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      psPrelude,
-      ...trailingArgs,
-    ];
+    return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", psScript];
   }
 
   async #buildStageEnv(

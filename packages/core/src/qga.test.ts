@@ -63,10 +63,12 @@ describe("QGA client and provisioning executor", () => {
       // and executes the named script from there.
       expect(psBlock as string).toContain("VolumeName -eq 'CRUCIBLE'");
       expect(psBlock as string).toContain("install-windbg.ps1");
-      // User-supplied script arguments are appended after the PowerShell
-      // -Command block as @args to the invocation.
-      expect(guestExecArgs[0]).toContain("-SymbolCache");
-      expect(guestExecArgs[0]).toContain("C:\\Symbols");
+      // User-supplied script arguments are embedded INSIDE the PowerShell
+      // -Command block as a $argv array literal (NOT trailing argv to
+      // powershell.exe — -Command swallows everything after the script
+      // as part of the command source, which would be a parse error).
+      expect(psBlock as string).toContain("'-SymbolCache'");
+      expect(psBlock as string).toContain("'C:\\Symbols'");
     } finally {
       await server.close();
     }
