@@ -92,6 +92,29 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("iptables -X FORWARD");
   });
 
+  it("prints network runtime status", async () => {
+    const result = await runCrucibleCli(["net:status"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" }, network: { mode: "isolated" } }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network status: isolated");
+    expect(result.stdout).toContain("guest egress: denied");
+    expect(result.stdout).toContain("restart required to change mode: yes");
+  });
+
+  it("reports restart requirement for user-net mode changes", async () => {
+    const result = await runCrucibleCli(["net:set", "nat"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" }, network: { mode: "isolated" } }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network mode change: isolated -> nat");
+    expect(result.stdout).toContain("applied live: no");
+    expect(result.stdout).toContain("restart required: yes");
+    expect(result.stdout).toContain("restrict=off");
+  });
+
   it("prints network teardown dry-run by default", async () => {
     const result = await runCrucibleCli(["net:teardown", "--mode", "capture"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),

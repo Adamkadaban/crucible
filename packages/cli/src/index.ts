@@ -4,6 +4,8 @@ import { resolve as resolvePath } from "node:path";
 
 import {
   buildNetworkPlan,
+  buildNetworkModeChangePlan,
+  buildNetworkRuntimeStatus,
   buildNetworkTeardownOutputModel,
   buildGuestHealthReport,
   buildMediaCachePlan,
@@ -148,6 +150,10 @@ export async function runCrucibleCli(
       return renderMediaPlanCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
+    case "net:status":
+      return renderNetStatusCommand(rest, runtime);
+    case "net:set":
+      return renderNetSetCommand(rest, runtime);
     case "net:teardown":
       return renderNetTeardownCommand(rest, runtime);
     case "vm:create":
@@ -1238,6 +1244,50 @@ function renderNetTeardownCommand(args: readonly string[], runtime: CliRuntime):
   return { exitCode: 0, stdout: renderNetTeardown(model), stderr: "" };
 }
 
+function renderNetStatusCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown net:status option: ${args[0]}` };
+  }
+  const config = getRuntimeConfig(runtime);
+  const plan = buildNetworkPlan({
+    config: config.network,
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  return {
+    exitCode: 0,
+    stdout: renderNetworkRuntimeStatus(buildNetworkRuntimeStatus(plan)),
+    stderr: "",
+  };
+}
+
+function renderNetSetCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  const requestedMode = args[0];
+  if (args.length !== 1 || requestedMode === undefined || !isNetworkMode(requestedMode)) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: "net:set requires one mode: isolated, nat, or capture",
+    };
+  }
+  const config = getRuntimeConfig(runtime);
+  const current = buildNetworkPlan({
+    config: config.network,
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  const requested = buildNetworkPlan({
+    config: { ...config.network, mode: requestedMode },
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  return {
+    exitCode: 0,
+    stdout: renderNetworkModeChange(buildNetworkModeChangePlan({ current, requested })),
+    stderr: "",
+  };
+}
+
 function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanArgs): string {
   const lines = [
     `Network mode: ${plan.mode}`,
@@ -1274,6 +1324,31 @@ function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanA
   }
 
   return lines.join("\n");
+}
+
+function renderNetworkRuntimeStatus(status: ReturnType<typeof buildNetworkRuntimeStatus>): string {
+  return [
+    `Network status: ${status.configuredMode}`,
+    `backend: ${status.backend}`,
+    `guest address: ${status.guestAddress}`,
+    `host address: ${status.hostAddress}`,
+    `control port: ${status.controlPort}`,
+    `guest egress: ${status.guestEgress}`,
+    `live switch supported: ${status.liveSwitchSupported ? "yes" : "no"}`,
+    `restart required to change mode: ${status.restartRequiredToChangeMode ? "yes" : "no"}`,
+    ...status.warnings.map((warning) => `warning: ${warning}`),
+  ].join("\n");
+}
+
+function renderNetworkModeChange(change: ReturnType<typeof buildNetworkModeChangePlan>): string {
+  return [
+    `Network mode change: ${change.currentMode} -> ${change.requestedMode}`,
+    `applied live: ${change.appliedLive ? "yes" : "no"}`,
+    `restart required: ${change.restartRequired ? "yes" : "no"}`,
+    `reason: ${change.reason}`,
+    "QEMU args preview:",
+    ...change.qemuArgsPreview.map((arg) => `- ${arg}`),
+  ].join("\n");
 }
 
 function renderNetTeardown(model: NetworkTeardownOutputModel): string {
@@ -1731,6 +1806,8 @@ function getHelpText(): string {
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
+    "  crucible net:status",
+    "  crucible net:set isolated|nat|capture",
     "  crucible net:teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
     "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
     "  crucible vm:start [--dry-run] Print or run the planned QEMU argv and sockets",

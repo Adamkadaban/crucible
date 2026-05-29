@@ -37,6 +37,8 @@ describe("crucible MCP tools", () => {
       "vm_status",
       "vm_start",
       "vm_stop",
+      "network_status",
+      "network_set_mode",
       "snapshot_list",
       "snapshot_restore",
       "guest_health",
@@ -136,6 +138,30 @@ describe("crucible MCP tools", () => {
     expect(
       parseFirstTextPayload<{ ok: boolean; result: { name: string } }>(restoreResult).result.name,
     ).toBe("clean-base");
+  });
+
+  it("reports network status and mode-change restart requirements", async () => {
+    const client = await harness({ networkMode: "isolated" });
+    const statusResult = (await client.callTool({
+      name: "network_status",
+      arguments: {},
+    })) as ToolCallText;
+    const status = parseFirstTextPayload<{
+      ok: boolean;
+      result: { configuredMode: string; guestEgress: string };
+    }>(statusResult);
+    expect(status.ok).toBe(true);
+    expect(status.result).toMatchObject({ configuredMode: "isolated", guestEgress: "denied" });
+
+    const setResult = (await client.callTool({
+      name: "network_set_mode",
+      arguments: { mode: "nat" },
+    })) as ToolCallText;
+    const change = parseFirstTextPayload<{
+      ok: boolean;
+      result: { requestedMode: string; restartRequired: boolean };
+    }>(setResult);
+    expect(change.result).toMatchObject({ requestedMode: "nat", restartRequired: true });
   });
 
   it("returns guest-failed when the guest client is missing", async () => {

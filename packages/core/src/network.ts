@@ -154,6 +154,27 @@ export type NetworkPlan = {
   readonly warnings: readonly string[];
 };
 
+export type NetworkRuntimeStatus = {
+  readonly configuredMode: NetworkMode;
+  readonly backend: QemuNetworkBackend;
+  readonly guestAddress: string;
+  readonly hostAddress: string;
+  readonly controlPort: number;
+  readonly guestEgress: "denied" | "allowed" | "captured";
+  readonly liveSwitchSupported: boolean;
+  readonly restartRequiredToChangeMode: boolean;
+  readonly warnings: readonly string[];
+};
+
+export type NetworkModeChangePlan = {
+  readonly currentMode: NetworkMode;
+  readonly requestedMode: NetworkMode;
+  readonly appliedLive: boolean;
+  readonly restartRequired: boolean;
+  readonly reason: string;
+  readonly qemuArgsPreview: readonly string[];
+};
+
 export type NetworkPlanOptions = {
   readonly config: NetworkConfig;
   readonly vmName: string;
@@ -192,6 +213,50 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
       interfaceNames: qemu.backend === "tap" ? [`${netdevId}-tap`] : [],
     },
     warnings: buildNetworkWarnings(mode),
+  };
+}
+
+export function buildNetworkRuntimeStatus(plan: NetworkPlan): NetworkRuntimeStatus {
+  return {
+    configuredMode: plan.mode,
+    backend: plan.qemu.backend,
+    guestAddress: plan.qemu.controlAddress.guestAddress,
+    hostAddress: plan.qemu.controlAddress.hostAddress,
+    controlPort: plan.qemu.controlAddress.guestApiPort,
+    guestEgress:
+      plan.mode === "isolated" ? "denied" : plan.mode === "capture" ? "captured" : "allowed",
+    liveSwitchSupported: plan.qemu.backend === "tap",
+    restartRequiredToChangeMode: plan.qemu.backend === "user",
+    warnings: plan.warnings,
+  };
+}
+
+export function buildNetworkModeChangePlan(options: {
+  readonly current: NetworkPlan;
+  readonly requested: NetworkPlan;
+}): NetworkModeChangePlan {
+  if (options.current.mode === options.requested.mode) {
+    return {
+      currentMode: options.current.mode,
+      requestedMode: options.requested.mode,
+      appliedLive: true,
+      restartRequired: false,
+      reason: "network mode already active",
+      qemuArgsPreview: options.requested.qemu.args,
+    };
+  }
+
+  const sameBackend = options.current.qemu.backend === options.requested.qemu.backend;
+  const liveSwitchSupported = sameBackend && options.current.qemu.backend === "tap";
+  return {
+    currentMode: options.current.mode,
+    requestedMode: options.requested.mode,
+    appliedLive: false,
+    restartRequired: !liveSwitchSupported,
+    reason: liveSwitchSupported
+      ? "tap-backed mode changes can be applied by host firewall/tap operations"
+      : "QEMU user-network restrict/capture backend changes require restarting the VM with new netdev args",
+    qemuArgsPreview: options.requested.qemu.args,
   };
 }
 
