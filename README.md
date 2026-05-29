@@ -175,15 +175,18 @@ while leaving command-specific payloads opaque for QEMU version compatibility. S
 Phase 3 wires `crucible provision`, `crucible snapshot:create <name>`,
 `crucible snapshot:restore <name>`, and `crucible guest:health` through the Windows provisioning
 contracts without requiring a real Windows VM in CI. The core package models the ordered stages for
-media readiness, VM boot, QGA readiness, WinDbg/CDB installation, guest agent installation, analysis
-policy changes, local accounts, health checks, and clean snapshot preparation. Script contracts
-describe the runner, PowerShell argv, timeout, elevation, environment-backed secret injection, and
-redaction behavior. Secret contracts keep generated Windows credentials and mTLS material under the
-configured `artifacts.secretsDirectory` as host-only `0600` files.
+media readiness, VM boot, QGA readiness, WinDbg/CDB/KD/KDNET/GFlags installation, dynamic analysis
+tool reporting, local account creation, guest agent installation, analysis policy lockdown, health
+checks, and clean snapshot preparation. Script contracts describe the runner, PowerShell argv,
+timeout, elevation, environment-backed secret injection, and redaction behavior. Secret contracts
+keep generated Windows credentials and mTLS material under the configured
+`artifacts.secretsDirectory` as host-only `0600` files.
 
 The WinDbg stage includes PowerShell scripts that prefer `winget install Microsoft.WinDbg`, fall
-back to Windows SDK Debugging Tools, configure `_NT_SYMBOL_PATH`, and detect CDB plus WinDbg
-readiness without requiring a real Windows VM in CI.
+back to Windows SDK Debugging Tools, configure `_NT_SYMBOL_PATH`, and detect CDB, WinDbg, KD/KDNET,
+GFlags, and symbol-cache readiness without requiring a real Windows VM in CI. The analysis-tools
+stage installs or reports Windows-only/dynamic tooling such as Sysinternals and x64dbg before final
+lockdown; static analysis tools such as Ghidra stay on the Linux host.
 
 The analysis policy stage uses `guest/provision/configure-policy.ps1` for isolated analysis VMs. It
 disables Windows Defender policy, applies and records code-integrity policy changes, forces test
@@ -214,9 +217,10 @@ snapshot mode, and restore time in the artifact manifest; VM disks and snapshots
 outside Git.
 
 `crucible guest:health` renders the readiness checks required by the `health-checked` stage:
-debugger readiness, guest service health, standard/admin execution contexts, and Defender /
-code-integrity / test-signing policy state. It exits non-zero unless the real guest health path can
-confirm the VM is healthy.
+debugger and dynamic-tool readiness, guest service health, standard/admin execution contexts, and
+Defender / code-integrity / test-signing policy state. It exits non-zero unless the real guest
+health path can confirm the VM is healthy. Clean snapshots are taken only after tooling setup,
+account/service setup, policy lockdown, and health checks complete.
 
 ## VM Lifecycle State
 

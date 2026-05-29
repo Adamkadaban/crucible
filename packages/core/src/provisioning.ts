@@ -1232,7 +1232,11 @@ function buildProvisioningStageContracts(
       readinessChecks: [
         requiredCheck("cdb-path", "CDB is discoverable on the guest"),
         requiredCheck("windbg-path", "WinDbg is discoverable on the guest"),
+        requiredCheck("kd-path", "KD is discoverable on the guest"),
+        requiredCheck("kdnet-path", "KDNET is discoverable on the guest"),
+        requiredCheck("gflags-path", "GFlags is discoverable on the guest"),
         requiredCheck("symbol-path", "Default symbol path is configured"),
+        requiredCheck("symbol-cache-writable", "Default symbol cache is writable"),
       ],
       script: script("install-windbg", "qga-powershell", "guest/provision/install-windbg.ps1", {
         scriptArguments: ["-AllowSkipOnNetworkFailure"],
@@ -1358,7 +1362,10 @@ function buildProvisioningStageContracts(
       title: "Provisioning health checks",
       dependsOn: ["local-accounts-created"],
       readinessChecks: [
-        requiredCheck("debugger-health", "CDB and WinDbg readiness is reported"),
+        requiredCheck(
+          "debugger-health",
+          "Debugger, symbol-cache, and dynamic analysis tooling readiness is reported",
+        ),
         requiredCheck("service-health", "Guest service health endpoint is healthy"),
         requiredCheck("execution-contexts", "Standard and admin execution contexts are healthy"),
         requiredCheck(
