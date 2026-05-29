@@ -58,8 +58,9 @@ Returns a JSON document describing the agent:
 
 ### `POST /exec`
 
-Bounded command execution under the agent's identity (LocalSystem when the agent runs as a Windows
-service). Request body:
+Bounded command execution under the requested execution principal. `service` runs under the agent's
+identity (LocalSystem when the agent runs as a Windows service); `standard` and `admin` run through
+the provisioned local Windows accounts. Request body:
 
 ```json
 {
