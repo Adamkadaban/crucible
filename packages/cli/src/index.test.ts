@@ -398,6 +398,119 @@ describe("crucible CLI bootstrap", () => {
     ]);
   });
 
+  it("runs debug:smoke through cdb on the guest client", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
+    const result = await runCrucibleCli(
+      ["debug:smoke", "--exe", "C:\\Windows\\System32\\notepad.exe"],
+      {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+        guestClientFactory: () =>
+          Promise.resolve({
+            health: () => Promise.reject(new Error("unused")),
+            exec: (request: { executable: string; arguments?: readonly string[]; as?: string }) => {
+              requests.push(request);
+              return Promise.resolve({
+                exitCode: 0,
+                stdoutBase64: Buffer.from("0:000> lm").toString("base64"),
+                stderrBase64: "",
+                timedOut: false,
+                durationMs: 12,
+                truncated: false,
+              });
+            },
+            close: () => Promise.resolve(),
+          }),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("debug session:");
+    expect(requests[0]).toMatchObject({ executable: "cdb.exe", as: "service" });
+    expect(requests[0]?.arguments).toContain("C:\\Windows\\System32\\notepad.exe");
+  });
+
+  it("treats cdb exit code 1 as a successful smoke run", async () => {
+    const result = await runCrucibleCli(["debug:smoke", "--exe", "notepad.exe"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () => Promise.reject(new Error("unused")),
+          exec: () =>
+            Promise.resolve({
+              exitCode: 1,
+              stdoutBase64: Buffer.from("symbol warning").toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 12,
+              truncated: false,
+            }),
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("exit code: 1");
+  });
+
+  it("prints the malware dry-run restore and collection order", async () => {
+    const result = await runCrucibleCli(["scenario:malware-dry-run"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Scenario: malware-dry-run");
+    expect(result.stdout).toContain("restore snapshot: clean-base");
+    expect(result.stdout).toContain("upload sample: dry-run");
+    expect(result.stdout).toContain("execute sample: dry-run");
+    expect(result.stdout).toContain("collect artifacts: dry-run");
+    expect(result.stdout).toContain("Internet egress: denied by default");
+  });
+
+  it("runs the package release script through the process runner", async () => {
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["package"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: '{"entries":[]}',
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Package command: bash scripts/package-release.sh");
+    expect(commands).toEqual(["bash scripts/package-release.sh"]);
+  });
+
+  it("returns non-zero when package command times out", async () => {
+    const result = await runCrucibleCli(["package"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "timed out",
+            durationMs: 1,
+            timedOut: true,
+            signal: "SIGKILL",
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("timed out");
+  });
+
   it("prints vm:create dry-run QEMU planning output", async () => {
     const result = await runCrucibleCli(["vm:create", "--dry-run"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),
