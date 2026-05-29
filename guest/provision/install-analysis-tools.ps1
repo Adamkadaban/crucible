@@ -60,7 +60,8 @@ function Test-SysinternalsPresent {
     return ($null -ne $report.sysinternals.procmon) -and
         ($null -ne $report.sysinternals.procexp) -and
         ($null -ne $report.sysinternals.handle) -and
-        ($null -ne $report.sysinternals.strings)
+        ($null -ne $report.sysinternals.strings) -and
+        ($null -ne $report.sysinternals.tcpview)
 }
 
 function Install-Sysinternals {
@@ -97,7 +98,12 @@ function Try-WingetInstall {
     }
     try {
         & $winget.Source install --id $PackageId --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
-        return $LASTEXITCODE -eq 0
+        if ($LASTEXITCODE -eq 0) { return $true }
+        if ($AllowSkipOnNetworkFailure) {
+            Write-Status "$Name install skipped (winget exit $LASTEXITCODE)"
+            return $false
+        }
+        throw "$Name winget install failed with exit code $LASTEXITCODE"
     } catch {
         if ($AllowSkipOnNetworkFailure) {
             Write-Status "$Name install skipped ($($_.Exception.Message))"
