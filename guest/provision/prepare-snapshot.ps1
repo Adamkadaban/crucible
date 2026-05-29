@@ -20,7 +20,7 @@ function Invoke-Step {
     try {
         & $Block
     } catch {
-        $failures.Add("$Description: $($_.Exception.Message)") | Out-Null
+        $failures.Add("${Description}: $($_.Exception.Message)") | Out-Null
     }
 }
 
@@ -59,13 +59,22 @@ foreach ($path in $tempPaths) {
 }
 
 # 3. Clear Windows event logs so the snapshot starts from an empty slate.
+# Some Analytic / Debug logs (e.g. Microsoft-Windows-LiveId/Analytic) refuse
+# to be cleared while enabled, and wevtutil exits non-zero which would trip
+# Invoke-Step's catch. Swallow per-log errors and let the snapshot proceed —
+# leftover analytic logs are harmless for the malware-analysis baseline.
 Invoke-Step "clear event logs" {
     $logs = & wevtutil.exe el
     if ($LASTEXITCODE -ne 0) {
         throw "wevtutil el exited with code $LASTEXITCODE"
     }
     foreach ($log in $logs) {
-        & wevtutil.exe cl $log 2>$null | Out-Null
+        try {
+            & wevtutil.exe cl $log 2>$null | Out-Null
+        } catch {
+            # Per-log clear failure is non-fatal (Analytic/Debug logs,
+            # locked admin-mode-only logs, etc.).
+        }
     }
 }
 

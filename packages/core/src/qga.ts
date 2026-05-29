@@ -449,6 +449,14 @@ function isTransientQgaError(error: unknown): boolean {
   ) {
     return /pid|handle|not found|invalid/i.test(desc);
   }
+  if (error.message.startsWith("QGA command failed: guest-exec ")) {
+    // qemu-ga's CreateProcessW can fail with "No such file or directory"
+    // for a few seconds right after Windows boot completes, before
+    // System32 is fully in the service PATH and the Win32 subsystem is
+    // hot. Retry transparently — once the guest is fully up, the same
+    // exec succeeds.
+    return /no such file|file or directory|cannot find|failed to execute/i.test(desc);
+  }
   if (error.message.startsWith("QGA command failed: guest-file-open")) {
     // Windows ERROR_SHARING_VIOLATION (32 / 0x80070020). Defender's
     // filesystem minifilter and similar on-access scanners briefly open
@@ -559,7 +567,9 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
           ? stage.script.scriptPath
           : result.exitCode === 75
             ? `${stage.script.scriptPath} (skipped)`
-            : result.stderr || `guest-exec exit code ${result.exitCode ?? "unknown"}`,
+            : result.stderr ||
+              result.stdout ||
+              `guest-exec exit code ${result.exitCode ?? "unknown"}`,
     };
   }
 
@@ -596,15 +606,41 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
     // so the host-side runner can spawn powershell.exe directly. Peel off
     // everything up to and including `-File <host-path>` and keep only
-    // the trailing user arguments. They become a PowerShell @argv array
-    // embedded inside the -Command block (NOT trailing argv to
-    // powershell.exe — PowerShell -Command swallows everything after
-    // the script as part of the command source).
+    // the trailing user arguments.
     const contractArgs = stage.script.arguments ?? [];
     const fileFlagIndex = contractArgs.indexOf("-File");
     const trailingArgs = fileFlagIndex >= 0 ? contractArgs.slice(fileFlagIndex + 2) : contractArgs;
-    const quotedArgs = trailingArgs.map((arg) => `'${arg.replaceAll("'", "''")}'`).join(",");
-    const argvLiteral = quotedArgs.length > 0 ? `@(${quotedArgs})` : "@()";
+    // Bucket user args into named (`-ParamName Value`) vs positional
+    // pairs. Hashtable splat (`@{Name=Value}`) is unambiguously named in
+    // PowerShell — array splat into a script's param block hits binding
+    // edge cases (e.g. `-ControlPort '8443'` ending up positional and
+    // colliding with `-HostOnlySourceAddress`'s value). Switch params
+    // are passed as `Name=$true`. PowerShell boolean literal strings
+    // ('$true' / '$false') emitted by buildAnalysisVmPolicyScriptArguments
+    // are unquoted so they remain real PowerShell tokens — quoting them
+    // turns them into String which can't bind to [bool] / [switch] params.
+    const namedPairs: string[] = [];
+    const positional: string[] = [];
+    let cursor = 0;
+    while (cursor < trailingArgs.length) {
+      const arg = trailingArgs[cursor]!;
+      if (arg.startsWith("-") && arg.length > 1) {
+        const name = arg.slice(1);
+        const next = trailingArgs[cursor + 1];
+        if (next === undefined || next.startsWith("-")) {
+          namedPairs.push(`${name}=$true`);
+          cursor += 1;
+        } else {
+          namedPairs.push(`${name}=${quotePowerShellValue(next)}`);
+          cursor += 2;
+        }
+      } else {
+        positional.push(quotePowerShellValue(arg));
+        cursor += 1;
+      }
+    }
+    const splat = namedPairs.length > 0 ? `@{${namedPairs.join(";")}}` : "@{}";
+    const posLiteral = positional.length > 0 ? `@(${positional.join(",")})` : "@()";
     const psScript = [
       "$ErrorActionPreference='Stop';",
       "$payload=Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5'|" +
@@ -613,13 +649,12 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
       `$script=Join-Path "$($payload.DeviceID)\\\\stages" '${scriptName}';`,
       "if(-not(Test-Path -LiteralPath $script)){" +
         'throw "Stage script not on payload CD: $script"};',
-      `$argv=${argvLiteral};`,
-      // & $script @argv runs the script's `exit N` in its OWN scope
-      // (script exit doesn't propagate to the wrapping -Command). Capture
-      // $LASTEXITCODE and explicitly exit so the QGA executor can map
-      // exit 75 (EX_TEMPFAIL = opt-in skip) to a succeeded-but-skipped
-      // stage.
-      "& $script @argv;",
+      `$named=${splat};`,
+      `$pos=${posLiteral};`,
+      // Hashtable splat (@named) binds by parameter name; @pos binds
+      // any positional leftovers. Script's `exit N` doesn't propagate
+      // out of `&`'s child scope, so capture $LASTEXITCODE explicitly.
+      "& $script @named @pos;",
       "exit $LASTEXITCODE",
     ].join("");
     return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", psScript];
@@ -678,6 +713,20 @@ function decodeBase64(value: string | undefined): string {
     return "";
   }
   return Buffer.from(value, "base64").toString("utf8");
+}
+
+/**
+ * Render a single CLI-style string value into a PowerShell literal
+ * suitable for embedding in a hashtable splat. `$true`/`$false` strings
+ * stay unquoted so they remain real PowerShell booleans (otherwise the
+ * type binder rejects them against `[bool]` / `[switch]` parameters).
+ * Everything else is single-quoted with `''` escaping.
+ */
+function quotePowerShellValue(value: string): string {
+  if (value === "$true" || value === "$false" || value === "$null") {
+    return value;
+  }
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function describeAbortReason(reason: unknown): string {

@@ -64,11 +64,12 @@ describe("QGA client and provisioning executor", () => {
       expect(psBlock as string).toContain("VolumeName -eq 'CRUCIBLE'");
       expect(psBlock as string).toContain("install-windbg.ps1");
       // User-supplied script arguments are embedded INSIDE the PowerShell
-      // -Command block as a $argv array literal (NOT trailing argv to
+      // -Command block as a $named hashtable splat (NOT trailing argv to
       // powershell.exe — -Command swallows everything after the script
       // as part of the command source, which would be a parse error).
-      expect(psBlock as string).toContain("'-SymbolCache'");
-      expect(psBlock as string).toContain("'C:\\Symbols'");
+      // Hashtable splat is unambiguously named, sidestepping PowerShell's
+      // array-splat-binding edge cases.
+      expect(psBlock as string).toContain("SymbolCache='C:\\Symbols'");
     } finally {
       await server.close();
     }
@@ -627,6 +628,77 @@ function qgaReadyStage(): ProvisioningStageContract {
     producesSnapshot: false,
   };
 }
+
+it("embeds PowerShell boolean literals as real booleans (not strings) in the hashtable splat", async () => {
+  // Regression for #130 follow-up: buildAnalysisVmPolicyScriptArguments
+  // emits values like '$true' / '$false' to be passed to configure-
+  // policy.ps1 [bool] parameters. If we quote them as 'String' in the
+  // hashtable splat, PowerShell's type binder rejects them against
+  // [bool] params (ParameterArgumentTransformationError). They must
+  // appear UNQUOTED in the emitted hashtable.
+  const guestExecArgs: unknown[][] = [];
+  const server = await startFakeQga((request) => {
+    if (request.execute === "guest-exec") {
+      guestExecArgs.push((request.arguments?.arg as unknown[]) ?? []);
+      return { return: { pid: 42 } };
+    }
+    if (request.execute === "guest-exec-status") {
+      return { return: { exited: true, exitcode: 0 } };
+    }
+    return { return: {} };
+  });
+  try {
+    const executor = new QgaProvisioningExecutor({
+      client: new QgaClient({ socketPath: server.socketPath }),
+      vmName: "analysis-one",
+      secretsDirectory: "secrets",
+      timeoutMs: 1000,
+    });
+    const stage: ProvisioningStageContract = {
+      id: "policy-configured",
+      title: "Configure policy",
+      dependsOn: [],
+      readinessChecks: [],
+      producesSecrets: [],
+      producesSnapshot: false,
+      script: {
+        id: "configure-policy",
+        runner: "qga-powershell",
+        executable: "powershell.exe",
+        scriptPath: "guest/provision/configure-policy.ps1",
+        arguments: [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "guest/provision/configure-policy.ps1",
+          "-DisableDefender",
+          "$true",
+          "-CommonAnalysisLabCamouflage",
+          "$false",
+          "-Locale",
+          "en-US",
+        ],
+        timeoutMs: 60_000,
+        environmentSecretRefs: [],
+        redactedArgumentIndexes: [],
+        elevated: false,
+      },
+    };
+    await executor.runStage(stage);
+    const psBlock = (guestExecArgs[0] ?? []).find(
+      (entry): entry is string => typeof entry === "string" && entry.includes("Win32_LogicalDisk"),
+    );
+    expect(psBlock).toBeDefined();
+    // Unquoted PowerShell booleans — the whole point of the regression
+    expect(psBlock as string).toContain("DisableDefender=$true");
+    expect(psBlock as string).toContain("CommonAnalysisLabCamouflage=$false");
+    // String values are still quoted with single-quote escaping
+    expect(psBlock as string).toContain("Locale='en-US'");
+  } finally {
+    await server.close();
+  }
+});
 
 function scriptStage(): ProvisioningStageContract {
   return {

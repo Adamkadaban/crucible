@@ -122,7 +122,7 @@ describe("provisioning contracts", () => {
       expect.objectContaining({
         id: "install-windbg",
         runner: "qga-powershell",
-        executable: "powershell.exe",
+        executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
         scriptPath: "guest/provision/install-windbg.ps1",
         elevated: true,
         timeoutMs: 2_700_000,
