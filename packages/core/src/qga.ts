@@ -21,7 +21,10 @@ const DEFAULT_RETRY_BUDGET_MS = 5 * 60 * 1000;
 const DEFAULT_RETRY_INITIAL_BACKOFF_MS = 500;
 const DEFAULT_RETRY_MAX_BACKOFF_MS = 5_000;
 
-type QgaResponse<T> = { readonly return?: T; readonly error?: { readonly desc?: string } };
+type QgaResponse<T> = {
+  readonly return?: T;
+  readonly error?: { readonly class?: string; readonly desc?: string };
+};
 
 export type QgaRetryPolicy = {
   readonly budgetMs: number;
@@ -272,7 +275,18 @@ export class QgaClient {
       socket.write(`${JSON.stringify({ execute: command, arguments: args })}\r\n`);
       const response = await readResponse<T>(socket, this.#timeoutMs, command);
       if (response.error !== undefined) {
-        throw new CrucibleError("PROCESS_FAILED", `QGA command failed: ${command}`, response.error);
+        // Surface qga's structured class/desc inline so operators see the
+        // actual failure cause (`The system cannot find the path
+        // specified.`, `Access is denied.`, …) instead of an opaque
+        // `QGA command failed: guest-file-open`. The structured object
+        // remains in `details` for programmatic consumers.
+        const desc = response.error.desc ?? "(no desc)";
+        const className = response.error.class ?? "GenericError";
+        throw new CrucibleError(
+          "PROCESS_FAILED",
+          `QGA command failed: ${command} — ${className}: ${desc}`,
+          response.error,
+        );
       }
       return response.return as T;
     } finally {
@@ -322,6 +336,17 @@ function isTransientQgaError(error: unknown): boolean {
     error.message.startsWith("QGA command failed: guest-file-close")
   ) {
     return /pid|handle|not found|invalid/i.test(desc);
+  }
+  if (error.message.startsWith("QGA command failed: guest-file-open")) {
+    // Windows ERROR_SHARING_VIOLATION (32 / 0x80070020). Defender's
+    // filesystem minifilter and similar on-access scanners briefly open
+    // newly-created script files with FILE_SHARE_READ only, racing
+    // qemu-ga's GENERIC_WRITE open. The lock typically clears within
+    // 100-1500ms, so retrying with exponential backoff works. qemu-ga
+    // surfaces the localized OS message; we match the en-US form
+    // explicitly (the autounattend ISO sets en-US, so this is the
+    // form we'll see in practice).
+    return /being used by another process|sharing violation|cannot access the file/i.test(desc);
   }
   return false;
 }
@@ -384,7 +409,15 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     const staged = this.#filesToStage[stage.id];
     if (staged !== undefined && staged.length > 0) {
       for (const file of staged) {
-        await this.#stageFile(file);
+        try {
+          await this.#stageFile(file);
+        } catch (error) {
+          throw new CrucibleError(
+            "PROCESS_FAILED",
+            `Failed to stage file for stage '${stage.id}': ${file.hostPath} -> ${file.guestPath}: ${error instanceof Error ? error.message : String(error)}`,
+            error,
+          );
+        }
       }
     }
 
@@ -508,8 +541,16 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
     }
     const scriptBody = await readFile(stage.script.scriptPath, "utf8");
     const guestPath = `C:\\ProgramData\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
-    await this.#ensureGuestDirectory(guestParentDir(guestPath));
-    await this.#client.writeFile(guestPath, scriptBody);
+    try {
+      await this.#ensureGuestDirectory(guestParentDir(guestPath));
+      await this.#client.writeFile(guestPath, scriptBody);
+    } catch (error) {
+      throw new CrucibleError(
+        "PROCESS_FAILED",
+        `Failed to stage script for stage '${stage.id}': ${stage.script.scriptPath} -> ${guestPath}: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+      );
+    }
     // The contract stores the full PowerShell invocation
     // (`-NoProfile -ExecutionPolicy Bypass -File <host-path> [...userArgs]`)
     // so the host-side runner can spawn powershell.exe directly. The

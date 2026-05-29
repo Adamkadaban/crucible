@@ -526,6 +526,20 @@ describe("provisioning contracts", () => {
     expect(autounattend).toContain(
       'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" /v BypassNRO',
     );
+    // Regression for #130: Defender's on-access scanner must be disabled
+    // via policy registry keys in `specialize` (BEFORE the Defender
+    // service starts in oobeSystem), or qemu-ga's guest-file-open for
+    // .ps1 scripts under C:\ProgramData\Crucible races the minifilter
+    // and fails with ERROR_SHARING_VIOLATION.
+    expect(autounattend).toContain(
+      'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender" /v DisableAntiSpyware',
+    );
+    expect(autounattend).toContain(
+      'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection" /v DisableRealtimeMonitoring',
+    );
+    expect(autounattend).toContain(
+      'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection" /v DisableOnAccessProtection',
+    );
     expect(autounattend).toContain("<SkipMachineOOBE>true</SkipMachineOOBE>");
     expect(autounattend).toContain("<SkipUserOOBE>true</SkipUserOOBE>");
     expect(autounattend).toContain("<HideOnlineAccountScreens>true</HideOnlineAccountScreens>");
