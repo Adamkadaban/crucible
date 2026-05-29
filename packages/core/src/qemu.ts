@@ -19,6 +19,15 @@ export type QemuBootMediaPlan = {
   readonly virtioIsoPath?: string;
   readonly driverBundlePath?: string;
   readonly autounattendIsoPath?: string;
+  /**
+   * ISO9660+Joliet image (volume label `CRUCIBLE`) containing the
+   * runtime payload that we used to ship via qemu-ga writeFile —
+   * crucible-agent.exe, mTLS material, and the per-stage PowerShell
+   * scripts. Mounted as a read-only CD-ROM. Replaces qemu-ga as the
+   * file-transfer mechanism to sidestep ERROR_SHARING_VIOLATION races
+   * (#130). Guest scripts find the medium by volume label via WMI.
+   */
+  readonly payloadIsoPath?: string;
   readonly ovmfCodePath?: string;
   readonly ovmfVarsPath?: string;
   readonly swtpmSocketPath?: string;
@@ -54,6 +63,7 @@ export type QemuBootMediaOptions = {
   readonly virtioIsoPath?: string;
   readonly driverBundlePath?: string;
   readonly autounattendIsoPath?: string;
+  readonly payloadIsoPath?: string;
   readonly ovmfCodePath?: string;
   readonly ovmfVarsPath?: string;
   readonly swtpmSocketPath?: string;
@@ -154,7 +164,8 @@ function buildSataControllerArgs(bootMedia?: QemuBootMediaOptions): readonly str
   if (
     bootMedia?.windowsIsoPath === undefined &&
     bootMedia?.virtioIsoPath === undefined &&
-    bootMedia?.autounattendIsoPath === undefined
+    bootMedia?.autounattendIsoPath === undefined &&
+    bootMedia?.payloadIsoPath === undefined
   ) {
     return [];
   }
@@ -192,6 +203,15 @@ function buildBootMediaArgs(bootMedia?: QemuBootMediaOptions): readonly string[]
 
   if (bootMedia?.virtioIsoPath !== undefined) {
     args.push(...isoDriveArgs("crucible-virtio", bootMedia.virtioIsoPath, 2));
+  }
+
+  if (bootMedia?.payloadIsoPath !== undefined) {
+    // The Crucible payload ISO (volume label CRUCIBLE) ships our agent
+    // binary, mTLS material, and per-stage PowerShell scripts. Mounted
+    // read-only as a CD-ROM so guest scripts can copy from it without
+    // racing qemu-ga's guest-file-open against Windows' filesystem
+    // minifilters (see #130). No bootindex — must never be a boot target.
+    args.push(...isoDriveArgs("crucible-payload", bootMedia.payloadIsoPath, 3));
   }
 
   return args;

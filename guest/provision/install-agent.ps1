@@ -43,9 +43,46 @@ if ($ControlPort -lt 1 -or $ControlPort -gt 65535) {
     throw "ControlPort must be between 1 and 65535"
 }
 
+# Locate the crucible-payload.iso CD-ROM by volume label. Per #130 we
+# ship the agent binary and mTLS material on a read-only CD mounted at
+# VM start instead of pushing them over qemu-ga writeFile — qemu-ga's
+# guest-file-open races Windows filesystem minifilters with
+# ERROR_SHARING_VIOLATION even on a fully Defender-disabled guest.
+$payload = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' |
+    Where-Object { $_.VolumeName -eq 'CRUCIBLE' } |
+    Select-Object -First 1
+if (-not $payload) {
+    throw "CRUCIBLE payload CD not found (Win32_LogicalDisk DriveType=5 VolumeName=CRUCIBLE)"
+}
+$payloadRoot = "$($payload.DeviceID)\"
+$payloadAgent = Join-Path $payloadRoot "agent\crucible-agent.exe"
+$payloadCa = Join-Path $payloadRoot "mtls\ca.cert.pem"
+$payloadServerCert = Join-Path $payloadRoot "mtls\guest-server.cert.pem"
+$payloadServerKey = Join-Path $payloadRoot "mtls\guest-server.key.pem"
+foreach ($source in @($payloadAgent, $payloadCa, $payloadServerCert, $payloadServerKey)) {
+    if (-not (Test-Path -LiteralPath $source)) {
+        throw "Missing payload-CD file: $source"
+    }
+}
+
+# Stage the agent binary + mTLS material from the payload CD onto the
+# guest's writable filesystem. Copy-Item uses Win32 CopyFileExW which
+# opens with FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+# cooperating with any other minifilter that briefly touches the new
+# file — no sharing-violation race.
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $AgentPath) | Out-Null
+New-Item -ItemType Directory -Force -Path $CertDirectory | Out-Null
+Copy-Item -LiteralPath $payloadAgent -Destination $AgentPath -Force
 $caCertificate = Join-Path $CertDirectory "ca.cert.pem"
 $serverCertificate = Join-Path $CertDirectory "guest-server.cert.pem"
 $serverPrivateKey = Join-Path $CertDirectory "guest-server.key.pem"
+Copy-Item -LiteralPath $payloadCa -Destination $caCertificate -Force
+Copy-Item -LiteralPath $payloadServerCert -Destination $serverCertificate -Force
+Copy-Item -LiteralPath $payloadServerKey -Destination $serverPrivateKey -Force
+
+# Lock down the mTLS private key: SYSTEM + Administrators read only.
+& "$env:SystemRoot\System32\icacls.exe" $serverPrivateKey /inheritance:r /grant:r `
+    "NT AUTHORITY\SYSTEM:(R)" "BUILTIN\Administrators:(R)" | Out-Null
 
 foreach ($path in @($caCertificate, $serverCertificate, $serverPrivateKey)) {
     if (-not (Test-Path -LiteralPath $path)) {

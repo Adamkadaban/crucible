@@ -211,6 +211,20 @@ export type RealFirstBootProvisioningOptions = {
   readonly xorrisoExecutable?: string;
   readonly opensslExecutable?: string;
   readonly timeoutMs?: number;
+  /**
+   * Host path to the cross-compiled Windows guest agent binary. Baked
+   * into crucible-payload.iso so the guest can copy it into place
+   * without going through qemu-ga writeFile (which races Windows
+   * filesystem minifilters; see #130).
+   */
+  readonly agentBinaryPath?: string;
+  /**
+   * Host directory containing the per-stage PowerShell scripts that
+   * provisioning invokes via guest-exec. Baked into the payload ISO
+   * under /stages/. Defaults to `guest/provision/` relative to the
+   * MCP host's working directory.
+   */
+  readonly provisioningScriptsDirectory?: string;
 };
 
 export type RealFirstBootProvisioningPlan = {
@@ -221,6 +235,7 @@ export type RealFirstBootProvisioningPlan = {
   readonly swtpmPidPath: string;
   readonly swtpmStateDirectory: string;
   readonly autounattendIsoPath: string;
+  readonly payloadIsoPath: string;
   readonly mtlsBundleDirectory: string;
   readonly mtlsCaCertificatePath: string;
   readonly mtlsServerCertificatePath: string;
@@ -579,6 +594,37 @@ export async function prepareRealFirstBootProvisioning(
     opensslExecutable: options.opensslExecutable,
   });
 
+  // crucible-payload.iso — read-only CD-ROM with the agent binary, mTLS
+  // material, and per-stage PowerShell scripts. Mounted as the 4th
+  // CD-ROM at VM start; guest scripts (install-agent.ps1) copy from
+  // it via WMI + Win32_LogicalDisk(DriveType=5,VolumeName=CRUCIBLE).
+  // This is the cidata/NoCloud pattern used by cloud-init, Packer,
+  // and KubeVirt — it sidesteps qemu-ga's ERROR_SHARING_VIOLATION
+  // race against Windows filesystem minifilters (#130) entirely.
+  const payloadIsoPath = path.join(bootDirectory, "crucible-payload.iso");
+  const provisioningScriptsDirectory =
+    options.provisioningScriptsDirectory ?? path.resolve("guest", "provision");
+  const payloadIsoCommand = await buildPayloadIsoCommand({
+    xorrisoExecutable,
+    outputPath: payloadIsoPath,
+    bootDirectory,
+    agentBinaryPath: options.agentBinaryPath,
+    mtlsCaCertificatePath: mtls.caCertificatePath,
+    mtlsServerCertificatePath: mtls.serverCertificatePath,
+    mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
+    provisioningScriptsDirectory,
+    timeoutMs,
+  });
+  await runProvisioningProcess(options.processRunner, payloadIsoCommand);
+  // 0600: the payload ISO contains the mTLS server private key.
+  try {
+    await chmod(payloadIsoPath, 0o600);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
   return {
     diskPath: plan.disk.path,
     ovmfCodePath,
@@ -587,13 +633,72 @@ export async function prepareRealFirstBootProvisioning(
     swtpmPidPath,
     swtpmStateDirectory,
     autounattendIsoPath,
+    payloadIsoPath,
     mtlsBundleDirectory: mtls.directory,
     mtlsCaCertificatePath: mtls.caCertificatePath,
     mtlsServerCertificatePath: mtls.serverCertificatePath,
     mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
     mtlsHostClientCertificatePath: mtls.hostClientCertificatePath,
     mtlsHostClientPrivateKeyPath: mtls.hostClientPrivateKeyPath,
-    commands,
+    commands: [...commands, payloadIsoCommand],
+  };
+}
+
+async function buildPayloadIsoCommand(options: {
+  readonly xorrisoExecutable: string;
+  readonly outputPath: string;
+  readonly bootDirectory: string;
+  readonly agentBinaryPath: string | undefined;
+  readonly mtlsCaCertificatePath: string;
+  readonly mtlsServerCertificatePath: string;
+  readonly mtlsServerPrivateKeyPath: string;
+  readonly provisioningScriptsDirectory: string;
+  readonly timeoutMs: number;
+}): Promise<ProcessCommand> {
+  // Remove any leftover payload.iso from a previous run before xorriso
+  // re-creates it — same reason as autounattend.iso (xorriso would add
+  // its own previous output to the new ISO and exit MISHAP).
+  try {
+    await rm(options.outputPath, { force: true });
+  } catch {
+    // best effort
+  }
+  await assertReadableFile("mTLS CA certificate", options.mtlsCaCertificatePath);
+  await assertReadableFile("mTLS server certificate", options.mtlsServerCertificatePath);
+  await assertReadableFile("mTLS server private key", options.mtlsServerPrivateKeyPath);
+  await assertReadableDirectory(
+    "provisioning scripts directory",
+    options.provisioningScriptsDirectory,
+  );
+  const graftPoints: string[] = [
+    `/mtls/ca.cert.pem=${options.mtlsCaCertificatePath}`,
+    `/mtls/guest-server.cert.pem=${options.mtlsServerCertificatePath}`,
+    `/mtls/guest-server.key.pem=${options.mtlsServerPrivateKeyPath}`,
+    `/stages/=${options.provisioningScriptsDirectory.endsWith("/") ? options.provisioningScriptsDirectory : `${options.provisioningScriptsDirectory}/`}`,
+  ];
+  if (options.agentBinaryPath !== undefined) {
+    await assertReadableFile("guest agent binary", options.agentBinaryPath);
+    graftPoints.push(`/agent/crucible-agent.exe=${options.agentBinaryPath}`);
+  }
+  return {
+    executable: options.xorrisoExecutable,
+    args: [
+      "-as",
+      "mkisofs",
+      "-V",
+      "CRUCIBLE",
+      "-J",
+      "-joliet-long",
+      "-r",
+      "-iso-level",
+      "3",
+      "-graft-points",
+      "-o",
+      options.outputPath,
+      ...graftPoints,
+    ],
+    timeoutMs: options.timeoutMs,
+    maxOutputBytes: 1024 * 1024,
   };
 }
 
@@ -936,6 +1041,17 @@ async function assertReadableFile(label: string, filePath: string): Promise<void
     }
   } catch (error) {
     throw new CrucibleError("MEDIA_UNAVAILABLE", `${label} is not readable: ${filePath}`, error);
+  }
+}
+
+async function assertReadableDirectory(label: string, dirPath: string): Promise<void> {
+  try {
+    const info = await stat(dirPath);
+    if (!info.isDirectory()) {
+      throw new Error(`${label} path is not a directory`);
+    }
+  } catch (error) {
+    throw new CrucibleError("MEDIA_UNAVAILABLE", `${label} is not readable: ${dirPath}`, error);
   }
 }
 

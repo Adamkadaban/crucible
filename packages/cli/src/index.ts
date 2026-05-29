@@ -489,29 +489,13 @@ function buildDefaultProvisioningExecutor(
   prep: ProvisioningLifecyclePreparation,
   signal: AbortSignal,
 ): QgaProvisioningExecutor {
-  const filesToStage: Record<string, { hostPath: string; guestPath: string }[]> = {};
-  if (prep.firstBootPlan !== undefined) {
-    const agentBinaryPath = resolveGuestAgentBinaryPath();
-    filesToStage["guest-agent-installed"] = [
-      {
-        hostPath: prep.firstBootPlan.mtlsCaCertificatePath,
-        guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\ca.cert.pem",
-      },
-      {
-        hostPath: prep.firstBootPlan.mtlsServerCertificatePath,
-        guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\guest-server.cert.pem",
-      },
-      {
-        hostPath: prep.firstBootPlan.mtlsServerPrivateKeyPath,
-        guestPath: "C:\\ProgramData\\Crucible\\Agent\\certs\\guest-server.key.pem",
-      },
-      {
-        hostPath: agentBinaryPath,
-        guestPath: "C:\\Program Files\\Crucible\\crucible-agent.exe",
-      },
-    ];
-  }
-
+  // mTLS material + the agent binary + every per-stage PowerShell
+  // script are now baked into crucible-payload.iso and mounted as the
+  // 4th CD-ROM at VM start. install-agent.ps1 copies them into place
+  // via Win32 file I/O. We deliberately do NOT use qemu-ga writeFile
+  // here: see #130 — the guest-file-open + Windows-filesystem-minifilter
+  // race is unfixable on Win11 25H2 from the host side.
+  void prep;
   return new QgaProvisioningExecutor({
     client: new QgaClient({
       socketPath: config.qga.socketPath,
@@ -520,7 +504,6 @@ function buildDefaultProvisioningExecutor(
     }),
     vmName: config.vm.name,
     secretsDirectory: config.artifacts.secretsDirectory,
-    filesToStage,
   });
 }
 
@@ -559,7 +542,11 @@ async function getProvisioningLifecyclePreparation(
   }
 
   const processRunner = runtime.processRunner ?? nodeProcessRunner;
-  const firstBootPlan = await prepareRealFirstBootProvisioning({ config, processRunner });
+  const firstBootPlan = await prepareRealFirstBootProvisioning({
+    config,
+    processRunner,
+    agentBinaryPath: resolveGuestAgentBinaryPath(),
+  });
   const qemuPlan = buildQemuCommandPlan({
     config,
     diskPath: firstBootPlan.diskPath,
@@ -568,6 +555,7 @@ async function getProvisioningLifecyclePreparation(
       virtioIsoPath: config.media.virtioIso?.path,
       driverBundlePath: config.media.driverBundle?.path,
       autounattendIsoPath: firstBootPlan.autounattendIsoPath,
+      payloadIsoPath: firstBootPlan.payloadIsoPath,
       ovmfCodePath: firstBootPlan.ovmfCodePath,
       ovmfVarsPath: firstBootPlan.ovmfVarsPath,
     },

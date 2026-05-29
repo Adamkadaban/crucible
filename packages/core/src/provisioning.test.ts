@@ -456,11 +456,13 @@ describe("provisioning contracts", () => {
     const virtioIso = join(root, "virtio.iso");
     const ovmfCode = join(root, "OVMF_CODE.fd");
     const ovmfVars = join(root, "OVMF_VARS.fd");
+    const agentBinary = join(root, "crucible-guest-agent.exe");
     await Promise.all([
       writeFile(windowsIso, "windows", "utf8"),
       writeFile(virtioIso, "virtio", "utf8"),
       writeFile(ovmfCode, "code", "utf8"),
       writeFile(ovmfVars, "vars", "utf8"),
+      writeFile(agentBinary, "agent", "utf8"),
     ]);
     const commands: ProcessCommand[] = [];
     const processRunner: ProcessRunner = {
@@ -496,19 +498,25 @@ describe("provisioning contracts", () => {
       ovmfCodePath: ovmfCode,
       ovmfVarsTemplatePath: ovmfVars,
       processRunner,
+      agentBinaryPath: agentBinary,
     });
 
     expect(plan.diskPath).toContain("first-boot.qcow2");
     expect(plan.autounattendIsoPath).toContain("autounattend.iso");
+    expect(plan.payloadIsoPath).toContain("crucible-payload.iso");
     expect(commands.map((command) => command.executable)).toEqual([
       "xorriso",
       "xorriso",
       "xorriso",
       "qemu-img",
       "xorriso",
+      "xorriso",
     ]);
     expect(commands[3]?.args).toEqual(["create", "-f", "qcow2", plan.diskPath, "64G"]);
+    // The last xorriso command builds the payload ISO; the autounattend
+    // ISO is at index 4. Both use -J -joliet-long -r.
     expect(commands.at(-1)?.args).toEqual(expect.arrayContaining(["-J", "-joliet-long", "-r"]));
+    expect(commands.at(-1)?.args).toContain("CRUCIBLE");
     const autounattend = await readFile(
       join(root, "artifacts", "boot", "Autounattend.xml"),
       "utf8",
@@ -653,6 +661,7 @@ describe("provisioning contracts", () => {
       "xorriso",
       "xorriso",
       "xorriso",
+      "xorriso",
     ]);
     await expect(readFile(diskPath, "utf8")).resolves.toBe("existing disk");
     await expect(readFile(existingVars, "utf8")).resolves.toBe("existing vars");
@@ -723,7 +732,7 @@ describe("provisioning contracts", () => {
       },
     });
 
-    expect(commands.filter((command) => command.executable === "xorriso")).toHaveLength(4);
+    expect(commands.filter((command) => command.executable === "xorriso")).toHaveLength(5);
     const extracted = join(artifactDirectory, "boot", "drivers", "vioscsi", "driver.inf");
     const mode = (await stat(extracted)).mode & 0o777;
     expect(mode & 0o200).toBe(0o200);
