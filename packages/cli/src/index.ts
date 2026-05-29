@@ -104,6 +104,7 @@ type CliRuntime = {
   readonly config?: CrucibleConfig;
   readonly configPath?: string;
   readonly lifecycleManager?: CliLifecycleManager;
+  readonly finalLifecycleManager?: CliLifecycleManager;
   readonly provisioningExecutor?: ProvisioningExecutor;
   readonly snapshotManager?: CliSnapshotManager;
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
@@ -423,6 +424,17 @@ async function runProvisionCommand(
   // a dead socket. The CLI is the only layer that knows the lifecycle is
   // about to be torn down, so it owns the signal.
   const lifecycleAbort = new AbortController();
+  let activeLifecycleManager = lifecyclePrep.lifecycleManager;
+  const activeLifecycle: CliLifecycleManager = {
+    get paths() {
+      return activeLifecycleManager.paths;
+    },
+    start: () => activeLifecycleManager.start(),
+    stop: () => activeLifecycleManager.stop(),
+    poweroff: () => activeLifecycleManager.poweroff(),
+    kill: () => activeLifecycleManager.kill(),
+    status: () => activeLifecycleManager.status(),
+  };
 
   // When the CLI owns the lifecycle (no injected lifecycleManager /
   // provisioningExecutor), build a default executor that stages mTLS
@@ -432,16 +444,13 @@ async function runProvisionCommand(
     runtime.provisioningExecutor ??
     buildDefaultProvisioningExecutor(config, lifecyclePrep, lifecycleAbort.signal);
 
-  const livenessHandle = startLifecycleLivenessPoller(
-    lifecyclePrep.lifecycleManager,
-    lifecycleAbort,
-  );
+  const livenessHandle = startLifecycleLivenessPoller(activeLifecycle, lifecycleAbort);
   let provisionRejected = false;
 
   try {
     const result = await runProvisioningCommand({
       config,
-      lifecycleManager: lifecyclePrep.lifecycleManager,
+      lifecycleManager: activeLifecycle,
       executor,
       snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
       skipBootKeyNudge: runtime.skipBootKeyNudge,
@@ -453,8 +462,11 @@ async function runProvisionCommand(
           return;
         }
         await lifecyclePrep.lifecycleManager.stop();
-        await lifecyclePrep.finalLifecycleManager.start();
-        await waitForQgaAfterNetworkRestart(config, lifecycleAbort.signal);
+        activeLifecycleManager = lifecyclePrep.finalLifecycleManager;
+        await activeLifecycleManager.start();
+        if (runtime.provisioningExecutor === undefined) {
+          await waitForQgaAfterNetworkRestart(config, lifecycleAbort.signal);
+        }
       },
     });
 
@@ -471,7 +483,7 @@ async function runProvisionCommand(
     // Skip the kill when CRUCIBLE_KEEP_VM_ON_FAILURE is set so an operator
     // can attach via qga / qmp and debug the failing stage interactively.
     if (process.env.CRUCIBLE_KEEP_VM_ON_FAILURE !== "1") {
-      await tryKillLifecycle(lifecyclePrep.lifecycleManager);
+      await tryKillLifecycle(activeLifecycle);
     }
     throw error;
   } finally {
@@ -505,7 +517,7 @@ async function waitForQgaAfterNetworkRestart(
       return;
     } catch (error) {
       lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      await sleepRespectingAbort(2_000, signal);
     }
   }
   throw new CrucibleError(
@@ -513,6 +525,35 @@ async function waitForQgaAfterNetworkRestart(
     "Timed out waiting for QGA after final-network restart",
     lastError,
   );
+}
+
+function sleepRespectingAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.reject(abortReasonAsError(signal.reason));
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal.removeEventListener("abort", aborted);
+      resolve();
+    }
+    function aborted() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+      reject(abortReasonAsError(signal.reason));
+    }
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+function abortReasonAsError(reason: unknown): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+  if (typeof reason === "string") {
+    return new Error(reason);
+  }
+  return new Error("operation aborted");
 }
 
 type LifecycleLivenessHandle = { readonly stop: () => void };
@@ -642,7 +683,10 @@ async function getProvisioningLifecyclePreparation(
   runtime: CliRuntime,
 ): Promise<ProvisioningLifecyclePreparation> {
   if (runtime.lifecycleManager !== undefined || runtime.provisioningExecutor !== undefined) {
-    return { lifecycleManager: getLifecycleManager(runtime) };
+    return {
+      lifecycleManager: getLifecycleManager(runtime),
+      finalLifecycleManager: runtime.finalLifecycleManager,
+    };
   }
 
   const processRunner = runtime.processRunner ?? nodeProcessRunner;
