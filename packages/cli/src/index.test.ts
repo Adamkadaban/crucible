@@ -274,6 +274,10 @@ describe("crucible CLI bootstrap", () => {
                   qemuAgentStatus: "Running",
                   crucibleAgentStatus: "Running",
                   defenderRealTimeProtectionEnabled: false,
+                  codeIntegrityStateRecorded: true,
+                  codeIntegrityEnforcementDisabled: true,
+                  hypervisorEnforcedCodeIntegrityDisabled: true,
+                  codeIntegrityBootOptions: [],
                   testSigningEnabled: false,
                   healthy: true,
                 }),
@@ -292,6 +296,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("WinDbg installed: yes");
     expect(result.stdout).toContain("CDB path: C:\\Debuggers\\cdb.exe");
     expect(result.stdout).toContain("Defender real-time protection: no");
+    expect(result.stdout).toContain("code-integrity state recorded: yes");
+    expect(result.stdout).toContain("code-integrity enforcement disabled: yes");
     expect(result.stdout).toContain("test signing enabled: no");
   });
 

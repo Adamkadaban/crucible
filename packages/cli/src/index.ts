@@ -79,6 +79,10 @@ type GuestPolicyHealth = {
   readonly qemuAgentStatus: string;
   readonly crucibleAgentStatus: string;
   readonly defenderRealTimeProtectionEnabled: boolean | null;
+  readonly codeIntegrityStateRecorded: boolean;
+  readonly codeIntegrityEnforcementDisabled: boolean;
+  readonly hypervisorEnforcedCodeIntegrityDisabled: boolean;
+  readonly codeIntegrityBootOptions: readonly string[];
   readonly testSigningEnabled: boolean | null;
   readonly healthy: boolean;
 };
@@ -820,6 +824,10 @@ function renderGuestAgentHealth(
       `- qemu-ga service: ${policyHealth.qemuAgentStatus ?? "unknown"}`,
       `- CrucibleGuestAgent service: ${policyHealth.crucibleAgentStatus ?? "unknown"}`,
       `- Defender real-time protection: ${formatBoolean(policyHealth.defenderRealTimeProtectionEnabled)}`,
+      `- code-integrity state recorded: ${policyHealth.codeIntegrityStateRecorded ? "yes" : "no"}`,
+      `- code-integrity enforcement disabled: ${formatRecordedBoolean(policyHealth.codeIntegrityEnforcementDisabled, policyHealth.codeIntegrityStateRecorded)}`,
+      `- HVCI disabled: ${formatRecordedBoolean(policyHealth.hypervisorEnforcedCodeIntegrityDisabled, policyHealth.codeIntegrityStateRecorded)}`,
+      `- code-integrity boot options: ${policyHealth.codeIntegrityBootOptions.length > 0 ? policyHealth.codeIntegrityBootOptions.join(", ") : "none"}`,
       `- test signing enabled: ${formatBoolean(policyHealth.testSigningEnabled)}`,
       `- policy health: ${policyHealth.healthy ? "healthy" : "unhealthy"}`,
     );
@@ -833,6 +841,10 @@ function formatBoolean(value: boolean | null | undefined): string {
     return "unknown";
   }
   return value ? "yes" : "no";
+}
+
+function formatRecordedBoolean(value: boolean, recorded: boolean): string {
+  return recorded ? formatBoolean(value) : "unknown";
 }
 
 async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<GuestPolicyHealth> {
@@ -857,7 +869,7 @@ async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<Gues
 }
 
 function buildGuestPolicyHealthCommand(): string {
-  return `$ErrorActionPreference='Stop';
+  return String.raw`$ErrorActionPreference='Stop';
 function Find-Dbg([string[]]$Names){
   foreach($name in $Names){$cmd=Get-Command $name -ErrorAction SilentlyContinue; if($null -ne $cmd){return $cmd.Source}}
   $dirs=@("$env:ProgramFiles\\Windows Kits\\10\\Debuggers\\x64", "$env:LOCALAPPDATA\\Microsoft\\WindowsApps")
@@ -869,9 +881,11 @@ function Find-Dbg([string[]]$Names){
 function Test-User([string]$Name){try{$null=Get-LocalUser -Name $Name -ErrorAction Stop; return $true}catch{return $false}}
 function ServiceStatus([string]$Name){$s=Get-Service -Name $Name -ErrorAction SilentlyContinue; if($null -eq $s){return 'missing'}; return $s.Status.ToString()}
 function DefenderRtp(){try{$s=Get-MpComputerStatus -ErrorAction Stop; return [bool]$s.RealTimeProtectionEnabled}catch{return $null}}
+function DwordValue([string]$Path,[string]$Name){try{$i=Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop; return [int]($i.$Name)}catch{return $null}}
+function CodeIntegrityBootOptions(){try{$b=& bcdedit /enum 2>$null; if($LASTEXITCODE -ne 0){return @()}; $o=@(); if($b | Select-String -Pattern '^\\s*nointegritychecks\\s+Yes\\s*$' -Quiet){$o += 'nointegritychecks'}; if($b | Select-String -Pattern '^\\s*testsigning\\s+Yes\\s*$' -Quiet){$o += 'testsigning'}; return @($o)}catch{return @()}}
 function TestSigning(){try{$b=& bcdedit /enum '{current}' 2>$null; if($LASTEXITCODE -ne 0){return $null}; return [bool]($b | Select-String -Pattern 'testsigning\\s+Yes' -Quiet)}catch{return $null}}
-$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $ts=TestSigning;
-[ordered]@{cdbPath=$cdb; windbgPath=$windbg; symbolPath=$symbol; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ts -eq $false)} | ConvertTo-Json -Compress`;
+$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
+[ordered]@{cdbPath=$cdb; windbgPath=$windbg; symbolPath=$symbol; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false)} | ConvertTo-Json -Compress`;
 }
 
 function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
