@@ -9,6 +9,11 @@ import {
   CRUCIBLE_VERSION,
   CrucibleError,
   DebuggerSessionManager,
+  buildNetworkModeChangePlan,
+  buildNetworkPlan,
+  buildNetworkRuntimeStatus,
+  type CrucibleConfig,
+  defaultCrucibleConfig,
   type DebuggerSession,
   type DebuggerSessionSpec,
   GuestAgentClient,
@@ -18,6 +23,7 @@ import {
   type GuestAgentHealth,
   type GuestAgentUploadResult,
   type HostCheckProbeResult,
+  type NetworkMode,
   type RunResult,
   runHostCheck,
 } from "@crucible/core";
@@ -43,6 +49,14 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   {
     name: "vm_stop",
     description: "Stop the configured Crucible VM through the injected lifecycle manager.",
+  },
+  {
+    name: "network_status",
+    description: "Report configured VM network mode and live-switch capability.",
+  },
+  {
+    name: "network_set_mode",
+    description: "Plan a network mode change and report whether a VM restart is required.",
   },
   {
     name: "snapshot_list",
@@ -151,6 +165,9 @@ const GuestHealthInput = z.object({}).strict();
 const VmStatusInput = z.object({}).strict();
 const VmStartInput = z.object({}).strict();
 const VmStopInput = z.object({}).strict();
+const NetworkStatusInput = z.object({}).strict();
+const NetworkSetModeInput = z.object({ mode: z.enum(["isolated", "nat", "capture"]) }).strict();
+type NetworkSetModeInputType = z.infer<typeof NetworkSetModeInput>;
 const SnapshotListInput = z.object({}).strict();
 const SnapshotRestoreInput = z
   .object({
@@ -237,6 +254,8 @@ export type RegisterCrucibleToolsOptions = {
   readonly snapshotAdapter?: CrucibleSnapshotAdapter;
   readonly debuggerManager?: DebuggerSessionManager;
   readonly auditLogPath?: string;
+  readonly config?: CrucibleConfig;
+  readonly networkMode?: NetworkMode;
 };
 
 /**
@@ -284,6 +303,12 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   );
 
   registerVmTools(server, vmAdapter, auditLogPath);
+  registerNetworkTools(
+    server,
+    options.config ?? defaultCrucibleConfig,
+    options.networkMode ?? options.config?.network.mode ?? defaultCrucibleConfig.network.mode,
+    auditLogPath,
+  );
   registerSnapshotTools(server, snapshotAdapter, auditLogPath);
   registerDebuggerTools(server, options.debuggerManager, guestClientFactory, auditLogPath);
 
@@ -474,6 +499,53 @@ function registerVmTools(
       inputSchema: VmStopInput.shape,
     },
     () => wrap(() => vm!.stop()),
+  );
+}
+
+function registerNetworkTools(
+  server: McpServer,
+  config: CrucibleConfig,
+  mode: NetworkMode,
+  auditLogPath: string | undefined,
+): void {
+  const current = () =>
+    buildNetworkPlan({
+      config: { ...config.network, mode },
+      vmName: config.vm.name,
+      networkDevice: config.virtio.networkDevice,
+    });
+
+  server.registerTool(
+    "network_status",
+    {
+      title: "Network status",
+      description:
+        "Report the configured Crucible network mode and whether mode changes can be applied live.",
+      inputSchema: NetworkStatusInput.shape,
+    },
+    () => toJsonContent({ ok: true, result: buildNetworkRuntimeStatus(current()), auditLogPath }),
+  );
+
+  server.registerTool(
+    "network_set_mode",
+    {
+      title: "Plan network mode change",
+      description:
+        "Plan a network mode switch and report whether the current QEMU backend requires restart.",
+      inputSchema: NetworkSetModeInput.shape,
+    },
+    (input: NetworkSetModeInputType) => {
+      const requested = buildNetworkPlan({
+        config: { ...config.network, mode: input.mode },
+        vmName: config.vm.name,
+        networkDevice: config.virtio.networkDevice,
+      });
+      return toJsonContent({
+        ok: true,
+        result: buildNetworkModeChangePlan({ current: current(), requested }),
+        auditLogPath,
+      });
+    },
   );
 }
 
@@ -756,6 +828,8 @@ export async function runStdioMcpServer(
     | "snapshotAdapter"
     | "debuggerManager"
     | "auditLogPath"
+    | "config"
+    | "networkMode"
   >,
 ): Promise<void> {
   const server = createCrucibleMcpServer(options);
@@ -772,6 +846,8 @@ export function createCrucibleMcpServer(
     | "snapshotAdapter"
     | "debuggerManager"
     | "auditLogPath"
+    | "config"
+    | "networkMode"
   >,
 ): McpServer {
   const server = new McpServer({ name: "crucible", version: CRUCIBLE_VERSION });

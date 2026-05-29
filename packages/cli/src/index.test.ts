@@ -92,6 +92,29 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).not.toContain("iptables -X FORWARD");
   });
 
+  it("prints network runtime status", async () => {
+    const result = await runCrucibleCli(["net:status"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" }, network: { mode: "isolated" } }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network status: isolated");
+    expect(result.stdout).toContain("guest egress: denied");
+    expect(result.stdout).toContain("restart required to change mode: yes");
+  });
+
+  it("reports restart requirement for user-net mode changes", async () => {
+    const result = await runCrucibleCli(["net:set", "nat"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" }, network: { mode: "isolated" } }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Network mode change: isolated -> nat");
+    expect(result.stdout).toContain("applied live: no");
+    expect(result.stdout).toContain("restart required: yes");
+    expect(result.stdout).toContain("restrict=off");
+  });
+
   it("prints network teardown dry-run by default", async () => {
     const result = await runCrucibleCli(["net:teardown", "--mode", "capture"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),
@@ -268,7 +291,14 @@ describe("crucible CLI bootstrap", () => {
                 JSON.stringify({
                   cdbPath: "C:\\Debuggers\\cdb.exe",
                   windbgPath: "C:\\Debuggers\\windbg.exe",
+                  kdPath: "C:\\Debuggers\\kd.exe",
+                  kdnetPath: "C:\\Debuggers\\kdnet.exe",
+                  gflagsPath: "C:\\Debuggers\\gflags.exe",
                   symbolPath: "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols",
+                  symbolCachePath: "C:\\symbols",
+                  symbolCacheWritable: true,
+                  sysinternals: { procmon: "C:\\Tools\\Sysinternals\\Procmon64.exe" },
+                  malwareTools: { x64dbg: null },
                   crucibleAdminPresent: true,
                   crucibleUserPresent: true,
                   qemuAgentStatus: "Running",
@@ -295,6 +325,10 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("Guest health: healthy");
     expect(result.stdout).toContain("WinDbg installed: yes");
     expect(result.stdout).toContain("CDB path: C:\\Debuggers\\cdb.exe");
+    expect(result.stdout).toContain("KD path: C:\\Debuggers\\kd.exe");
+    expect(result.stdout).toContain("GFlags path: C:\\Debuggers\\gflags.exe");
+    expect(result.stdout).toContain("symbol cache writable: yes");
+    expect(result.stdout).toContain("Sysinternals: procmon=C:\\Tools\\Sysinternals\\Procmon64.exe");
     expect(result.stdout).toContain("Defender real-time protection: no");
     expect(result.stdout).toContain("code-integrity state recorded: yes");
     expect(result.stdout).toContain("code-integrity enforcement disabled: yes");

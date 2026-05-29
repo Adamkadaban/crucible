@@ -61,16 +61,33 @@ function Find-DebuggerExecutable {
 
 $cdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
 $windbg = Find-DebuggerExecutable -FileNames @("windbg.exe", "WinDbgX.exe")
+$kd = Find-DebuggerExecutable -FileNames @("kd.exe")
+$kdnet = Find-DebuggerExecutable -FileNames @("kdnet.exe")
+$gflags = Find-DebuggerExecutable -FileNames @("gflags.exe")
 $expectedSymbolPath = "srv*$SymbolCache*https://msdl.microsoft.com/download/symbols"
 $machineSymbolPath = [Environment]::GetEnvironmentVariable("_NT_SYMBOL_PATH", "Machine")
 $altSymbolPath = [Environment]::GetEnvironmentVariable("_NT_ALT_SYMBOL_PATH", "Machine")
+$symbolCacheWritable = $false
+try {
+    New-Item -ItemType Directory -Force -Path $SymbolCache | Out-Null
+    $probe = Join-Path $SymbolCache "crucible-symbol-cache.probe"
+    Set-Content -LiteralPath $probe -Value "ok" -Force
+    Remove-Item -LiteralPath $probe -Force
+    $symbolCacheWritable = $true
+} catch {
+    $symbolCacheWritable = $false
+}
 
 $checks = [ordered]@{
     cdbPath = $cdb
     windbgPath = $windbg
+    kdPath = $kd
+    kdnetPath = $kdnet
+    gflagsPath = $gflags
     symbolPath = $machineSymbolPath
     altSymbolPath = $altSymbolPath
-    healthy = ($null -ne $cdb) -and ($null -ne $windbg) -and ($machineSymbolPath -eq $expectedSymbolPath) -and ($altSymbolPath -eq $SymbolCache)
+    symbolCacheWritable = $symbolCacheWritable
+    healthy = ($null -ne $cdb) -and ($null -ne $windbg) -and ($null -ne $kd) -and ($null -ne $kdnet) -and ($null -ne $gflags) -and ($machineSymbolPath -eq $expectedSymbolPath) -and ($altSymbolPath -eq $SymbolCache) -and $symbolCacheWritable
 }
 
 $checks | ConvertTo-Json -Compress

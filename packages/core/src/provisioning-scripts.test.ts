@@ -38,6 +38,9 @@ describe("WinDbg provisioning scripts", () => {
       expect(script).toContain("cdb.exe");
       expect(script).toContain("windbg.exe");
       expect(script).toContain("WinDbgX.exe");
+      expect(script).toContain("kd.exe");
+      expect(script).toContain("kdnet.exe");
+      expect(script).toContain("gflags.exe");
       expect(script).toContain("_NT_SYMBOL_PATH");
       expect(script).toContain("_NT_ALT_SYMBOL_PATH");
       expect(script).toContain("https://msdl.microsoft.com/download/symbols");
@@ -45,6 +48,7 @@ describe("WinDbg provisioning scripts", () => {
     }
 
     expect(installScript).toContain("SetEnvironmentVariable");
+    expect(installScript).toContain("symbolCacheWritable");
     expect(installScript).toContain("debugger tooling is still incomplete after winget");
     expect(detectionScript).toContain("healthy =");
   });

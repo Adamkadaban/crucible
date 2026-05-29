@@ -453,6 +453,47 @@ succeeds, and the real-VM MVP checklist passes from README instructions.
 | 2 (parallel x3) | teardown-release-docs | wave 1     | Teardown script, release docs, changelog                                      |
 | 3 (solo)        | beta-verification     | wave 2     | Clean-checkout verification, real-VM MVP walkthrough, final release checklist |
 
+### Phase 9 — Debugger-First Tooling and Live Network Control
+
+**Goal:** Build a richer malware-reversing baseline that installs debugger and reverse-engineering
+tools before lockdown, then switches the VM into the malware-analysis network/security posture only
+after tooling and analyst settings are complete.
+
+**Exit test:** On a fresh real VM, `pnpm crucible provision` installs or reports availability for
+WinDbg, CDB, KD/KDNET, GFlags, Sysinternals, and configured malware-reversing tools before the clean
+snapshot is created; `pnpm crucible guest:health` reports those tool paths/states;
+`pnpm crucible net:status` reports the active network mode; and MCP exposes `network_status` plus
+`network_set_mode` with explicit `restartRequired` behavior for QEMU backends that cannot be
+switched live.
+
+**Deliverable checklist:**
+
+- [ ] Split provisioning into a tooling/setup phase and a lockdown phase so network/security
+      hardening happens only after debugger and malware-reversing tools are installed or explicitly
+      reported as skipped/unavailable.
+- [ ] Ensure WinDbg, CDB, KD/KDNET, GFlags, symbol path, and writable symbol cache are required for
+      a debugger-ready profile, with offline installer/cache support where possible.
+- [ ] Add Sysinternals and optional malware-reversing tool installation/reporting for the malware VM
+      profile, while documenting anti-analysis tradeoffs.
+- [ ] Extend guest health and provisioning health to report KD, KDNET, GFlags, Sysinternals, malware
+      tool paths, symbol cache writability, and whether tooling was skipped because networking or
+      offline installers were unavailable.
+- [ ] Add `net:status` / `network_status` and `network_set_mode` surfaces that report current mode,
+      requested mode, whether the change was applied live, and whether a VM restart is required.
+- [ ] Add tests for the provisioning order, tool readiness parsing, and network status/change
+      output.
+- [ ] Update README/docs/SOP so snapshots are only taken after tooling setup and final lockdown.
+
+**Parallel-work split table:**
+
+| Wave            | Worktree slug            | Depends on | Tasks                                                                |
+| --------------- | ------------------------ | ---------- | -------------------------------------------------------------------- |
+| 1 (solo)        | phase9-plan-contracts    | Phase 8    | PLAN/docs contract, tool readiness model, network status model       |
+| 2 (parallel x3) | debugger-tooling         | wave 1     | WinDbg/CDB/KD/KDNET/GFlags/Sysinternals install + health reporting   |
+| 2 (parallel x3) | network-mode-tools       | wave 1     | CLI/MCP network status + set-mode/restart-required implementation    |
+| 2 (parallel x3) | malware-tooling-profile  | wave 1     | Malware reversing tool profile, anti-analysis documentation, tests   |
+| 3 (solo)        | phase9-realvm-validation | wave 2     | Fresh real-VM validation and snapshot-after-tooling evidence capture |
+
 ## Anticipated Risks
 
 - **Performance / scale:** Windows install/provision and debugger sessions will be slow first;

@@ -160,12 +160,24 @@ function Test-WinDbgReadiness {
 
     $cdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
     $windbg = Find-DebuggerExecutable -FileNames @("windbg.exe", "WinDbgX.exe")
+    $kd = Find-DebuggerExecutable -FileNames @("kd.exe")
+    $kdnet = Find-DebuggerExecutable -FileNames @("kdnet.exe")
+    $gflags = Find-DebuggerExecutable -FileNames @("gflags.exe")
 
     if ($null -eq $cdb) {
         throw "cdb.exe is not discoverable after debugger installation"
     }
     if ($null -eq $windbg) {
         throw "windbg.exe is not discoverable after debugger installation"
+    }
+    if ($null -eq $kd) {
+        throw "kd.exe is not discoverable after debugger installation"
+    }
+    if ($null -eq $kdnet) {
+        throw "kdnet.exe is not discoverable after debugger installation"
+    }
+    if ($null -eq $gflags) {
+        throw "gflags.exe is not discoverable after debugger installation"
     }
 
     $machineSymbolPath = [Environment]::GetEnvironmentVariable("_NT_SYMBOL_PATH", "Machine")
@@ -176,20 +188,37 @@ function Test-WinDbgReadiness {
     if ($machineAltSymbolPath -ne $ExpectedAltSymbolPath) {
         throw "machine _NT_ALT_SYMBOL_PATH is not configured as expected"
     }
+    $symbolCacheWritable = $false
+    try {
+        New-Item -ItemType Directory -Force -Path $ExpectedAltSymbolPath | Out-Null
+        $probe = Join-Path $ExpectedAltSymbolPath "crucible-symbol-cache.probe"
+        Set-Content -LiteralPath $probe -Value "ok" -Force
+        Remove-Item -LiteralPath $probe -Force
+        $symbolCacheWritable = $true
+    } catch {
+        throw "symbol cache is not writable: $($_.Exception.Message)"
+    }
 
     return [ordered]@{
         cdbPath = $cdb
         windbgPath = $windbg
+        kdPath = $kd
+        kdnetPath = $kdnet
+        gflagsPath = $gflags
         symbolPath = $machineSymbolPath
         altSymbolPath = $machineAltSymbolPath
+        symbolCacheWritable = $symbolCacheWritable
     }
 }
 
 function Test-DebuggerToolingPresent {
     $cdb = Find-DebuggerExecutable -FileNames @("cdb.exe")
     $windbg = Find-DebuggerExecutable -FileNames @("windbg.exe", "WinDbgX.exe")
+    $kd = Find-DebuggerExecutable -FileNames @("kd.exe")
+    $kdnet = Find-DebuggerExecutable -FileNames @("kdnet.exe")
+    $gflags = Find-DebuggerExecutable -FileNames @("gflags.exe")
 
-    return ($null -ne $cdb) -and ($null -ne $windbg)
+    return ($null -ne $cdb) -and ($null -ne $windbg) -and ($null -ne $kd) -and ($null -ne $kdnet) -and ($null -ne $gflags)
 }
 
 if (-not (Test-DebuggerToolingPresent)) {
@@ -207,8 +236,12 @@ if (-not (Test-DebuggerToolingPresent)) {
             [ordered]@{
                 cdbPath = $null
                 windbgPath = $null
+                kdPath = $null
+                kdnetPath = $null
+                gflagsPath = $null
                 symbolPath = $null
                 altSymbolPath = $null
+                symbolCacheWritable = $false
                 skipped = $true
                 reason = $_.Exception.Message
             } | ConvertTo-Json -Compress

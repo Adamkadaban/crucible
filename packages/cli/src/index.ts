@@ -4,6 +4,8 @@ import { resolve as resolvePath } from "node:path";
 
 import {
   buildNetworkPlan,
+  buildNetworkModeChangePlan,
+  buildNetworkRuntimeStatus,
   buildNetworkTeardownOutputModel,
   buildGuestHealthReport,
   buildMediaCachePlan,
@@ -77,7 +79,14 @@ type CliGuestHealthClient = {
 type GuestPolicyHealth = {
   readonly cdbPath: string | null;
   readonly windbgPath: string | null;
+  readonly kdPath?: string | null;
+  readonly kdnetPath?: string | null;
+  readonly gflagsPath?: string | null;
   readonly symbolPath: string | null;
+  readonly symbolCachePath?: string | null;
+  readonly symbolCacheWritable?: boolean;
+  readonly sysinternals?: Readonly<Record<string, string | null>>;
+  readonly malwareTools?: Readonly<Record<string, string | null>>;
   readonly crucibleAdminPresent: boolean;
   readonly crucibleUserPresent: boolean;
   readonly qemuAgentStatus: string;
@@ -148,6 +157,10 @@ export async function runCrucibleCli(
       return renderMediaPlanCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
+    case "net:status":
+      return renderNetStatusCommand(rest, runtime);
+    case "net:set":
+      return renderNetSetCommand(rest, runtime);
     case "net:teardown":
       return renderNetTeardownCommand(rest, runtime);
     case "vm:create":
@@ -1004,7 +1017,14 @@ function renderGuestAgentHealth(
       "policy:",
       `- CDB path: ${policyHealth.cdbPath ?? "missing"}`,
       `- WinDbg path: ${policyHealth.windbgPath ?? "missing"}`,
+      `- KD path: ${policyHealth.kdPath ?? "missing"}`,
+      `- KDNET path: ${policyHealth.kdnetPath ?? "missing"}`,
+      `- GFlags path: ${policyHealth.gflagsPath ?? "missing"}`,
       `- symbol path: ${policyHealth.symbolPath ?? "missing"}`,
+      `- symbol cache: ${policyHealth.symbolCachePath ?? "missing"}`,
+      `- symbol cache writable: ${formatBoolean(policyHealth.symbolCacheWritable)}`,
+      `- Sysinternals: ${formatToolMap(policyHealth.sysinternals)}`,
+      `- malware tools: ${formatToolMap(policyHealth.malwareTools)}`,
       `- CrucibleAdmin present: ${policyHealth.crucibleAdminPresent ? "yes" : "no"}`,
       `- CrucibleUser present: ${policyHealth.crucibleUserPresent ? "yes" : "no"}`,
       `- qemu-ga service: ${policyHealth.qemuAgentStatus ?? "unknown"}`,
@@ -1089,6 +1109,14 @@ function formatBoolean(value: boolean | null | undefined): string {
   return value ? "yes" : "no";
 }
 
+function formatToolMap(tools: Readonly<Record<string, string | null>> | undefined): string {
+  if (tools === undefined) {
+    return "unknown";
+  }
+  const entries = Object.entries(tools).map(([name, value]) => `${name}=${value ?? "missing"}`);
+  return entries.length > 0 ? entries.join(", ") : "none";
+}
+
 function formatRecordedBoolean(value: boolean, recorded: boolean): string {
   return recorded ? formatBoolean(value) : "unknown";
 }
@@ -1125,13 +1153,14 @@ function Find-Dbg([string[]]$Names){
   return $null
 }
 function Test-User([string]$Name){try{$null=Get-LocalUser -Name $Name -ErrorAction Stop; return $true}catch{return $false}}
+function Find-Tool([string[]]$Names){$dirs=@('C:\Tools','C:\Tools\Sysinternals','C:\Tools\Malware'); foreach($name in $Names){$cmd=Get-Command $name -ErrorAction SilentlyContinue; if($null -ne $cmd){return $cmd.Source}}; foreach($dir in $dirs){if(-not(Test-Path -LiteralPath $dir)){continue}; foreach($name in $Names){$p=Join-Path $dir $name; if(Test-Path -LiteralPath $p -PathType Leaf){return $p}}}; return $null}
 function ServiceStatus([string]$Name){$s=Get-Service -Name $Name -ErrorAction SilentlyContinue; if($null -eq $s){return 'missing'}; return $s.Status.ToString()}
 function DefenderRtp(){try{$s=Get-MpComputerStatus -ErrorAction Stop; return [bool]$s.RealTimeProtectionEnabled}catch{return $null}}
 function DwordValue([string]$Path,[string]$Name){try{$i=Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop; return [int]($i.$Name)}catch{return $null}}
 function CodeIntegrityBootOptions(){try{$b=& bcdedit /enum 2>$null; if($LASTEXITCODE -ne 0){return @()}; $o=@(); if($b | Select-String -Pattern '^\\s*nointegritychecks\\s+Yes\\s*$' -Quiet){$o += 'nointegritychecks'}; if($b | Select-String -Pattern '^\\s*testsigning\\s+Yes\\s*$' -Quiet){$o += 'testsigning'}; return @($o)}catch{return @()}}
 function TestSigning(){try{$b=& bcdedit /enum '{current}' 2>$null; if($LASTEXITCODE -ne 0){return $null}; return [bool]($b | Select-String -Pattern 'testsigning\\s+Yes' -Quiet)}catch{return $null}}
-$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
-[ordered]@{cdbPath=$cdb; windbgPath=$windbg; symbolPath=$symbol; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false)} | ConvertTo-Json -Compress`;
+$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $kd=Find-Dbg @('kd.exe'); $kdnet=Find-Dbg @('kdnet.exe'); $gflags=Find-Dbg @('gflags.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $symbolCache=[Environment]::GetEnvironmentVariable('_NT_ALT_SYMBOL_PATH','Machine'); $symbolWritable=$false; if(-not [string]::IsNullOrWhiteSpace($symbolCache)){try{New-Item -ItemType Directory -Force -Path $symbolCache|Out-Null; $probe=Join-Path $symbolCache 'crucible-symbol-cache.probe'; Set-Content -LiteralPath $probe -Value ok -Force; Remove-Item -LiteralPath $probe -Force; $symbolWritable=$true}catch{$symbolWritable=$false}}; $sys=[ordered]@{procmon=Find-Tool @('Procmon64.exe','Procmon.exe'); procexp=Find-Tool @('procexp64.exe','procexp.exe'); handle=Find-Tool @('handle64.exe','handle.exe'); strings=Find-Tool @('strings64.exe','strings.exe'); tcpview=Find-Tool @('Tcpview.exe','Tcpview64.exe')}; $mal=[ordered]@{x64dbg=Find-Tool @('x64dbg.exe'); cutter=Find-Tool @('cutter.exe'); ghidra=Find-Tool @('ghidraRun.bat'); peStudio=Find-Tool @('pestudio.exe')}; $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
+[ordered]@{cdbPath=$cdb; windbgPath=$windbg; kdPath=$kd; kdnetPath=$kdnet; gflagsPath=$gflags; symbolPath=$symbol; symbolCachePath=$symbolCache; symbolCacheWritable=$symbolWritable; sysinternals=$sys; malwareTools=$mal; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false -and $null -ne $cdb -and $null -ne $windbg -and $null -ne $kd -and $null -ne $kdnet -and $null -ne $gflags -and $symbolWritable)} | ConvertTo-Json -Compress`;
 }
 
 function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
@@ -1238,6 +1267,50 @@ function renderNetTeardownCommand(args: readonly string[], runtime: CliRuntime):
   return { exitCode: 0, stdout: renderNetTeardown(model), stderr: "" };
 }
 
+function renderNetStatusCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown net:status option: ${args[0]}` };
+  }
+  const config = getRuntimeConfig(runtime);
+  const plan = buildNetworkPlan({
+    config: config.network,
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  return {
+    exitCode: 0,
+    stdout: renderNetworkRuntimeStatus(buildNetworkRuntimeStatus(plan)),
+    stderr: "",
+  };
+}
+
+function renderNetSetCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
+  const requestedMode = args[0];
+  if (args.length !== 1 || requestedMode === undefined || !isNetworkMode(requestedMode)) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: "net:set requires one mode: isolated, nat, or capture",
+    };
+  }
+  const config = getRuntimeConfig(runtime);
+  const current = buildNetworkPlan({
+    config: config.network,
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  const requested = buildNetworkPlan({
+    config: { ...config.network, mode: requestedMode },
+    networkDevice: config.virtio.networkDevice,
+    vmName: config.vm.name,
+  });
+  return {
+    exitCode: 0,
+    stdout: renderNetworkModeChange(buildNetworkModeChangePlan({ current, requested })),
+    stderr: "",
+  };
+}
+
 function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanArgs): string {
   const lines = [
     `Network mode: ${plan.mode}`,
@@ -1274,6 +1347,31 @@ function renderNetPlan(plan: ReturnType<typeof buildNetworkPlan>, args: NetPlanA
   }
 
   return lines.join("\n");
+}
+
+function renderNetworkRuntimeStatus(status: ReturnType<typeof buildNetworkRuntimeStatus>): string {
+  return [
+    `Network status: ${status.configuredMode}`,
+    `backend: ${status.backend}`,
+    `guest address: ${status.guestAddress}`,
+    `host address: ${status.hostAddress}`,
+    `control port: ${status.controlPort}`,
+    `guest egress: ${status.guestEgress}`,
+    `live switch supported: ${status.liveSwitchSupported ? "yes" : "no"}`,
+    `restart required to change mode: ${status.restartRequiredToChangeMode ? "yes" : "no"}`,
+    ...status.warnings.map((warning) => `warning: ${warning}`),
+  ].join("\n");
+}
+
+function renderNetworkModeChange(change: ReturnType<typeof buildNetworkModeChangePlan>): string {
+  return [
+    `Network mode change: ${change.currentMode} -> ${change.requestedMode}`,
+    `applied live: ${change.appliedLive ? "yes" : "no"}`,
+    `restart required: ${change.restartRequired ? "yes" : "no"}`,
+    `reason: ${change.reason}`,
+    "QEMU args preview:",
+    ...change.qemuArgsPreview.map((arg) => `- ${arg}`),
+  ].join("\n");
 }
 
 function renderNetTeardown(model: NetworkTeardownOutputModel): string {
@@ -1731,6 +1829,8 @@ function getHelpText(): string {
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
+    "  crucible net:status",
+    "  crucible net:set isolated|nat|capture",
     "  crucible net:teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
     "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
     "  crucible vm:start [--dry-run] Print or run the planned QEMU argv and sockets",

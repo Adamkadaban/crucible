@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import { parseCrucibleConfig } from "@crucible/core";
 
 import {
   BOOTSTRAP_TOOLS,
@@ -37,6 +38,8 @@ describe("crucible MCP tools", () => {
       "vm_status",
       "vm_start",
       "vm_stop",
+      "network_status",
+      "network_set_mode",
       "snapshot_list",
       "snapshot_restore",
       "guest_health",
@@ -136,6 +139,39 @@ describe("crucible MCP tools", () => {
     expect(
       parseFirstTextPayload<{ ok: boolean; result: { name: string } }>(restoreResult).result.name,
     ).toBe("clean-base");
+  });
+
+  it("reports network status and mode-change restart requirements", async () => {
+    const client = await harness({
+      config: parseCrucibleConfig({
+        vm: { name: "custom-vm" },
+        network: { mode: "isolated", controlPort: 9443 },
+      }),
+    });
+    const statusResult = (await client.callTool({
+      name: "network_status",
+      arguments: {},
+    })) as ToolCallText;
+    const status = parseFirstTextPayload<{
+      ok: boolean;
+      result: { configuredMode: string; guestEgress: string };
+    }>(statusResult);
+    expect(status.ok).toBe(true);
+    expect(status.result).toMatchObject({
+      configuredMode: "isolated",
+      guestEgress: "denied",
+      controlPort: 9443,
+    });
+
+    const setResult = (await client.callTool({
+      name: "network_set_mode",
+      arguments: { mode: "nat" },
+    })) as ToolCallText;
+    const change = parseFirstTextPayload<{
+      ok: boolean;
+      result: { requestedMode: string; restartRequired: boolean };
+    }>(setResult);
+    expect(change.result).toMatchObject({ requestedMode: "nat", restartRequired: true });
   });
 
   it("returns guest-failed when the guest client is missing", async () => {
