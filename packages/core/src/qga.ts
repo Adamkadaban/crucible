@@ -254,7 +254,7 @@ export class QgaClient {
     }
     throw new CrucibleError(
       "PROCESS_TIMEOUT",
-      `QGA ${label} retry budget exhausted (${this.#retryPolicy.budgetMs}ms)`,
+      `QGA ${label} retry budget exhausted (${this.#retryPolicy.budgetMs}ms); last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
       lastError,
     );
   }
