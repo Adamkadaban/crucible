@@ -3,7 +3,10 @@ param(
     [string]$SdkInstallerUrl = "https://go.microsoft.com/fwlink/?linkid=2271337",
     [string]$SdkInstallerPath = "$env:TEMP\winsdksetup.exe",
     [switch]$DryRun,
-    [switch]$AllowSkipOnNetworkFailure
+    # Default true so an offline / isolated-network provision skips
+    # gracefully instead of hard-failing. Operators can opt out by
+    # passing `-AllowSkipOnNetworkFailure:$false` explicitly.
+    [bool]$AllowSkipOnNetworkFailure = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,11 +113,16 @@ function Install-WithSdkDebuggingTools {
         return
     }
 
-    # -ErrorAction Stop forces Invoke-WebRequest to throw a terminating
-    # error on DNS failure (otherwise it can write to the error stream
-    # without unwinding the stack on some PS5.1 builds, defeating the
-    # outer try/catch that maps offline runs to exit 75).
-    Invoke-WebRequest -Uri $SdkInstallerUrl -OutFile $SdkInstallerPath -UseBasicParsing -ErrorAction Stop
+    # PS5.1's Invoke-WebRequest treats some network failures as
+    # non-terminating regardless of $ErrorActionPreference or
+    # -ErrorAction Stop, which defeats the outer try/catch that maps
+    # offline runs to exit 75. Capture stderr ourselves and re-throw
+    # explicitly so the catch always sees a terminating exception.
+    try {
+        Invoke-WebRequest -Uri $SdkInstallerUrl -OutFile $SdkInstallerPath -UseBasicParsing -ErrorAction Stop
+    } catch {
+        throw "Invoke-WebRequest $SdkInstallerUrl failed: $($_.Exception.Message)"
+    }
     & $SdkInstallerPath "/features" "OptionId.WindowsDesktopDebuggers" "/quiet" "/norestart"
     if ($LASTEXITCODE -ne 0) {
         throw "Windows SDK Debugging Tools installation failed with exit code $LASTEXITCODE"

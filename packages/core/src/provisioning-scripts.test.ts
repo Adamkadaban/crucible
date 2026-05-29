@@ -72,7 +72,7 @@ describe("WinDbg provisioning scripts", () => {
   it("exposes -AllowSkipOnNetworkFailure and exits 75 with a structured payload on installer failure", () => {
     const script = readProvisionScript("install-windbg.ps1");
 
-    expect(script).toContain("[switch]$AllowSkipOnNetworkFailure");
+    expect(script).toContain("[bool]$AllowSkipOnNetworkFailure = $true");
     expect(script).toContain("skipped = $true");
     expect(script).toContain("exit 75");
   });

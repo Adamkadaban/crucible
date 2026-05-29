@@ -295,7 +295,13 @@ export type ProvisioningPlanOptions = {
   readonly analysisPolicy?: AnalysisVmPolicyConfig;
 };
 
-const POWERSHELL = "powershell.exe";
+// Use the full Windows path rather than a bare `powershell.exe`. qemu-ga's
+// guest-exec resolves the executable via the qemu-ga service's PATH, which
+// during the first few seconds after qga-ping returns can be incomplete
+// (System32 not yet in PATH) and CreateProcessW fails with "No such file
+// or directory" before our retry layer even sees the call as transient.
+// The path is stable across every supported Windows SKU.
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const DEFAULT_SCRIPT_TIMEOUT_MS = 10 * 60 * 1000;
 const INSTALL_SCRIPT_TIMEOUT_MS = 45 * 60 * 1000;
 const PASSWORD_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";

@@ -24,14 +24,19 @@ describe("SnapshotManager", () => {
     const result = await harness.manager.create();
 
     expect(result.qmpCommands).toEqual(["stop", "snapshot-save", "cont"]);
-    expect(harness.qmp.calls).toEqual([
-      { command: "stop", args: undefined },
-      {
-        command: "snapshot-save",
-        args: { tag: CLEAN_BASE_SNAPSHOT_NAME, vmstate: true, devices: ["crucible-disk0"] },
-      },
-      { command: "cont", args: undefined },
+    expect(harness.qmp.calls.map((call) => call.command)).toEqual([
+      "stop",
+      "snapshot-save",
+      "cont",
     ]);
+    expect(harness.qmp.calls[1]?.args).toMatchObject({
+      tag: CLEAN_BASE_SNAPSHOT_NAME,
+      vmstate: "crucible-disk0",
+      devices: ["crucible-disk0"],
+    });
+    expect((harness.qmp.calls[1]?.args as { "job-id"?: string })?.["job-id"]).toMatch(
+      /^crucible-snapshot-save-\d+$/,
+    );
     expect(result.qcow2Commands).toEqual([]);
     expect(result.snapshot).toMatchObject({
       kind: "snapshot",
@@ -89,14 +94,19 @@ describe("SnapshotManager", () => {
     const result = await harness.manager.restore("clean-base");
 
     expect(result.qmpCommands).toEqual(["stop", "snapshot-load", "cont"]);
-    expect(harness.qmp.calls).toEqual([
-      { command: "stop", args: undefined },
-      {
-        command: "snapshot-load",
-        args: { tag: "clean-base", vmstate: true, devices: ["crucible-disk0"] },
-      },
-      { command: "cont", args: undefined },
+    expect(harness.qmp.calls.map((call) => call.command)).toEqual([
+      "stop",
+      "snapshot-load",
+      "cont",
     ]);
+    expect(harness.qmp.calls[1]?.args).toMatchObject({
+      tag: "clean-base",
+      vmstate: "crucible-disk0",
+      devices: ["crucible-disk0"],
+    });
+    expect((harness.qmp.calls[1]?.args as { "job-id"?: string })?.["job-id"]).toMatch(
+      /^crucible-snapshot-load-\d+$/,
+    );
     expect(result.restoredAt).toBe("2026-05-27T00:00:00.000Z");
     const manifest = await readJson<ArtifactManifest>(harness.config.artifacts.manifestPath);
     expect(manifest.artifacts).toEqual(

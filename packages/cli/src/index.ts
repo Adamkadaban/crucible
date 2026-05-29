@@ -396,7 +396,11 @@ async function runProvisionCommand(
     // Best-effort lifecycle teardown so we don't leave QEMU + swtpm orphaned
     // after a fatal provisioning error. Only attempts kill if the process is
     // still alive — a successful guest-initiated S5 is also possible here.
-    await tryKillLifecycle(lifecyclePrep.lifecycleManager);
+    // Skip the kill when CRUCIBLE_KEEP_VM_ON_FAILURE is set so an operator
+    // can attach via qga / qmp and debug the failing stage interactively.
+    if (process.env.CRUCIBLE_KEEP_VM_ON_FAILURE !== "1") {
+      await tryKillLifecycle(lifecyclePrep.lifecycleManager);
+    }
     throw error;
   } finally {
     livenessHandle.stop();

@@ -73,7 +73,19 @@ export class SnapshotManager {
       await executeQmp(
         qmp,
         "snapshot-save",
-        { tag: snapshotName, vmstate: true, devices: ["crucible-disk0"] },
+        {
+          // QMP `snapshot-save` requires a unique job-id (any string),
+          // a `tag` (snapshot name), `vmstate` (block-node where the
+          // CPU/memory state is saved; must be a writable qcow2 node),
+          // and `devices` (block-node names whose data is captured).
+          // The CRUCIBLE disk node id is configured in QemuCommandPlan
+          // via -drive ...,id=crucible-disk0; that node holds both the
+          // VM state and the data, so it's the same id for both.
+          "job-id": `crucible-snapshot-save-${Date.now()}`,
+          tag: snapshotName,
+          vmstate: "crucible-disk0",
+          devices: ["crucible-disk0"],
+        },
         this.#config.qmp.timeoutMs,
         qmpCommands,
       );
@@ -118,7 +130,12 @@ export class SnapshotManager {
         await executeQmp(
           qmp,
           "snapshot-load",
-          { tag: snapshotName, vmstate: true, devices: ["crucible-disk0"] },
+          {
+            "job-id": `crucible-snapshot-load-${Date.now()}`,
+            tag: snapshotName,
+            vmstate: "crucible-disk0",
+            devices: ["crucible-disk0"],
+          },
           this.#config.qmp.timeoutMs,
           qmpCommands,
         );

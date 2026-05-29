@@ -100,7 +100,17 @@ if ($DisableDefender) {
   Set-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SpynetReporting" -Value 0
   Set-DwordValue -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet" -Name "SubmitSamplesConsent" -Value 2
   if (Get-Command -Name Set-MpPreference -ErrorAction SilentlyContinue) {
-    Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -SubmitSamplesConsent NeverSend 2>$null
+    # Skip when WinDefend service is stopped/disabled — Set-MpPreference
+    # hangs trying to reach the AM engine if the service isn't running.
+    # We disable that service in offline-hive during WinPE (see
+    # buildWinPeInstallScript), so on a freshly-provisioned VM the
+    # cmdlet would hang for 10+ min before the qga-exec deadline fires.
+    $defenderService = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
+    if ($null -ne $defenderService -and $defenderService.Status -eq "Running") {
+      Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -SubmitSamplesConsent NeverSend 2>$null
+    } else {
+      $Warnings.Add("WinDefend service is not running; Set-MpPreference skipped (registry policy already applied)") | Out-Null
+    }
   } else {
     $Warnings.Add("Set-MpPreference is unavailable; Defender preference changes are limited to registry policy") | Out-Null
   }
@@ -169,7 +179,14 @@ if ($CommonAnalysisLabCamouflage) {
 }
 
 if (Get-Command -Name Get-MpPreference -ErrorAction SilentlyContinue) {
-  $DefenderPreferences = Get-MpPreference -ErrorAction SilentlyContinue
+  # Same WinDefend-stopped hang concern as Set-MpPreference above.
+  $defenderForGet = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
+  if ($null -ne $defenderForGet -and $defenderForGet.Status -eq "Running") {
+    $DefenderPreferences = Get-MpPreference -ErrorAction SilentlyContinue
+  } else {
+    $DefenderPreferences = $null
+    $Warnings.Add("WinDefend service is not running; Get-MpPreference skipped (registry policy audit only)") | Out-Null
+  }
 } else {
   $DefenderPreferences = $null
   $Warnings.Add("Get-MpPreference is unavailable; Defender preference audit is limited to registry policy") | Out-Null

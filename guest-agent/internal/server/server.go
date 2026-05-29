@@ -131,7 +131,22 @@ func bindTLSListener(cfg Config) (net.Listener, error) {
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    pool,
 	}
-	return tls.Listen("tcp", cfg.ListenAddress, tlsCfg)
+	// Use net.ListenConfig with Control to set SO_REUSEADDR. Re-provision
+	// runs (and Windows TcpTimedWaitDelay TIME_WAIT after a previous
+	// instance dies) otherwise leave the port unbindable for 30-240s,
+	// surfacing as "Only one usage of each socket address" on the next
+	// listen attempt. SO_REUSEADDR + SO_EXCLUSIVEADDRUSE off lets us
+	// rebind a TIME_WAIT socket immediately. Note the Windows variant
+	// of SO_REUSEADDR differs from Linux: it permits multiple sockets
+	// to bind the same address concurrently. We accept that tradeoff
+	// for the agent because the listener address (192.0.2.2 host-only)
+	// is firewalled to the host's 192.0.2.1 source.
+	lc := net.ListenConfig{Control: setReuseAddr}
+	raw, err := lc.Listen(context.Background(), "tcp", cfg.ListenAddress)
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(raw, tlsCfg), nil
 }
 
 // writeJSON sends a structured response with the supplied status and body.
