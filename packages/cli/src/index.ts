@@ -718,7 +718,7 @@ async function runGuestHealthCommand(
         const healthy = health.status === "ok" && policyHealth.healthy;
         return {
           exitCode: healthy ? 0 : 1,
-          stdout: renderGuestAgentHealth(health, policyHealth),
+          stdout: renderGuestAgentHealth(health, policyHealth, healthy),
           stderr: "",
         };
       } finally {
@@ -998,9 +998,10 @@ function renderGuestHealth(report: GuestHealthReport): string {
 function renderGuestAgentHealth(
   health: GuestAgentHealth,
   policyHealth?: GuestPolicyHealth,
+  healthy = health.status === "ok" && (policyHealth?.healthy ?? true),
 ): string {
   const lines = [
-    `Guest health: ${health.status === "ok" ? "healthy" : health.status}`,
+    `Guest health: ${healthy ? "healthy" : "unhealthy"}`,
     `guest agent status: ${health.status}`,
     `version: ${health.version}`,
     `host name: ${health.hostName}`,
