@@ -58,8 +58,9 @@ Returns a JSON document describing the agent:
 
 ### `POST /exec`
 
-Bounded command execution under the agent's identity (LocalSystem when the agent runs as a Windows
-service). Request body:
+Bounded command execution under the requested execution principal. `service` runs under the agent's
+identity (LocalSystem when the agent runs as a Windows service); `standard` and `admin` run through
+the provisioned local Windows accounts. Request body:
 
 ```json
 {
@@ -67,7 +68,8 @@ service). Request body:
   "arguments": ["/c", "whoami /groups"],
   "workingDirectory": "C:\\\\ProgramData\\\\Crucible\\\\staging",
   "environment": { "FOO": "bar" },
-  "timeoutMs": 60000
+  "timeoutMs": 60000,
+  "as": "standard"
 }
 ```
 
@@ -75,9 +77,11 @@ Limits: at most 64 arguments, `timeoutMs <= 1800000` (30 minutes), each of stdou
 MiB then `truncated: true`. The request body itself is bounded at `--max-request-bytes` (64 MiB
 default) and exceeded payloads return HTTP 413.
 
-`environment` entries are layered on top of the inherited Windows environment so PATH / SystemRoot
-survive. Stdin and elevation switching are **not** implemented in this revision; both will be added
-in a follow-up once standard / admin user impersonation is wired through the Windows service runner.
+`as` defaults to `service`; valid values are `service`, `standard`, and `admin`. Standard/admin
+requests run through provisioned local Windows accounts. `environment` entries are layered on top of
+the inherited Windows environment for `service` execution; scheduled-task-backed standard/admin
+execution intentionally does not merge arbitrary caller-provided environment variables. Stdin is not
+implemented in this revision.
 
 Response:
 

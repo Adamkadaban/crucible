@@ -13,13 +13,14 @@ All notable changes to Crucible. The project follows
 - `scripts/teardown.sh` (+ `--dry-run` / `--help`) removes ephemeral Crucible state (sockets, state,
   run logs, debug screenshots) without touching operator-owned disks, secrets, snapshots, or boot
   media.
+- Guest execution supports provisioned `standard` and `admin` Windows account contexts through the
+  CLI and MCP `guest_exec_admin` surface.
 - Docs: `docs/install.md`, `docs/upgrade.md`, `docs/teardown.md`.
 
 ### Changed
 
-- PLAN.md tracks the per-phase deliverable closure with explicit deferred notes for the items that
-  intentionally land in follow-ups (capture-mode pcap hook, guest_exec_admin, real-VM MCP
-  integration tests, CLI subcommands for rotation/export).
+- PLAN.md tracks per-phase deliverable closure, with remaining future convenience work limited to
+  explicitly documented core-API-only rotation/export CLI wrappers and capture-mode pcap exercise.
 
 ### Verified
 
@@ -28,7 +29,5 @@ All notable changes to Crucible. The project follows
   `guest-agent/`.
 - `scripts/check-host.sh` and `scripts/teardown.sh --dry-run` exit 0 on a clean Debian 13
   workstation.
-- The Phase 3 real-VM exit test is still outstanding (#67) — the boot fixes from #100 / #101 / #103
-  / #104 / #105 / #106 land the path to a desktop, but a fully automated
-  `pnpm crucible provision && snapshot:create && snapshot:restore && guest:health` cycle has not yet
-  completed.
+- Real-VM validation passed for provisioning, snapshot create/restore, live guest health, standard
+  and admin guest execution, malware dry-run, and packaging.
