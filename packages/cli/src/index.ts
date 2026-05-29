@@ -9,6 +9,8 @@ import {
   buildMediaCachePlan,
   buildQemuCommandPlan,
   CrucibleError,
+  DebuggerSessionManager,
+  describeCommand,
   FIREWALL_BACKENDS,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
@@ -17,6 +19,7 @@ import {
   prepareRealFirstBootProvisioning,
   QgaClient,
   QgaProvisioningExecutor,
+  runScenario,
   type GuestAgentExecResult,
   type ProcessCommand,
   type ProcessResult,
@@ -169,6 +172,12 @@ export async function runCrucibleCli(
       return runGuestHealthCommand(rest, runtime);
     case "guest:exec":
       return runGuestExecCommand(rest, runtime);
+    case "debug:smoke":
+      return runDebugSmokeCommand(rest, runtime);
+    case "scenario:malware-dry-run":
+      return runMalwareDryRunCommand(rest);
+    case "package":
+      return runPackageCommand(rest, runtime);
     case "mcp": {
       const wantsStdio = rest.includes("--stdio");
       if (wantsStdio) {
@@ -761,6 +770,137 @@ async function runGuestExecCommand(
   }
 }
 
+async function runDebugSmokeCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseDebugSmokeArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const guestClientFactory = runtime.guestClientFactory ?? buildDefaultGuestClientFactory(config);
+  if (guestClientFactory === undefined) {
+    return { exitCode: 1, stdout: "", stderr: "guest client is not configured" };
+  }
+  const client = await guestClientFactory();
+  try {
+    const manager = new DebuggerSessionManager({
+      run: async (cdbArgs) => {
+        const result = await client.exec({
+          executable: "cdb.exe",
+          arguments: [...cdbArgs],
+          as: "service",
+          timeoutMs: 5 * 60 * 1000,
+        });
+        return {
+          stdoutBase64: result.stdoutBase64 ?? "",
+          stderrBase64: result.stderrBase64 ?? "",
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+          truncated: result.truncated,
+          durationMs: result.durationMs,
+        };
+      },
+    });
+    const session = manager.open({ mode: "launch", executable: parsed.executable });
+    const result = await manager.command(session.id, ["~* k", "lm"]);
+    return {
+      exitCode: result.exitCode ?? 1,
+      stdout: renderDebuggerSmokeResult(session.id, result),
+      stderr: "",
+    };
+  } finally {
+    await client.close();
+  }
+}
+
+async function runMalwareDryRunCommand(args: readonly string[]): Promise<CommandResult> {
+  if (args.length > 0) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `Unknown scenario:malware-dry-run option: ${args[0]}`,
+    };
+  }
+  const records: string[] = [];
+  const result = await runScenario(
+    {
+      id: "malware-dry-run",
+      preRestoreSnapshot: "clean-base",
+      steps: [
+        {
+          id: "upload-sample",
+          title: "upload benign sample",
+          kind: "scenario-step",
+          run: () => {
+            records.push("upload sample: dry-run");
+            return Promise.resolve();
+          },
+        },
+        {
+          id: "execute-sample",
+          title: "execute benign sample",
+          kind: "scenario-step",
+          run: () => {
+            records.push("execute sample: dry-run");
+            return Promise.resolve();
+          },
+        },
+        {
+          id: "collect-artifacts",
+          title: "collect artifacts",
+          kind: "scenario-step",
+          run: () => {
+            records.push("collect artifacts: dry-run");
+            return Promise.resolve();
+          },
+        },
+      ],
+    },
+    {
+      restoreSnapshot: (snapshotName) => {
+        records.push(`restore snapshot: ${snapshotName}`);
+        return Promise.resolve();
+      },
+      now: () => 0,
+    },
+  );
+  return {
+    exitCode: result.status === "succeeded" ? 0 : 1,
+    stdout: renderScenarioResult(result, records),
+    stderr: "",
+  };
+}
+
+async function runPackageCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown package option: ${args[0]}` };
+  }
+  const runner = runtime.processRunner ?? nodeProcessRunner;
+  const command: ProcessCommand = {
+    executable: "bash",
+    args: ["scripts/package-release.sh"],
+    timeoutMs: 5 * 60 * 1000,
+    maxOutputBytes: 2 * 1024 * 1024,
+  };
+  const result = await runner.run(command);
+  if (result.exitCode !== 0 || result.timedOut) {
+    return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
+  }
+  return {
+    exitCode: 0,
+    stdout: [`Package command: ${describeCommand(command)}`, result.stdout.trimEnd()]
+      .filter(Boolean)
+      .join("\n"),
+    stderr: result.stderr.trimEnd(),
+  };
+}
+
 function getRuntimeConfig(runtime: CliRuntime): CrucibleConfig {
   if (runtime.config !== undefined) {
     return runtime.config;
@@ -893,6 +1033,47 @@ function renderGuestExecResult(result: GuestAgentExecResult): string {
     stdout.length > 0 ? stdout : "(empty)",
     "stderr:",
     stderr.length > 0 ? stderr : "(empty)",
+  ].join("\n");
+}
+
+function renderDebuggerSmokeResult(
+  sessionId: string,
+  result: {
+    readonly stdoutBase64: string;
+    readonly stderrBase64: string;
+    readonly exitCode?: number;
+    readonly timedOut: boolean;
+    readonly truncated: boolean;
+    readonly durationMs: number;
+  },
+): string {
+  const stdout = Buffer.from(result.stdoutBase64, "base64").toString("utf8").trimEnd();
+  const stderr = Buffer.from(result.stderrBase64, "base64").toString("utf8").trimEnd();
+  return [
+    `debug session: ${sessionId}`,
+    `exit code: ${result.exitCode ?? "unknown"}`,
+    `timed out: ${result.timedOut ? "yes" : "no"}`,
+    `duration ms: ${result.durationMs}`,
+    `truncated: ${result.truncated ? "yes" : "no"}`,
+    "stdout:",
+    stdout.length > 0 ? stdout : "(empty)",
+    "stderr:",
+    stderr.length > 0 ? stderr : "(empty)",
+  ].join("\n");
+}
+
+function renderScenarioResult(
+  result: Awaited<ReturnType<typeof runScenario>>,
+  actions: readonly string[],
+): string {
+  return [
+    `Scenario: ${result.scenarioId}`,
+    `status: ${result.status}`,
+    "records:",
+    ...result.records.map((record) => `- ${record.id}: ${record.status} (${record.title})`),
+    "dry-run actions:",
+    ...actions.map((action) => `- ${action}`),
+    "Internet egress: denied by default",
   ].join("\n");
 }
 
@@ -1186,6 +1367,10 @@ type GuestExecArgsResult =
   | { readonly ok: true; readonly args: GuestExecArgs }
   | { readonly ok: false; readonly message: string };
 
+type DebugSmokeArgsResult =
+  | { readonly ok: true; readonly executable: string }
+  | { readonly ok: false; readonly message: string };
+
 type SnapshotNameArgsResult =
   | { readonly ok: true; readonly name: string }
   | { readonly ok: false; readonly message: string };
@@ -1251,6 +1436,26 @@ function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
   }
 
   return { ok: true, args: { executable, arguments: commandArgs, as } };
+}
+
+function parseDebugSmokeArgs(args: readonly string[]): DebugSmokeArgsResult {
+  let executable: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg !== "--exe") {
+      return { ok: false, message: `Unknown debug:smoke option: ${arg}` };
+    }
+    const value = args[index + 1];
+    if (value === undefined) {
+      return { ok: false, message: "Missing value for --exe" };
+    }
+    executable = value;
+    index += 1;
+  }
+  if (executable === undefined || executable.length === 0) {
+    return { ok: false, message: "debug:smoke requires --exe <guest-executable>" };
+  }
+  return { ok: true, executable };
 }
 
 function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): NetPlanArgsResult {
@@ -1498,6 +1703,9 @@ function getHelpText(): string {
     "  crucible snapshot:restore clean-base",
     "  crucible guest:health",
     "  crucible guest:exec [--as service] <executable> [args...]",
+    "  crucible debug:smoke --exe <guest-executable>",
+    "  crucible scenario:malware-dry-run",
+    "  crucible package",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
