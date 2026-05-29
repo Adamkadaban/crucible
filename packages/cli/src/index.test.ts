@@ -301,7 +301,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("test signing enabled: no");
   });
 
-  it("executes guest commands with explicit standard/admin principals", async () => {
+  it("executes guest commands through the service principal", async () => {
     const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
     const guestClientFactory = () =>
       Promise.resolve({
@@ -321,25 +321,28 @@ describe("crucible CLI bootstrap", () => {
       });
     const config = parseCrucibleConfig({ vm: { name: "test-win" } });
 
-    const standard = await runCrucibleCli(["guest:exec", "whoami.exe"], {
+    const defaultPrincipal = await runCrucibleCli(["guest:exec", "whoami.exe"], {
       config,
       guestClientFactory,
     });
-    const admin = await runCrucibleCli(["guest:exec", "--as", "admin", "whoami.exe", "/groups"], {
-      config,
-      guestClientFactory,
-    });
+    const explicitPrincipal = await runCrucibleCli(
+      ["guest:exec", "--as", "service", "whoami.exe", "/groups"],
+      {
+        config,
+        guestClientFactory,
+      },
+    );
 
-    expect(standard.exitCode).toBe(0);
-    expect(admin.exitCode).toBe(0);
-    expect(standard.stdout).toContain("stdout:\nran whoami.exe");
+    expect(defaultPrincipal.exitCode).toBe(0);
+    expect(explicitPrincipal.exitCode).toBe(0);
+    expect(defaultPrincipal.stdout).toContain("stdout:\nran whoami.exe");
     expect(requests).toEqual([
-      { executable: "whoami.exe", arguments: [], as: "standard" },
-      { executable: "whoami.exe", arguments: ["/groups"], as: "admin" },
+      { executable: "whoami.exe", arguments: [], as: "service" },
+      { executable: "whoami.exe", arguments: ["/groups"], as: "service" },
     ]);
   });
 
-  it("runs a quoted guest command through cmd.exe", async () => {
+  it("preserves arguments after a quoted guest command", async () => {
     const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
     const result = await runCrucibleCli(["guest:exec", "whoami /groups", "--as", "admin"], {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),
@@ -363,7 +366,35 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(requests).toEqual([
-      { executable: "cmd.exe", arguments: ["/d", "/s", "/c", "whoami /groups"], as: "admin" },
+      { executable: "whoami /groups", arguments: ["--as", "admin"], as: "service" },
+    ]);
+  });
+
+  it("preserves guest --as arguments after the executable", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
+    const result = await runCrucibleCli(["guest:exec", "tool.exe", "--as", "admin"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () => Promise.reject(new Error("unused")),
+          exec: (request: { executable: string; arguments?: readonly string[]; as?: string }) => {
+            requests.push(request);
+            return Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: "",
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 1,
+              truncated: false,
+            });
+          },
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(requests).toEqual([
+      { executable: "tool.exe", arguments: ["--as", "admin"], as: "service" },
     ]);
   });
 

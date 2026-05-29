@@ -73,7 +73,7 @@ func TestExecRejectsUnknownPrincipal(t *testing.T) {
 	defer srv.Close()
 	body, _ := json.Marshal(map[string]any{
 		"executable": "/bin/true",
-		"as":         "system",
+		"as":         "admin",
 	})
 	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
 	if err != nil {

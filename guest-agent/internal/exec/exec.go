@@ -76,10 +76,18 @@ func Handler(auditor *audit.Auditor, maxRequestBytes int64) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(result)
 		auditor.Record(audit.Event{
 			Action: "exec",
-			Detail: req.Executable,
+			Detail: executionDetail(req),
 			Path:   r.URL.Path,
 		})
 	}
+}
+
+func executionDetail(req request) string {
+	principal := req.As
+	if principal == "" {
+		principal = "service"
+	}
+	return principal + ":" + req.Executable
 }
 
 func validate(req request) error {
@@ -92,8 +100,8 @@ func validate(req request) error {
 	if req.TimeoutMs > maxTimeoutMs {
 		return errors.New("timeoutMs exceeds maximum")
 	}
-	if req.As != "" && req.As != "standard" && req.As != "admin" {
-		return errors.New("as must be standard or admin")
+	if req.As != "" && req.As != "service" {
+		return errors.New("as must be service; standard/admin impersonation is not implemented")
 	}
 	return nil
 }

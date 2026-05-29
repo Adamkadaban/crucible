@@ -282,8 +282,8 @@ code-integrity boot overrides, and test signing disabled.
 health checks, and privilege-separated execution primitives.
 
 **Exit test:** `go test ./...` in `guest/agent` passes on Linux, and on a provisioned VM
-`pnpm crucible guest:exec whoami --as standard` and
-`pnpm crucible guest:exec "whoami /groups" --as admin` both return expected structured results.
+`pnpm crucible guest:exec whoami --as service` returns expected structured results from the
+non-interactive guest-service execution boundary.
 
 **Deliverable checklist:**
 
@@ -294,9 +294,9 @@ health checks, and privilege-separated execution primitives.
       and execution context availability.
 - [x] Implement command execution endpoint with working directory, environment allowlist, timeout,
       stdout/stderr capture, exit code, and max-output truncation.
-- [x] Implement standard-user execution path.
-- [x] Implement admin execution path without interactive UAC prompts, using a preconfigured
-      service/helper boundary.
+- [x] Implement non-interactive guest-service execution path.
+- [ ] Implement true standard-user/admin-user impersonation without interactive UAC prompts, using a
+      preconfigured helper boundary.
 - [x] Implement file upload/download endpoints with staging directory constraints, hash reporting,
       max size limits, and path traversal protection.
 - [x] Add host TypeScript client for the guest API and integration tests against a fake server.
@@ -326,8 +326,8 @@ successfully.
 
 - [x] Register MCP tools for `host_check`, `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`,
       `snapshot_restore`, `guest_health`.
-- [x] Register MCP tools for `guest_exec`, `upload_file`, and `download_file`. `guest_exec_admin` is
-      deferred until the guest agent grows the SCM impersonation path planned in Phase 4 follow-up.
+- [x] Register MCP tools for `guest_exec`, `upload_file`, and `download_file`. `guest_exec_admin`
+      remains deferred until the guest agent grows the Windows impersonation/helper path.
 - [x] Add structured Zod input/output schemas for every tool.
 - [x] Add error mapping that distinguishes validation errors, host prerequisite errors, VM offline
       errors, guest service errors, timeout errors, and security policy denials.

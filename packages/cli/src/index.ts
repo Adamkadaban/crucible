@@ -66,7 +66,7 @@ type CliGuestHealthClient = {
     readonly executable: string;
     readonly arguments?: readonly string[];
     readonly timeoutMs?: number;
-    readonly as?: "standard" | "admin";
+    readonly as?: "service";
   }) => Promise<GuestAgentExecResult>;
   readonly close: () => Promise<void>;
 };
@@ -126,7 +126,7 @@ type NetTeardownArgs = {
 type GuestExecArgs = {
   readonly executable: string;
   readonly arguments: readonly string[];
-  readonly as: "standard" | "admin";
+  readonly as: "service";
 };
 
 export async function runCrucibleCli(
@@ -1211,18 +1211,23 @@ function parseSnapshotNameArgs(args: readonly string[], command: string): Snapsh
 }
 
 function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
-  let as: GuestExecArgs["as"] = "standard";
+  let as: GuestExecArgs["as"] = "service";
   const command: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
-    if (arg === "--as") {
+    if (arg === "--") {
+      command.push(...args.slice(index + 1));
+      break;
+    }
+
+    if (command.length === 0 && arg === "--as") {
       const value = args[index + 1];
       if (value === undefined) {
         return { ok: false, message: "Missing value for --as" };
       }
-      if (value !== "standard" && value !== "admin") {
+      if (value !== "service") {
         return { ok: false, message: `Unknown guest execution principal: ${value}` };
       }
       as = value;
@@ -1492,7 +1497,7 @@ function getHelpText(): string {
     "  crucible snapshot:create clean-base",
     "  crucible snapshot:restore clean-base",
     "  crucible guest:health",
-    "  crucible guest:exec [--as standard|admin] <executable> [args...]",
+    "  crucible guest:exec [--as service] <executable> [args...]",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
