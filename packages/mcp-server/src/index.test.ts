@@ -153,17 +153,20 @@ describe("crucible MCP tools", () => {
   });
 
   it("round-trips guest_exec through a cached guest client", async () => {
+    const execRequests: Array<{ executable: string; as?: string }> = [];
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
-      exec: (req: { executable: string; arguments?: string[] }) =>
-        Promise.resolve({
+      exec: (req: { executable: string; arguments?: string[]; as?: string }) => {
+        execRequests.push(req);
+        return Promise.resolve({
           exitCode: 0,
           stdoutBase64: Buffer.from(`ran ${req.executable}`).toString("base64"),
           stderrBase64: "",
           timedOut: false,
           durationMs: 1,
           truncated: false,
-        }),
+        });
+      },
       upload: () => Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
       download: () => Promise.resolve(Buffer.from("downloaded")),
       close: () => Promise.resolve(),
@@ -182,6 +185,7 @@ describe("crucible MCP tools", () => {
       });
     }
     expect(factoryCalls).toBe(1);
+    expect(execRequests.map((req) => req.as)).toEqual(["service", "service", "service"]);
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {

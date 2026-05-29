@@ -122,6 +122,7 @@ const GuestExecInput = z
     workingDirectory: z.string().optional(),
     environment: z.record(z.string(), z.string()).optional(),
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
+    as: z.literal("service").optional(),
   })
   .strict();
 type GuestExecInputType = z.infer<typeof GuestExecInput>;
@@ -320,6 +321,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
           workingDirectory: input.workingDirectory,
           environment: input.environment,
           timeoutMs: input.timeoutMs,
+          as: input.as ?? "service",
         };
         const result: GuestAgentExecResult = await client.exec(req);
         return toJsonContent({ ok: true, result, auditLogPath });
