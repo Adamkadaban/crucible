@@ -456,11 +456,13 @@ describe("provisioning contracts", () => {
     const virtioIso = join(root, "virtio.iso");
     const ovmfCode = join(root, "OVMF_CODE.fd");
     const ovmfVars = join(root, "OVMF_VARS.fd");
+    const agentBinary = join(root, "crucible-guest-agent.exe");
     await Promise.all([
       writeFile(windowsIso, "windows", "utf8"),
       writeFile(virtioIso, "virtio", "utf8"),
       writeFile(ovmfCode, "code", "utf8"),
       writeFile(ovmfVars, "vars", "utf8"),
+      writeFile(agentBinary, "agent", "utf8"),
     ]);
     const commands: ProcessCommand[] = [];
     const processRunner: ProcessRunner = {
@@ -496,6 +498,7 @@ describe("provisioning contracts", () => {
       ovmfCodePath: ovmfCode,
       ovmfVarsTemplatePath: ovmfVars,
       processRunner,
+      agentBinaryPath: agentBinary,
     });
 
     expect(plan.diskPath).toContain("first-boot.qcow2");
