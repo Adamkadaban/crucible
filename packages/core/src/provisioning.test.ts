@@ -565,6 +565,24 @@ describe("provisioning contracts", () => {
     expect(installScript).toContain("diskpart /s X:\\diskpart-crucible.txt");
     expect(installScript).toContain("dism /Apply-Image /ImageFile:%IMAGE_FILE% /Index:1");
     expect(installScript).toContain("bcdboot W:\\Windows /s S: /f UEFI");
+    // Regression for #130: Defender's WdFilter minifilter is the actual
+    // racer of qemu-ga's GENERIC_WRITE / FILE_SHARE_READ guest-file-open
+    // against newly-created .ps1 files. Tamper Protection silently
+    // ignores online Set-MpPreference / Policy registry writes once
+    // Defender has loaded, so we MUST disable it via offline-hive write
+    // (reg load HKLM\\OFF_SYS W:\\Windows\\System32\\config\\SYSTEM)
+    // BEFORE the freshly-installed OS first boots and Tamper Protection
+    // engages. Setting WdFilter Start=4 (SERVICE_DISABLED) is the
+    // critical step — disabling only the user-mode WinDefend service
+    // leaves the kernel minifilter loaded and the race intact.
+    expect(installScript).toContain("reg load HKLM\\OFF_SYS W:\\Windows\\System32\\config\\SYSTEM");
+    expect(installScript).toContain(
+      '"HKLM\\OFF_SYS\\ControlSet001\\Services\\WdFilter" /v Start /t REG_DWORD /d 4 /f',
+    );
+    expect(installScript).toContain(
+      '"HKLM\\OFF_SYS\\ControlSet001\\Services\\WinDefend" /v Start /t REG_DWORD /d 4 /f',
+    );
+    expect(installScript).toContain("reg unload HKLM\\OFF_SYS");
     expect(installScript).toContain("diskpart /s X:\\diskpart-crucible.txt || (pause & exit /b 1)");
     expect(installScript).toContain("W:\\Windows\\Setup\\Scripts\\SetupComplete.cmd");
     const setupComplete = await readFile(

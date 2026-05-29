@@ -823,6 +823,31 @@ function buildWinPeInstallScript(config: CrucibleConfig): string {
     "dism /Apply-Image /ImageFile:%IMAGE_FILE% /Index:1 /ApplyDir:W:\\ || (pause & exit /b 1)",
     "dism /Image:W:\\ /Add-Driver /Driver:%DRIVER_ROOT% /Recurse /ForceUnsigned || (pause & exit /b 1)",
     "bcdboot W:\\Windows /s S: /f UEFI || (pause & exit /b 1)",
+    // Disable Windows Defender by editing the freshly-installed system
+    // registry hive OFFLINE, before the OS ever boots. Tamper Protection
+    // in Windows 11 25H2 silently overrides every Policy registry write
+    // ('HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\...') once
+    // Defender has started up, but it cannot defend against an offline
+    // SYSTEM-hive write that disables the filter driver before it ever
+    // loads. WdFilter (the filesystem minifilter — not the user-mode
+    // service) is the actual process that races qemu-ga's
+    // GENERIC_WRITE / FILE_SHARE_READ guest-file-open against newly
+    // created .ps1 files and produces ERROR_SHARING_VIOLATION; disabling
+    // just WinDefend leaves the minifilter loaded. Setting Start=4
+    // (SERVICE_DISABLED) on the boot-time / system-start services in
+    // the offline hive guarantees the minifilter is never loaded into
+    // the kernel on first boot, so the qga upload race in qga-ready
+    // cannot happen. Re-enable / lock-down happens later via
+    // configure-policy.ps1 once provisioning has staged the agent.
+    "reg load HKLM\\OFF_SYS W:\\Windows\\System32\\config\\SYSTEM || (pause & exit /b 1)",
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\WinDefend" /v Start /t REG_DWORD /d 4 /f',
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\WdFilter" /v Start /t REG_DWORD /d 4 /f',
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\WdNisSvc" /v Start /t REG_DWORD /d 4 /f',
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\WdNisDrv" /v Start /t REG_DWORD /d 4 /f',
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\WdBoot" /v Start /t REG_DWORD /d 4 /f',
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\Sense" /v Start /t REG_DWORD /d 4 /f',
+    'reg add "HKLM\\OFF_SYS\\ControlSet001\\Services\\SecurityHealthService" /v Start /t REG_DWORD /d 4 /f',
+    "reg unload HKLM\\OFF_SYS || (pause & exit /b 1)",
     "mkdir W:\\Windows\\Panther",
     "copy %ANSWER_FILE% W:\\Windows\\Panther\\Unattend.xml",
     "mkdir W:\\Windows\\Setup\\Scripts",
