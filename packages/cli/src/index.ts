@@ -71,16 +71,16 @@ type CliGuestHealthClient = {
 };
 
 type GuestPolicyHealth = {
-  readonly cdbPath?: string | null;
-  readonly windbgPath?: string | null;
-  readonly symbolPath?: string | null;
-  readonly crucibleAdminPresent?: boolean;
-  readonly crucibleUserPresent?: boolean;
-  readonly qemuAgentStatus?: string;
-  readonly crucibleAgentStatus?: string;
-  readonly defenderRealTimeProtectionEnabled?: boolean | null;
-  readonly testSigningEnabled?: boolean | null;
-  readonly healthy?: boolean;
+  readonly cdbPath: string | null;
+  readonly windbgPath: string | null;
+  readonly symbolPath: string | null;
+  readonly crucibleAdminPresent: boolean;
+  readonly crucibleUserPresent: boolean;
+  readonly qemuAgentStatus: string;
+  readonly crucibleAgentStatus: string;
+  readonly defenderRealTimeProtectionEnabled: boolean | null;
+  readonly testSigningEnabled: boolean | null;
+  readonly healthy: boolean;
 };
 
 type CliRuntime = {
@@ -680,7 +680,7 @@ async function runGuestHealthCommand(
       try {
         const health = await client.health();
         const policyHealth = await readGuestPolicyHealth(client);
-        const healthy = health.status === "ok" && (policyHealth?.healthy ?? true);
+        const healthy = health.status === "ok" && policyHealth.healthy;
         return {
           exitCode: healthy ? 0 : 1,
           stdout: renderGuestAgentHealth(health, policyHealth),
@@ -690,7 +690,11 @@ async function runGuestHealthCommand(
         await client.close();
       }
     } catch (error) {
-      if (runtime.guestClientFactory !== undefined || hasExplicitGuestClientEnv()) {
+      if (
+        runtime.guestClientFactory !== undefined ||
+        hasExplicitGuestClientEnv() ||
+        !isMissingPathError(error)
+      ) {
         return {
           exitCode: 1,
           stdout: "",
@@ -856,7 +860,9 @@ function buildGuestPolicyHealthCommand(): string {
   return `$ErrorActionPreference='Stop';
 function Find-Dbg([string[]]$Names){
   foreach($name in $Names){$cmd=Get-Command $name -ErrorAction SilentlyContinue; if($null -ne $cmd){return $cmd.Source}}
-  $dirs=@("$env:ProgramFiles\\Windows Kits\\10\\Debuggers\\x64", "$([Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))\\Windows Kits\\10\\Debuggers\\x64", "$env:LOCALAPPDATA\\Microsoft\\WindowsApps")
+  $dirs=@("$env:ProgramFiles\\Windows Kits\\10\\Debuggers\\x64", "$env:LOCALAPPDATA\\Microsoft\\WindowsApps")
+  $programFilesX86=[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+  if(-not [string]::IsNullOrWhiteSpace($programFilesX86)){$dirs += "$programFilesX86\\Windows Kits\\10\\Debuggers\\x64"}
   foreach($dir in $dirs){if([string]::IsNullOrWhiteSpace($dir)-or -not(Test-Path -LiteralPath $dir)){continue}; foreach($name in $Names){$p=Join-Path $dir $name; if(Test-Path -LiteralPath $p -PathType Leaf){return $p}}}
   return $null
 }
