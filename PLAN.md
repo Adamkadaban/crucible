@@ -405,9 +405,9 @@ with a benign test binary.
       network mode changes.
 - [x] Add optional packet capture hook for capture mode with pcap artifact metadata.
 - [x] Add credential rotation core API for guest service certificates and local Windows accounts.
-      _(CLI subcommand wiring lands when CLI surface for these helpers is added in a follow-up.)_
-- [x] Add artifact export core API for logs, transcripts, dumps, pcaps, and hashes. _(CLI subcommand
-      wiring lands with the same follow-up.)_
+- [x] Add artifact export core API for logs, transcripts, dumps, pcaps, and hashes. _(Credential
+      rotation and artifact export are core APIs; dedicated CLI wrappers remain future convenience
+      work.)_
 - [x] Add docs for malware-analysis safe operating procedure.
 - [x] Add tests for policy denial paths, audit log integrity, and scenario ordering.
 
