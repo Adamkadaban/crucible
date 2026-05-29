@@ -499,6 +499,7 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #filesToStage: Partial<Record<ProvisioningStageId, readonly StagedFile[]>>;
+  #qgaReadyProbe: string | undefined;
 
   constructor(options: QgaProvisioningExecutorOptions) {
     this.#client = options.client;
@@ -545,6 +546,37 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
 
     if (stage.id === "qga-ready") {
       await this.#waitForGuestReadiness();
+      // Capture guest-side process / Defender / minifilter state once,
+      // immediately after qemu-ga becomes responsive, BEFORE any
+      // writeFile risks racing the file system. The captured stdout is
+      // attached to any subsequent stage failure so the operator does
+      // not need a second 20-minute provision round to bisect what is
+      // holding C:\Windows\Temp\Crucible\stages\<script>.ps1.
+      try {
+        const probe = await this.#client.exec(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            // Single line, intentionally short. Ignore individual errors
+            // so a missing cmdlet does not blow up the whole probe.
+            "$ErrorActionPreference='SilentlyContinue';" +
+              "Write-Output '=== MpComputerStatus ===';" +
+              "Get-MpComputerStatus | Select-Object AMRunningMode,RealTimeProtectionEnabled,OnAccessProtectionEnabled,IsTamperProtected,AntivirusEnabled,AMServiceEnabled | Format-List | Out-String;" +
+              "Write-Output '=== Defender service ===';" +
+              "Get-Service WinDefend,WdNisSvc,Sense,SecurityHealthService | Format-Table Name,Status,StartType | Out-String;" +
+              "Write-Output '=== fltmc filters ===';" +
+              "& fltmc filters 2>&1 | Out-String;" +
+              "Write-Output '=== whoami ===';" +
+              "& whoami 2>&1;",
+          ],
+          { timeoutMs: 60_000, idempotent: true },
+        );
+        this.#qgaReadyProbe = `qga-ready guest probe (exit=${probe.exitCode ?? "none"}):\n${probe.stdout}\n${probe.stderr}`;
+      } catch (error) {
+        this.#qgaReadyProbe = `qga-ready probe failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
       if (stage.script === undefined) {
         return {
           id: stage.id,
@@ -653,14 +685,15 @@ export class QgaProvisioningExecutor implements ProvisioningExecutor {
       throw new CrucibleError("STATE_INVALID", `stage ${stage.id} has no script`);
     }
     const scriptBody = await readFile(stage.script.scriptPath, "utf8");
-    const guestPath = `C:\\ProgramData\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
+    const guestPath = `C:\\Windows\\Temp\\Crucible\\stages\\${path.basename(stage.script.scriptPath)}`;
     try {
       await this.#ensureGuestDirectory(guestParentDir(guestPath));
       await this.#client.writeFile(guestPath, scriptBody);
     } catch (error) {
+      const probeSuffix = this.#qgaReadyProbe !== undefined ? `\n\n${this.#qgaReadyProbe}` : "";
       throw new CrucibleError(
         "PROCESS_FAILED",
-        `Failed to stage script for stage '${stage.id}': ${stage.script.scriptPath} -> ${guestPath}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to stage script for stage '${stage.id}': ${stage.script.scriptPath} -> ${guestPath}: ${error instanceof Error ? error.message : String(error)}${probeSuffix}`,
         error,
       );
     }

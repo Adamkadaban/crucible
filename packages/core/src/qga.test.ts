@@ -60,7 +60,7 @@ describe("QGA client and provisioning executor", () => {
         (entry): entry is string => typeof entry === "string" && entry.includes("New-Item"),
       );
       expect(psCommand).toBeDefined();
-      expect(psCommand as string).toContain("C:\\ProgramData\\Crucible\\stages");
+      expect(psCommand as string).toContain("C:\\Windows\\Temp\\Crucible\\stages");
       // Second guest-exec is the real powershell invocation.
       expect(guestExecArgs[1]).toContain("-File");
       const fileArg = (guestExecArgs[1] ?? []).find(
@@ -68,7 +68,7 @@ describe("QGA client and provisioning executor", () => {
           typeof entry === "string" && entry.endsWith("install-windbg.ps1"),
       );
       expect(fileArg).toBeDefined();
-      expect(fileArg).toContain("C:\\ProgramData\\Crucible\\stages\\");
+      expect(fileArg).toContain("C:\\Windows\\Temp\\Crucible\\stages\\");
       expect(guestExecArgs[1]).not.toContain("guest/provision/install-windbg.ps1");
       for (const flag of ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]) {
         const occurrences = (guestExecArgs[1] ?? []).filter((arg) => arg === flag).length;
@@ -133,6 +133,15 @@ describe("QGA client and provisioning executor", () => {
           return { error: { class: "GenericError", desc: "agent not ready" } };
         }
         return { return: {} };
+      }
+      // qga-ready stage runs a powershell probe via guest-exec immediately
+      // after readiness — return success for the probe so the test can
+      // exercise the readiness-loop logic without dragging the probe into it.
+      if (request.execute === "guest-exec") {
+        return { return: { pid: 123 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { return: { exited: true, exitcode: 0, "out-data": "" } };
       }
       return { return: {} };
     });
@@ -289,10 +298,11 @@ describe("QGA client and provisioning executor", () => {
         (e) =>
           e.kind === "exec" &&
           e.detail.includes("New-Item") &&
-          e.detail.includes("C:\\ProgramData\\Crucible\\stages"),
+          e.detail.includes("C:\\Windows\\Temp\\Crucible\\stages"),
       );
       const scriptOpen = indexOfFirst(
-        (e) => e.kind === "file-open" && e.detail.startsWith("C:\\ProgramData\\Crucible\\stages\\"),
+        (e) =>
+          e.kind === "file-open" && e.detail.startsWith("C:\\Windows\\Temp\\Crucible\\stages\\"),
       );
       expect(stagesMkdir).toBeGreaterThanOrEqual(0);
       expect(scriptOpen).toBeGreaterThanOrEqual(0);
