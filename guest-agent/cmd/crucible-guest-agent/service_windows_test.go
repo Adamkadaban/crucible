@@ -42,6 +42,8 @@ func TestParseServerArgsFromOsArgs_RoundTrip(t *testing.T) {
 		"--tls-client-ca", "C:\\ca.pem",
 		"--staging-dir", "C:\\stage",
 		"--audit-log", "C:\\audit.jsonl",
+		"--credentials", "C:\\credentials.json",
+		"--exec-dir", "C:\\exec",
 		"--max-request-bytes", "1048576",
 	})
 	if err != nil {
@@ -52,5 +54,11 @@ func TestParseServerArgsFromOsArgs_RoundTrip(t *testing.T) {
 	}
 	if cfg.MaxRequestBytes != 1048576 {
 		t.Fatalf("max-bytes: %d", cfg.MaxRequestBytes)
+	}
+	if cfg.CredentialsPath != "C:\\credentials.json" {
+		t.Fatalf("credentials: %q", cfg.CredentialsPath)
+	}
+	if cfg.ExecDirectory != "C:\\exec" {
+		t.Fatalf("exec-dir: %q", cfg.ExecDirectory)
 	}
 }

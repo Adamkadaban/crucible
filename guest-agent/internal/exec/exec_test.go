@@ -20,7 +20,7 @@ func TestExecRunsSimpleCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("non-windows convenience test")
 	}
-	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024))
+	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024, nil))
 	defer srv.Close()
 	body, _ := json.Marshal(map[string]any{
 		"executable": "/bin/sh",
@@ -52,7 +52,7 @@ func TestExecRunsSimpleCommand(t *testing.T) {
 
 func TestExecRejectsExcessiveTimeout(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024))
+	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024, nil))
 	defer srv.Close()
 	body, _ := json.Marshal(map[string]any{
 		"executable": "/bin/true",
@@ -67,9 +67,12 @@ func TestExecRejectsExcessiveTimeout(t *testing.T) {
 	}
 }
 
-func TestExecRejectsUnknownPrincipal(t *testing.T) {
+func TestExecRejectsUnsupportedPrincipalOnNonWindows(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024))
+	if runtime.GOOS == "windows" {
+		t.Skip("non-windows validation path")
+	}
+	srv := httptest.NewServer(Handler(audit.New(io.Discard), 64*1024, nil))
 	defer srv.Close()
 	body, _ := json.Marshal(map[string]any{
 		"executable": "/bin/true",
@@ -79,8 +82,8 @@ func TestExecRejectsUnknownPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.StatusCode)
 	}
 }
 
@@ -94,7 +97,7 @@ func TestRunTimeoutSurfaces(t *testing.T) {
 		Arguments:  []string{"-c", "sleep 5"},
 		TimeoutMs:  50,
 	}
-	res, err := run(context.Background(), req)
+	res, err := (&Runner{}).run(context.Background(), req)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

@@ -106,6 +106,7 @@ func parseServerArgsFromOsArgs(args []string) (server.Config, error) {
 	cfg := server.Config{
 		ListenAddress:    "127.0.0.1:8443",
 		StagingDirectory: `C:\ProgramData\Crucible\staging`,
+		ExecDirectory:    `C:\ProgramData\Crucible\Exec`,
 		MaxRequestBytes:  64 * 1024 * 1024,
 	}
 	consume := func(i int, flag string) (string, error) {
@@ -117,7 +118,7 @@ func parseServerArgsFromOsArgs(args []string) (server.Config, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--listen", "--tls-cert", "--tls-key", "--tls-client-ca",
-			"--audit-log", "--staging-dir", "--max-request-bytes":
+			"--audit-log", "--staging-dir", "--credentials", "--exec-dir", "--max-request-bytes":
 			value, err := consume(i, args[i])
 			if err != nil {
 				return cfg, err
@@ -135,6 +136,10 @@ func parseServerArgsFromOsArgs(args []string) (server.Config, error) {
 				cfg.AuditLogPath = value
 			case "--staging-dir":
 				cfg.StagingDirectory = value
+			case "--credentials":
+				cfg.CredentialsPath = value
+			case "--exec-dir":
+				cfg.ExecDirectory = value
 			case "--max-request-bytes":
 				n, err := strconv.ParseInt(value, 10, 64)
 				if err != nil {

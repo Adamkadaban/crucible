@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,10 +17,10 @@ import (
 )
 
 const (
-	maxArgs           = 64
-	maxOutputBytes    = 4 * 1024 * 1024 // 4 MiB per stream
-	defaultTimeoutMs  = 60_000
-	maxTimeoutMs      = 30 * 60 * 1000
+	maxArgs          = 64
+	maxOutputBytes   = 4 * 1024 * 1024 // 4 MiB per stream
+	defaultTimeoutMs = 60_000
+	maxTimeoutMs     = 30 * 60 * 1000
 )
 
 type request struct {
@@ -32,16 +33,50 @@ type request struct {
 }
 
 type response struct {
-	ExitCode    int    `json:"exitCode"`
+	ExitCode     int    `json:"exitCode"`
 	StdoutBase64 string `json:"stdoutBase64,omitempty"`
 	StderrBase64 string `json:"stderrBase64,omitempty"`
-	TimedOut    bool   `json:"timedOut"`
-	DurationMs  int64  `json:"durationMs"`
-	Truncated   bool   `json:"truncated"`
+	TimedOut     bool   `json:"timedOut"`
+	DurationMs   int64  `json:"durationMs"`
+	Truncated    bool   `json:"truncated"`
+}
+
+type accountCredential struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type credentialsFile struct {
+	Standard accountCredential `json:"standard"`
+	Admin    accountCredential `json:"admin"`
+}
+
+type Runner struct {
+	credentials credentialsFile
+	hasCreds    bool
+	execDir     string
+}
+
+func NewRunner(credentialsPath string, execDir string) (*Runner, error) {
+	if credentialsPath == "" {
+		return &Runner{execDir: execDir}, nil
+	}
+	data, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("read credentials: %w", err)
+	}
+	var creds credentialsFile
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil, fmt.Errorf("decode credentials: %w", err)
+	}
+	return &Runner{credentials: creds, hasCreds: true, execDir: execDir}, nil
 }
 
 // Handler returns the /exec http.HandlerFunc.
-func Handler(auditor *audit.Auditor, maxRequestBytes int64) http.HandlerFunc {
+func Handler(auditor *audit.Auditor, maxRequestBytes int64, runner *Runner) http.HandlerFunc {
+	if runner == nil {
+		runner = &Runner{}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -67,7 +102,7 @@ func Handler(auditor *audit.Auditor, maxRequestBytes int64) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		result, err := run(r.Context(), req)
+		result, err := runner.run(r.Context(), req)
 		if err != nil {
 			http.Error(w, "exec: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -100,13 +135,13 @@ func validate(req request) error {
 	if req.TimeoutMs > maxTimeoutMs {
 		return errors.New("timeoutMs exceeds maximum")
 	}
-	if req.As != "" && req.As != "service" {
-		return errors.New("as must be service; standard/admin impersonation is not implemented")
+	if req.As != "" && req.As != "service" && req.As != "standard" && req.As != "admin" {
+		return errors.New("as must be service, standard, or admin")
 	}
 	return nil
 }
 
-func run(ctx context.Context, req request) (response, error) {
+func (r *Runner) run(ctx context.Context, req request) (response, error) {
 	timeoutMs := req.TimeoutMs
 	if timeoutMs <= 0 {
 		timeoutMs = defaultTimeoutMs
@@ -133,14 +168,14 @@ func run(ctx context.Context, req request) (response, error) {
 	cmd.Stdout = bufOut
 	cmd.Stderr = bufErr
 	start := time.Now()
-	err := cmd.Run()
+	err := r.runCommand(cmdCtx, req, cmd)
 	duration := time.Since(start)
 	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
 		return response{TimedOut: true, DurationMs: duration.Milliseconds()}, nil
 	}
 	exitCode := 0
 	if err != nil {
-		var exitErr *exec.ExitError
+		var exitErr interface{ ExitCode() int }
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {

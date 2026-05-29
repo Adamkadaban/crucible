@@ -41,6 +41,7 @@ describe("crucible MCP tools", () => {
       "snapshot_restore",
       "guest_health",
       "guest_exec",
+      "guest_exec_admin",
       "guest_upload",
       "guest_download",
       "debug_open",
@@ -152,7 +153,7 @@ describe("crucible MCP tools", () => {
     expect(payload.error.message).toMatch(/guest client is not configured/);
   });
 
-  it("round-trips guest_exec through a cached guest client", async () => {
+  it("round-trips guest_exec and guest_exec_admin through a cached guest client", async () => {
     const execRequests: Array<{ executable: string; as?: string }> = [];
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
@@ -184,8 +185,12 @@ describe("crucible MCP tools", () => {
         arguments: { executable: "whoami.exe" },
       });
     }
+    await client.callTool({
+      name: "guest_exec_admin",
+      arguments: { executable: "whoami.exe" },
+    });
     expect(factoryCalls).toBe(1);
-    expect(execRequests.map((req) => req.as)).toEqual(["service", "service", "service"]);
+    expect(execRequests.map((req) => req.as)).toEqual(["service", "service", "service", "admin"]);
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {

@@ -69,7 +69,7 @@ type CliGuestHealthClient = {
     readonly executable: string;
     readonly arguments?: readonly string[];
     readonly timeoutMs?: number;
-    readonly as?: "service";
+    readonly as?: "service" | "standard" | "admin";
   }) => Promise<GuestAgentExecResult>;
   readonly close: () => Promise<void>;
 };
@@ -129,7 +129,7 @@ type NetTeardownArgs = {
 type GuestExecArgs = {
   readonly executable: string;
   readonly arguments: readonly string[];
-  readonly as: "service";
+  readonly as: "service" | "standard" | "admin";
 };
 
 export async function runCrucibleCli(
@@ -1403,11 +1403,13 @@ function parseSnapshotNameArgs(args: readonly string[], command: string): Snapsh
 function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
   let as: GuestExecArgs["as"] = "service";
   const command: string[] = [];
+  let sawSeparator = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
     if (arg === "--") {
+      sawSeparator = true;
       command.push(...args.slice(index + 1));
       break;
     }
@@ -1417,7 +1419,7 @@ function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
       if (value === undefined) {
         return { ok: false, message: "Missing value for --as" };
       }
-      if (value !== "service") {
+      if (!isGuestExecPrincipal(value)) {
         return { ok: false, message: `Unknown guest execution principal: ${value}` };
       }
       as = value;
@@ -1426,6 +1428,17 @@ function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
     }
 
     command.push(arg ?? "");
+  }
+
+  if (
+    !sawSeparator &&
+    command.length === 3 &&
+    command[0] !== undefined &&
+    command[1] === "--as" &&
+    isGuestExecPrincipal(command[2])
+  ) {
+    as = command[2];
+    command.splice(1, 2);
   }
 
   const [executable, ...commandArgs] = command;
@@ -1441,6 +1454,10 @@ function parseGuestExecArgs(args: readonly string[]): GuestExecArgsResult {
   }
 
   return { ok: true, args: { executable, arguments: commandArgs, as } };
+}
+
+function isGuestExecPrincipal(value: string | undefined): value is GuestExecArgs["as"] {
+  return value === "service" || value === "standard" || value === "admin";
 }
 
 function parseDebugSmokeArgs(args: readonly string[]): DebugSmokeArgsResult {
@@ -1685,7 +1702,7 @@ function buildDefaultGuestClientFactory(
       caPath: resolvePath(mtlsDirectory, "ca.cert.pem"),
       clientCertificatePath: resolvePath(mtlsDirectory, "host-client.cert.pem"),
       clientPrivateKeyPath: resolvePath(mtlsDirectory, "host-client.key.pem"),
-      timeoutMs: 10_000,
+      timeoutMs: 60_000,
     });
 }
 
@@ -1707,7 +1724,7 @@ function getHelpText(): string {
     "  crucible snapshot:create clean-base",
     "  crucible snapshot:restore clean-base",
     "  crucible guest:health",
-    "  crucible guest:exec [--as service] <executable> [args...]",
+    "  crucible guest:exec [--as service|standard|admin] <executable> [args...]",
     "  crucible debug:smoke --exe <guest-executable>",
     "  crucible scenario:malware-dry-run",
     "  crucible package",
