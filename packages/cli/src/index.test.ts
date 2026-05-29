@@ -335,6 +335,56 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("test signing enabled: no");
   });
 
+  it("renders live guest health as unhealthy when policy probe fails", async () => {
+    const result = await runCrucibleCli(["guest:health"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () =>
+            Promise.resolve({
+              status: "ok",
+              version: "test-version",
+              hostName: "test-win",
+              startedAt: "2026-05-29T00:00:00.000Z",
+              uptimeSeconds: 42,
+              goVersion: "go1.test",
+              windbgInstalled: false,
+            }),
+          exec: () =>
+            Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: Buffer.from(
+                JSON.stringify({
+                  cdbPath: null,
+                  windbgPath: null,
+                  symbolPath: null,
+                  crucibleAdminPresent: true,
+                  crucibleUserPresent: true,
+                  qemuAgentStatus: "Running",
+                  crucibleAgentStatus: "Running",
+                  defenderRealTimeProtectionEnabled: false,
+                  codeIntegrityStateRecorded: true,
+                  codeIntegrityEnforcementDisabled: true,
+                  hypervisorEnforcedCodeIntegrityDisabled: true,
+                  codeIntegrityBootOptions: [],
+                  testSigningEnabled: false,
+                  healthy: false,
+                }),
+              ).toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 10,
+              truncated: false,
+            }),
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("Guest health: unhealthy");
+    expect(result.stdout).toContain("policy health: unhealthy");
+  });
+
   it("executes guest commands through the service principal", async () => {
     const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
     const guestClientFactory = () =>
