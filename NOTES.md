@@ -122,3 +122,12 @@ after `snapshot:restore clean-base`. `packages/cli/src/index.ts` · PR #137
 code-integrity state recorded/enforcement disabled/HVCI disabled, no code-integrity boot options,
 and test signing disabled. WinDbg/CDB availability was reported as missing because isolated offline
 provisioning skipped debugger download. `PLAN.md:272` · issue #67
+
+## 2026-05-29 — Standard/admin guest execution passed on real VM
+
+**Resolution:** Fresh merged-main validation completed `pnpm crucible provision`,
+`pnpm crucible guest:exec whoami --as standard`,
+`pnpm crucible guest:exec "whoami /groups" --as admin`, `pnpm crucible scenario:malware-dry-run`,
+and `pnpm crucible package`; standard execution returned `crucible-win11\crucibleuser`, while admin
+execution reported `BUILTIN\Administrators` and `Mandatory Label\High Mandatory Level`.
+`guest-agent/internal/exec/run_windows.go` · PR #143
