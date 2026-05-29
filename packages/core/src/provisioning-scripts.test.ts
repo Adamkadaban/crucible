@@ -80,4 +80,16 @@ describe("WinDbg provisioning scripts", () => {
     expect(script).toContain("skipped = $true");
     expect(script).toContain("exit 75");
   });
+
+  it("installs or reports dynamic analysis tools without static-analysis suites", () => {
+    const script = readProvisionScript("install-analysis-tools.ps1");
+
+    expect(script).toContain("SysinternalsSuite.zip");
+    expect(script).toContain("Procmon64.exe");
+    expect(script).toContain("handle64.exe");
+    expect(script).toContain("strings64.exe");
+    expect(script).toContain("x64dbg.x64dbg");
+    expect(script).not.toContain("Ghidra");
+    expect(script).not.toContain("cutter.exe");
+  });
 });

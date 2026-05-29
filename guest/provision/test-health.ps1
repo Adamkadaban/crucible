@@ -123,9 +123,6 @@ $sysinternals = [ordered]@{
 }
 $malwareTools = [ordered]@{
     x64dbg = Find-ToolExecutable -FileNames @("x64dbg.exe")
-    cutter = Find-ToolExecutable -FileNames @("cutter.exe")
-    ghidra = Find-ToolExecutable -FileNames @("ghidraRun.bat")
-    peStudio = Find-ToolExecutable -FileNames @("pestudio.exe")
 }
 
 $crucibleAdmin = Test-AccountExists -Name "CrucibleAdmin"
