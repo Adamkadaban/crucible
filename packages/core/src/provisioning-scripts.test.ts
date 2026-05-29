@@ -24,9 +24,11 @@ describe("WinDbg provisioning scripts", () => {
     const script = readProvisionScript("install-windbg.ps1");
 
     expect(script).toContain("Install-WithSdkDebuggingTools");
+    expect(script).toContain("linkid=2361308");
     expect(script).toContain("OptionId.WindowsDesktopDebuggers");
     expect(script).toContain("Invoke-WebRequest");
     expect(script).toContain("winsdksetup.exe");
+    expect(script).toContain("winsdk-install.log");
     expect(script).toContain("Test-DebuggerToolingPresent");
   });
 

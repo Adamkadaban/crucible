@@ -141,6 +141,7 @@ describe("provisioning contracts", () => {
       "-File",
       "guest/provision/install-windbg.ps1",
       "-AllowSkipOnNetworkFailure",
+      "$false",
     ]);
 
     const guestAgent = plan.stages.find((stage) => stage.id === "guest-agent-installed");

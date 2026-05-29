@@ -1,7 +1,7 @@
 param(
     [string]$SymbolCache = "C:\Symbols",
-    [string]$SdkInstallerUrl = "https://go.microsoft.com/fwlink/?linkid=2271337",
-    [string]$SdkInstallerPath = "$env:TEMP\winsdksetup.exe",
+    [string]$SdkInstallerUrl = "https://go.microsoft.com/fwlink/?linkid=2361308",
+    [string]$SdkInstallerPath,
     [switch]$DryRun,
     # Default true so an offline / isolated-network provision skips
     # gracefully instead of hard-failing. Operators can opt out by
@@ -10,6 +10,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($SdkInstallerPath)) {
+    $tempDirectory = if ([string]::IsNullOrWhiteSpace($env:TEMP)) { "C:\ProgramData\Crucible\Temp" } else { $env:TEMP }
+    New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
+    $SdkInstallerPath = Join-Path $tempDirectory "winsdksetup.exe"
+}
 
 function Write-Status {
     param(
@@ -123,9 +129,17 @@ function Install-WithSdkDebuggingTools {
     } catch {
         throw "Invoke-WebRequest $SdkInstallerUrl failed: $($_.Exception.Message)"
     }
-    & $SdkInstallerPath "/features" "OptionId.WindowsDesktopDebuggers" "/quiet" "/norestart"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Windows SDK Debugging Tools installation failed with exit code $LASTEXITCODE"
+    $logPath = Join-Path (Split-Path -Parent $SdkInstallerPath) "winsdk-install.log"
+    $process = Start-Process -FilePath $SdkInstallerPath `
+        -ArgumentList @("/features", "OptionId.WindowsDesktopDebuggers", "/quiet", "/norestart", "/log", $logPath) `
+        -Wait -PassThru -NoNewWindow
+    if ($process.ExitCode -ne 0) {
+        $tail = if (Test-Path -LiteralPath $logPath) {
+            (Get-Content -LiteralPath $logPath -Tail 80 -ErrorAction SilentlyContinue) -join "`n"
+        } else {
+            "(no SDK installer log at $logPath)"
+        }
+        throw "Windows SDK Debugging Tools installation failed with exit code $($process.ExitCode)`n$tail"
     }
 }
 
@@ -221,6 +235,8 @@ function Test-DebuggerToolingPresent {
     return ($null -ne $cdb) -and ($null -ne $windbg) -and ($null -ne $kd) -and ($null -ne $kdnet) -and ($null -ne $gflags)
 }
 
+$configuredSymbolPath = Set-SymbolPath -CachePath $SymbolCache
+
 if (-not (Test-DebuggerToolingPresent)) {
     try {
         if (-not (Install-WithWinget)) {
@@ -256,6 +272,7 @@ if (-not (Test-DebuggerToolingPresent)) {
     Write-Status "WinDbg and CDB are already installed"
 }
 
+# Re-apply after setup as some SDK installers update machine environment.
 $configuredSymbolPath = Set-SymbolPath -CachePath $SymbolCache
 
 if ($DryRun) {
