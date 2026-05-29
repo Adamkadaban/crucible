@@ -14,14 +14,17 @@ Provisioning advances in this order:
    overridden.
 2. `vm-booted` verifies QMP sees a running VM and the QGA channel is configured.
 3. `qga-ready` verifies QGA can respond and run PowerShell bootstrap checks.
-4. `windbg-installed` verifies CDB, WinDbg, and the default symbol path.
-5. `guest-agent-installed` verifies the Crucible guest service, its firewall rule, and mTLS
+4. `windbg-installed` verifies CDB, WinDbg, KD/KDNET, GFlags, and the default symbol path/cache.
+5. `analysis-tools-installed` installs or reports dynamic Windows analysis tooling such as
+   Sysinternals and x64dbg. Static analysis tools such as Ghidra stay on the Linux host.
+6. `local-accounts-created` verifies standard and admin execution accounts.
+7. `guest-agent-installed` verifies the Crucible guest service, its firewall rule, and mTLS
    material.
-6. `policy-configured` disables Defender policy, records code-integrity policy state, confirms test
+8. `policy-configured` disables Defender policy, records code-integrity policy state, confirms test
    signing is disabled, and records optional environment profile settings.
-7. `local-accounts-created` verifies standard and admin execution accounts.
-8. `health-checked` verifies debugger, service, execution-context, and policy health outputs.
-9. `snapshot-prepared` verifies the guest is quiesced and clean snapshot metadata is ready.
+9. `health-checked` verifies debugger, tooling, service, execution-context, and policy health
+   outputs.
+10. `snapshot-prepared` verifies the guest is quiesced and clean snapshot metadata is ready.
 
 Each stage starts as `pending`. A stage can become `running`, `succeeded`, `failed`, or `skipped`.
 Any failure blocks the run instead of skipping ahead. The only successful terminal transition is
@@ -67,8 +70,21 @@ debugger use:
 - It sets machine-wide `_NT_SYMBOL_PATH` to
   `srv*C:\Symbols*https://msdl.microsoft.com/download/symbols` by default and records
   `_NT_ALT_SYMBOL_PATH` as the local cache directory.
-- It fails the provisioning stage unless CDB, a WinDbg executable, and the expected symbol path are
-  discoverable after installation.
+- It fails the provisioning stage unless CDB, a WinDbg executable, KD, KDNET, GFlags, the expected
+  symbol path, and a writable symbol cache are available after installation.
+
+## Dynamic Analysis Tools
+
+`guest/provision/install-analysis-tools.ps1` runs after debugger setup and before account/service
+setup, policy lockdown, health, and clean snapshot creation. It installs or reports Windows-only or
+dynamic analysis tools:
+
+- Sysinternals Suite tools such as ProcMon, ProcExp, handle, strings, and TcpView.
+- x64dbg when `winget` and network access are available.
+
+The VM profile intentionally excludes host-side/static analysis tools such as Ghidra and Cutter; use
+those from the Linux host. The stage is offline-tolerant by default and reports unavailable tools
+rather than failing unless `-AllowSkipOnNetworkFailure:$false` is supplied.
 
 `guest/provision/test-windbg.ps1` is the standalone readiness detector for later health commands. It
 emits compact JSON with `cdbPath`, `windbgPath`, `symbolPath`, `altSymbolPath`, and `healthy`, then
@@ -135,7 +151,8 @@ fixture-tested and do not require a real Windows VM in CI.
 
 `crucible guest:health` renders the readiness checks from the `health-checked` stage:
 
-- `debugger-health` for CDB, WinDbg, and symbol path readiness.
+- `debugger-health` for CDB, WinDbg, KD/KDNET, GFlags, symbol path, symbol cache, Sysinternals, and
+  dynamic-tool readiness.
 - `service-health` for the guest service endpoint.
 - `execution-contexts` for standard and admin execution contexts.
 - `policy-health` for Defender, code-integrity, and test-signing state.
@@ -146,8 +163,9 @@ but the guest health endpoint has not been queried.
 
 ## Clean-Base Snapshot
 
-The provisioning exit flow uses `snapshot:create clean-base` after the guest is healthy and
-`snapshot:restore clean-base` before the final health check. The snapshot manager stores the
+The provisioning exit flow uses `snapshot:create clean-base` only after debugger tooling, dynamic
+analysis tools, local accounts, guest agent setup, policy lockdown, and guest health have completed.
+`snapshot:restore clean-base` runs before the final health check. The snapshot manager stores the
 `clean-base` record in the artifact manifest with the base qcow2 disk path, QEMU snapshot tag, clean
 flag, snapshot mode, and last restore timestamp.
 

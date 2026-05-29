@@ -468,21 +468,21 @@ switched live.
 
 **Deliverable checklist:**
 
-- [ ] Split provisioning into a tooling/setup phase and a lockdown phase so network/security
+- [x] Split provisioning into a tooling/setup phase and a lockdown phase so network/security
       hardening happens only after debugger and malware-reversing tools are installed or explicitly
       reported as skipped/unavailable.
 - [ ] Ensure WinDbg, CDB, KD/KDNET, GFlags, symbol path, and writable symbol cache are required for
       a debugger-ready profile, with offline installer/cache support where possible.
-- [ ] Add Sysinternals and optional malware-reversing tool installation/reporting for the malware VM
+- [x] Add Sysinternals and optional malware-reversing tool installation/reporting for the malware VM
       profile, while documenting anti-analysis tradeoffs.
-- [ ] Extend guest health and provisioning health to report KD, KDNET, GFlags, Sysinternals, malware
+- [x] Extend guest health and provisioning health to report KD, KDNET, GFlags, Sysinternals, malware
       tool paths, symbol cache writability, and whether tooling was skipped because networking or
       offline installers were unavailable.
-- [ ] Add `net:status` / `network_status` and `network_set_mode` surfaces that report current mode,
+- [x] Add `net:status` / `network_status` and `network_set_mode` surfaces that report current mode,
       requested mode, whether the change was applied live, and whether a VM restart is required.
-- [ ] Add tests for the provisioning order, tool readiness parsing, and network status/change
+- [x] Add tests for the provisioning order, tool readiness parsing, and network status/change
       output.
-- [ ] Update README/docs/SOP so snapshots are only taken after tooling setup and final lockdown.
+- [x] Update README/docs/SOP so snapshots are only taken after tooling setup and final lockdown.
 
 **Parallel-work split table:**
 
