@@ -82,17 +82,17 @@ function Install-Sysinternals {
         Write-Status "dry-run: download $SysinternalsUrl to $SysinternalsZipPath and expand to $target"
         return $true
     }
-    if ($payloadZip) {
-        Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
-        return $true
-    }
     try {
-        Invoke-WebRequest -Uri $SysinternalsUrl -OutFile $SysinternalsZipPath -UseBasicParsing -ErrorAction Stop
-        Expand-Archive -LiteralPath $SysinternalsZipPath -DestinationPath $target -Force
+        if ($payloadZip) {
+            Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
+        } else {
+            Invoke-WebRequest -Uri $SysinternalsUrl -OutFile $SysinternalsZipPath -UseBasicParsing -ErrorAction Stop
+            Expand-Archive -LiteralPath $SysinternalsZipPath -DestinationPath $target -Force
+        }
         return $true
     } catch {
         if ($AllowSkipOnNetworkFailure) {
-            Write-Status "Sysinternals installer unreachable ($($_.Exception.Message)); reporting unavailable"
+            Write-Status "Sysinternals install unavailable ($($_.Exception.Message)); reporting unavailable"
             return $false
         }
         throw

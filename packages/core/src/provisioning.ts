@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  access,
   chmod,
   copyFile,
   lstat,
@@ -747,7 +748,19 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 async function optionalReadableFile(filePath: string): Promise<string | undefined> {
-  return (await pathExists(filePath)) ? filePath : undefined;
+  try {
+    const info = await stat(filePath);
+    if (!info.isFile()) {
+      throw new CrucibleError("CONFIG_INVALID", `${filePath} exists but is not a file`);
+    }
+    await access(filePath);
+    return filePath;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
