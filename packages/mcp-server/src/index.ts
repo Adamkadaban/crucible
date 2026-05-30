@@ -44,7 +44,8 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   },
   {
     name: "vm_start",
-    description: "Start the configured Crucible VM through the injected lifecycle manager.",
+    description:
+      "Start the configured long-lived Crucible VM. For a new analysis session, call snapshot_restore(clean-base) after the guest agent is reachable.",
   },
   {
     name: "vm_stop",
@@ -64,7 +65,8 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   },
   {
     name: "snapshot_restore",
-    description: "Restore a named snapshot before or after running a sample.",
+    description:
+      "Restore a named snapshot. Agents should restore clean-base before each new analysis session unless intentionally continuing a live investigation.",
   },
   {
     name: "guest_health",
