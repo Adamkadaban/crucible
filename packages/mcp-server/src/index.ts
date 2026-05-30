@@ -24,6 +24,7 @@ import {
   type GuestAgentClientOptions,
   type GuestAgentExecRequest,
   type GuestAgentExecResult,
+  type GuestAgentFileInspection,
   type GuestAgentHealth,
   type GuestAgentUploadResult,
   type HostCheckProbeResult,
@@ -86,17 +87,17 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   },
   {
     name: "guest_upload_file",
-    description: "Upload a local host file path into the guest staging directory.",
+    description: "Stream a local host file path into the guest.",
   },
   {
     name: "guest_read_file",
     description:
-      "Read a small ASCII guest staging file inline, or report size and header metadata for large/binary files.",
+      "Read a small ASCII guest file inline, or report size and header metadata for large/binary files.",
   },
   {
     name: "guest_download_file",
     description:
-      "Download a guest staging file and write it to a local host path. Prefer this when saving artifacts.",
+      "Stream a guest file and write it to a local host path. Prefer this when saving artifacts.",
   },
   {
     name: "debug_open",
@@ -409,9 +410,9 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   server.registerTool(
     "guest_upload_file",
     {
-      title: "Upload host file to guest staging",
+      title: "Upload host file to guest",
       description:
-        "Read a local host file and upload its bytes into the guest staging directory. Prefer this when the file already exists on the host.",
+        "Stream a local host file to a guest path using gzip over the guest agent transfer endpoint.",
       inputSchema: GuestUploadFileInput.shape,
     },
     async (input: GuestUploadFileInputType) => {
@@ -424,8 +425,10 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
           return validationError(`hostPath is not a regular file: ${input.hostPath}`, auditLogPath);
         }
         const client = await requireGuestClient(guestClientFactory);
-        const payload = await readFile(input.hostPath);
-        const result: GuestAgentUploadResult = await client.upload(input.guestPath, payload);
+        const result: GuestAgentUploadResult = await client.uploadFile(
+          input.hostPath,
+          input.guestPath,
+        );
         return toJsonContent({ ok: true, result, auditLogPath });
       } catch (error) {
         return toJsonContent({
@@ -439,21 +442,33 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   server.registerTool(
     "guest_read_file",
     {
-      title: "Read guest staging file",
+      title: "Read guest file",
       description:
-        "Read a guest staging file inline only when it is small ASCII text. Large or binary files return size and header metadata instead.",
+        "Read a guest file inline only when it is small ASCII text. Large or binary files return size and header metadata instead.",
       inputSchema: GuestReadFileInput.shape,
     },
     async (input: GuestReadFileInputType) => {
       try {
         const client = await requireGuestClient(guestClientFactory);
+        const inspection = await client.inspect(input.sourcePath);
+        if (inspection.sizeBytes > INLINE_READ_LIMIT_BYTES) {
+          return toJsonContent({
+            ok: true,
+            result: {
+              ...inspection,
+              sourcePath: input.sourcePath,
+              inline: false,
+              reason: "too-large",
+            },
+            auditLogPath,
+          });
+        }
         const buffer = await client.download(input.sourcePath);
-        const preview = summarizeGuestFile(buffer);
+        const preview = summarizeGuestFile(buffer, inspection);
         return toJsonContent({
           ok: true,
           result: {
             sourcePath: input.sourcePath,
-            sizeBytes: buffer.byteLength,
             ...preview,
           },
           auditLogPath,
@@ -470,9 +485,9 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   server.registerTool(
     "guest_download_file",
     {
-      title: "Download guest staging file to host path",
+      title: "Download guest file to host path",
       description:
-        "Download bytes from the guest staging directory and write them to a local host file path. Prefer this for artifacts instead of base64 JSON.",
+        "Stream a guest file into a local host path using gzip over the guest agent transfer endpoint.",
       inputSchema: GuestDownloadFileInput.shape,
     },
     async (input: GuestDownloadFileInputType) => {
@@ -485,14 +500,15 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
         await writeFile(input.hostPath, Buffer.alloc(0), { flag: "wx" });
         await rm(input.hostPath, { force: true });
         const client = await requireGuestClient(guestClientFactory);
-        const buffer = await client.download(input.guestPath);
-        await writeFile(input.hostPath, buffer, { flag: "wx" });
+        const transfer = await client.downloadFile(input.guestPath, input.hostPath);
+        const info = await stat(input.hostPath);
         return toJsonContent({
           ok: true,
           result: {
             guestPath: input.guestPath,
             hostPath: input.hostPath,
-            sizeBytes: buffer.byteLength,
+            sizeBytes: info.size,
+            sha256: transfer.sha256,
           },
           auditLogPath,
         });
@@ -977,47 +993,36 @@ function validationError(message: string, auditLogPath: string | undefined) {
   });
 }
 
-const INLINE_READ_LIMIT_BYTES = 64 * 1024;
-const HEADER_PREVIEW_BYTES = 64;
+type GuestFileInlinePreview = GuestAgentFileInspection & {
+  readonly inline: true;
+  readonly encoding: "ascii";
+  readonly contents: string;
+};
 
-function summarizeGuestFile(buffer: Buffer):
-  | { readonly inline: true; readonly encoding: "ascii"; readonly contents: string }
-  | {
-      readonly inline: false;
-      readonly reason: "too-large" | "non-ascii";
-      readonly headerHex: string;
-      readonly headerAscii: string;
-    } {
-  const header = buffer.subarray(0, HEADER_PREVIEW_BYTES);
-  if (buffer.byteLength > INLINE_READ_LIMIT_BYTES) {
-    return {
-      inline: false,
-      reason: "too-large",
-      headerHex: header.toString("hex"),
-      headerAscii: printableAsciiHeader(header),
-    };
-  }
+type GuestFileMetadataPreview = GuestAgentFileInspection & {
+  readonly inline: false;
+  readonly reason: "non-ascii";
+};
+
+const INLINE_READ_LIMIT_BYTES = 64 * 1024;
+function summarizeGuestFile(
+  buffer: Buffer,
+  inspection: GuestAgentFileInspection,
+): GuestFileInlinePreview | GuestFileMetadataPreview {
   if (!isSafeAscii(buffer)) {
     return {
+      ...inspection,
       inline: false,
       reason: "non-ascii",
-      headerHex: header.toString("hex"),
-      headerAscii: printableAsciiHeader(header),
     };
   }
-  return { inline: true, encoding: "ascii", contents: buffer.toString("ascii") };
+  return { ...inspection, inline: true, encoding: "ascii", contents: buffer.toString("ascii") };
 }
 
 function isSafeAscii(buffer: Buffer): boolean {
   return buffer.every(
     (byte) => byte === 0x09 || byte === 0x0a || byte === 0x0d || (byte >= 0x20 && byte <= 0x7e),
   );
-}
-
-function printableAsciiHeader(buffer: Buffer): string {
-  return Array.from(buffer, (byte) =>
-    byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : ".",
-  ).join("");
 }
 
 function toToolError(

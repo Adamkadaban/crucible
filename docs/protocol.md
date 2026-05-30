@@ -110,17 +110,24 @@ MiB then `truncated: true`. Response:
 }
 ```
 
-### `POST /upload?path=<staging-relative>`
+### `POST /upload?path=<guest-path>`
 
-Body is the raw file contents. The target must resolve inside `--staging-dir`
-(`C:\\ProgramData\\Crucible\\staging` by default); absolute paths and `..` traversal are rejected
-with HTTP 400. The server caps the request body at `--max-request-bytes` (64 MiB default) and
-replies with the resolved path, byte count, and SHA-256.
+Body is a gzip-compressed stream. The target may be an absolute guest path or a path relative to
+`--staging-dir` (`C:\\ProgramData\\Crucible\\staging` by default). Relative paths still reject `..`
+traversal with HTTP 400. The file-transfer endpoint is streamed and is not capped by
+`--max-request-bytes`; that limit applies to JSON command bodies such as `/exec`. The response
+contains the resolved path, uncompressed byte count, and SHA-256.
 
-### `GET /download?path=<staging-relative>`
+### `GET /download?path=<guest-path>`
 
-Streams the file as `application/octet-stream` with `X-Crucible-Size` and a chunked-trailer
-`X-Crucible-Sha256`. Same path-safety rules as `/upload`.
+Streams the requested guest file as gzip-compressed `application/octet-stream` with
+`X-Crucible-Size` and a chunked-trailer `X-Crucible-Sha256`. Same path rules as `/upload`.
+
+### `GET /inspect?path=<guest-path>`
+
+Returns JSON metadata without streaming the file body: resolved path, byte count, and a 64-byte
+header preview as hex plus printable ASCII. MCP `guest_read_file` uses this endpoint before deciding
+whether it is safe to inline small ASCII content.
 
 ### Threat model and limits
 
@@ -129,6 +136,6 @@ Streams the file as `application/octet-stream` with `X-Crucible-Size` and a chun
 - Authentication is purely mTLS — the agent never reads passwords from the wire. Local Windows
   accounts created by `create-local-accounts.ps1` are used by the agent itself to switch user
   context for `elevation: standard` / `admin` exec, _not_ exposed to the network.
-- All file operations are staging-relative, so a misbehaving caller cannot read or write arbitrary
-  disk paths through the agent.
+- File operations are authenticated by mTLS and audited. Absolute guest paths are allowed so host
+  automation can place samples and collect artifacts without extra move/copy commands.
 - Audit events are append-only JSONL and survive process restarts.

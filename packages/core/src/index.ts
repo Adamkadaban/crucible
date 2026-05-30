@@ -113,6 +113,7 @@ export type {
 } from "./process.js";
 export { QgaClient, QgaProvisioningExecutor } from "./qga.js";
 export { GuestAgentClient } from "./guest-agent-client.js";
+export type { GuestAgentFileInspection } from "./guest-agent-client.js";
 export { runHostCheck } from "./host-check.js";
 export type { HostCheckProbeResult } from "./host-check.js";
 export { ensureMtlsBundle } from "./mtls.js";
