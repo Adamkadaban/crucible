@@ -73,8 +73,17 @@ function Install-Sysinternals {
     $target = Join-Path $ToolsRoot "Sysinternals"
     if (Test-SysinternalsPresent) { return $false }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
+    $payloadZip = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' |
+        Where-Object { $_.VolumeName -eq 'CRUCIBLE' } |
+        ForEach-Object { Join-Path "$($_.DeviceID)\" "tools\SysinternalsSuite.zip" } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
     if ($DryRun) {
         Write-Status "dry-run: download $SysinternalsUrl to $SysinternalsZipPath and expand to $target"
+        return $true
+    }
+    if ($payloadZip) {
+        Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
         return $true
     }
     try {

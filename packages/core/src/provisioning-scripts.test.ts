@@ -87,6 +87,7 @@ describe("WinDbg provisioning scripts", () => {
     const script = readProvisionScript("install-analysis-tools.ps1");
 
     expect(script).toContain("SysinternalsSuite.zip");
+    expect(script).toContain("tools\\SysinternalsSuite.zip");
     expect(script).toContain("handle64.exe");
     expect(script).toContain("strings64.exe");
     expect(script).toContain("tcpvcon64.exe");

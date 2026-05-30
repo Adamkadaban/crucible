@@ -234,14 +234,14 @@ describe("core bootstrap exports", () => {
       deviceModel: "virtio-net-pci",
       args: [
         "-netdev",
-        "user,id=crucible-analysis-one-net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:9443-192.0.2.2:9443",
+        "user,id=crucible-analysis-one-net0,restrict=on,net=192.0.2.0/29,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:9443-192.0.2.2:9443",
         "-device",
         "virtio-net-pci,netdev=crucible-analysis-one-net0",
       ],
       controlAddress: {
         hostAddress: "192.0.2.1",
         guestAddress: "192.0.2.2",
-        prefixLength: 30,
+        prefixLength: 29,
         guestApiPort: 9443,
       },
       portForwards: [
@@ -330,7 +330,7 @@ describe("core bootstrap exports", () => {
       deviceModel: "virtio-net-pci",
       args: [
         "-netdev",
-        "user,id=crucible-analysis-one-net0,restrict=off,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
+        "user,id=crucible-analysis-one-net0,restrict=off,net=192.0.2.0/29,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
         "-device",
         "virtio-net-pci,netdev=crucible-analysis-one-net0",
       ],
@@ -562,7 +562,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args).toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).toContain("scsi-hd,drive=crucible-disk0,bus=scsi0.0,bootindex=10");
     expect(plan.args).toContain(
-      "user,id=crucible-win11-net0,restrict=on,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
+      "user,id=crucible-win11-net0,restrict=on,net=192.0.2.0/29,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
     expect(plan.args).toContain("virtio-net-pci,netdev=crucible-win11-net0");
     expect(plan.network.backend).toBe("user");
@@ -632,7 +632,7 @@ describe("core bootstrap exports", () => {
     expect(plan.args).not.toContain("virtio-balloon-pci");
     expect(plan.args).not.toContain("virtio-rng-pci,rng=rng0");
     expect(plan.args).toContain(
-      "user,id=crucible-custom-lab-net0,restrict=off,net=192.0.2.0/30,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
+      "user,id=crucible-custom-lab-net0,restrict=off,net=192.0.2.0/29,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:8443-192.0.2.2:8443",
     );
     expect(plan.args).toContain("virtio-net-pci,netdev=crucible-custom-lab-net0");
     expect(plan.network).toMatchObject({ backend: "user", mode: "nat" });
