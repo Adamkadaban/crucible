@@ -171,15 +171,20 @@ export class VmLifecycleManager {
     await this.cleanupStaleResources();
     await this.#ensureDirectories();
 
-    const starting = this.#buildStateManifest("starting");
+    const qemuToStart = current.stateManifest?.qemu ?? {
+      executable: this.#plan.executable,
+      args: this.#plan.args,
+    };
+
+    const starting = this.#buildStateManifest("starting", { previousQemu: qemuToStart });
     await this.#writeStateManifest(starting);
     await this.#writeArtifactManifest();
 
     let spawned: SpawnedVmProcess;
     try {
       spawned = await this.#spawner.spawn({
-        executable: this.#plan.executable,
-        args: this.#plan.args,
+        executable: qemuToStart.executable,
+        args: qemuToStart.args,
         stdoutLog: this.paths.stdoutLog,
         stderrLog: this.paths.stderrLog,
       });
@@ -195,6 +200,7 @@ export class VmLifecycleManager {
       this.#buildStateManifest("running", {
         pid: spawned.pid,
         startedAt: starting.startedAt ?? starting.lastTransitionAt,
+        previousQemu: qemuToStart,
       }),
     );
 

@@ -283,6 +283,31 @@ describe("VmLifecycleManager", () => {
     };
     expect(onDisk.qemu.args).toEqual(richArgs);
   });
+
+  it("reuses previously-recorded qemu argv when starting a stopped provisioned VM", async () => {
+    const harness = await createLifecycleHarness();
+    const richArgs = ["-name", "life-test", "-cdrom", "payload.iso"];
+    await mkdirFor(harness.paths.stateManifest);
+    await writeFile(
+      harness.paths.stateManifest,
+      JSON.stringify({
+        version: 1,
+        vmName: "life-test",
+        state: "stopped",
+        paths: harness.paths,
+        qemu: { executable: "qemu-system-x86_64", args: richArgs },
+        lastTransitionAt: "2026-05-28T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    await harness.manager.start();
+
+    expect(harness.spawnRequests[0]?.args).toEqual(richArgs);
+    await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
+      qemu: { args: richArgs },
+    });
+  });
 });
 
 type HarnessOptions = {
