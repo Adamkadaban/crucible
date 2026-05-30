@@ -16,7 +16,7 @@ Provisioning advances in this order:
 3. `qga-ready` verifies QGA can respond and run PowerShell bootstrap checks.
 4. `windbg-installed` verifies CDB, WinDbg, KD/KDNET, GFlags, and the default symbol path/cache.
 5. `analysis-tools-installed` installs or reports dynamic Windows analysis tooling such as
-   Sysinternals and x64dbg. Static analysis tools such as Ghidra stay on the Linux host.
+   Sysinternals. Static analysis tools such as Ghidra stay on the Linux host.
 6. `local-accounts-created` verifies standard and admin execution accounts.
 7. `guest-agent-installed` verifies the Crucible guest service, its firewall rule, and mTLS
    material.
@@ -80,8 +80,8 @@ setup, policy lockdown, health, and clean snapshot creation. It installs or repo
 dynamic analysis tools:
 
 - Sysinternals Suite command-line/runtime tools such as handle, strings, tcpvcon/TcpView, ProcDump,
-  ListDLLs, AutorunsC, and Sigcheck.
-- x64dbg when `winget` and network access are available.
+  ListDLLs, AutorunsC, and Sigcheck. The Windows VM profile intentionally avoids static-analysis
+  suites and optional GUI debuggers unless a future Windows-only workflow requires them.
 
 The VM profile intentionally excludes host-side/static analysis tools such as Ghidra and Cutter; use
 those from the Linux host. The stage is offline-tolerant by default and reports unavailable tools

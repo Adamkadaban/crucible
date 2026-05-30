@@ -338,7 +338,6 @@ describe("crucible CLI bootstrap", () => {
                   symbolCachePath: "C:\\symbols",
                   symbolCacheWritable: true,
                   sysinternals: { handle: "C:\\Tools\\Sysinternals\\handle64.exe" },
-                  malwareTools: { x64dbg: null },
                   crucibleAdminPresent: true,
                   crucibleUserPresent: true,
                   qemuAgentStatus: "Running",

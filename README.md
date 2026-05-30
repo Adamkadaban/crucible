@@ -185,8 +185,8 @@ keep generated Windows credentials and mTLS material under the configured
 The WinDbg stage includes PowerShell scripts that prefer `winget install Microsoft.WinDbg`, fall
 back to Windows SDK Debugging Tools, configure `_NT_SYMBOL_PATH`, and detect CDB, WinDbg, KD/KDNET,
 GFlags, and symbol-cache readiness without requiring a real Windows VM in CI. The analysis-tools
-stage installs or reports Windows-only/dynamic tooling such as Sysinternals and x64dbg before final
-lockdown; static analysis tools such as Ghidra stay on the Linux host.
+stage installs or reports Windows-only/dynamic tooling such as Sysinternals before final lockdown;
+static analysis tools such as Ghidra stay on the Linux host.
 
 The analysis policy stage uses `guest/provision/configure-policy.ps1` for isolated analysis VMs. It
 disables Windows Defender policy, applies and records code-integrity policy changes, forces test
