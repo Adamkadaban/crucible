@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -83,12 +84,22 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   {
     name: "guest_upload",
     description:
-      "Upload a host file into the guest staging directory through the Crucible guest agent.",
+      "Upload base64 content into the guest staging directory through the Crucible guest agent.",
+  },
+  {
+    name: "guest_upload_file",
+    description:
+      "Upload a local host file path into the guest staging directory. Prefer this over guest_upload when moving existing files.",
   },
   {
     name: "guest_download",
     description:
-      "Download a file from the guest staging directory back to the host via the Crucible guest agent.",
+      "Download a guest staging file and return base64 content. Prefer guest_download_file for existing files.",
+  },
+  {
+    name: "guest_download_file",
+    description:
+      "Download a guest staging file and write it to a local host path. Prefer this when saving artifacts.",
   },
   {
     name: "debug_open",
@@ -155,12 +166,28 @@ const GuestUploadInput = z
   .strict();
 type GuestUploadInputType = z.infer<typeof GuestUploadInput>;
 
+const GuestUploadFileInput = z
+  .object({
+    hostPath: z.string().min(1),
+    guestPath: z.string().min(1),
+  })
+  .strict();
+type GuestUploadFileInputType = z.infer<typeof GuestUploadFileInput>;
+
 const GuestDownloadInput = z
   .object({
     sourcePath: z.string().min(1),
   })
   .strict();
 type GuestDownloadInputType = z.infer<typeof GuestDownloadInput>;
+
+const GuestDownloadFileInput = z
+  .object({
+    guestPath: z.string().min(1),
+    hostPath: z.string().min(1),
+  })
+  .strict();
+type GuestDownloadFileInputType = z.infer<typeof GuestDownloadFileInput>;
 
 const HostCheckInput = z.object({}).strict();
 const GuestHealthInput = z.object({}).strict();
@@ -419,6 +446,40 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   );
 
   server.registerTool(
+    "guest_upload_file",
+    {
+      title: "Upload host file to guest staging",
+      description:
+        "Read a local host file and upload its bytes into the guest staging directory. Prefer this when the file already exists on the host.",
+      inputSchema: GuestUploadFileInput.shape,
+    },
+    async (input: GuestUploadFileInputType) => {
+      try {
+        const info = await stat(input.hostPath);
+        if (!info.isFile()) {
+          return toJsonContent({
+            ok: false,
+            error: {
+              kind: "validation" as const,
+              message: `hostPath is not a regular file: ${input.hostPath}`,
+              auditLogPath,
+            },
+          });
+        }
+        const client = await requireGuestClient(guestClientFactory);
+        const payload = await readFile(input.hostPath);
+        const result: GuestAgentUploadResult = await client.upload(input.guestPath, payload);
+        return toJsonContent({ ok: true, result, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
     "guest_download",
     {
       title: "Download from guest staging",
@@ -436,6 +497,38 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
             sourcePath: input.sourcePath,
             sizeBytes: buffer.byteLength,
             contentsBase64: buffer.toString("base64"),
+          },
+          auditLogPath,
+        });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "guest_download_file",
+    {
+      title: "Download guest staging file to host path",
+      description:
+        "Download bytes from the guest staging directory and write them to a local host file path. Prefer this for artifacts instead of base64 JSON.",
+      inputSchema: GuestDownloadFileInput.shape,
+    },
+    async (input: GuestDownloadFileInputType) => {
+      try {
+        const client = await requireGuestClient(guestClientFactory);
+        const buffer = await client.download(input.guestPath);
+        await mkdir(path.dirname(input.hostPath), { recursive: true });
+        await writeFile(input.hostPath, buffer, { flag: "wx" });
+        return toJsonContent({
+          ok: true,
+          result: {
+            guestPath: input.guestPath,
+            hostPath: input.hostPath,
+            sizeBytes: buffer.byteLength,
           },
           auditLogPath,
         });

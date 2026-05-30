@@ -1,4 +1,7 @@
 import { Buffer } from "node:buffer";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -46,7 +49,9 @@ describe("crucible MCP tools", () => {
       "guest_exec",
       "guest_exec_admin",
       "guest_upload",
+      "guest_upload_file",
       "guest_download",
+      "guest_download_file",
       "debug_open",
       "debug_command",
       "debug_dump",
@@ -245,6 +250,70 @@ describe("crucible MCP tools", () => {
       arguments: { targetPath: "stage/bad.bin", contentsBase64: "not!!!valid!!!" },
     })) as ToolCallText & { isError?: boolean };
     expect(result.isError).toBe(true);
+  });
+
+  it("uploads an existing host file through guest_upload_file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-upload-"));
+    const hostPath = path.join(dir, "sample.bin");
+    await writeFile(hostPath, Buffer.from("sample"));
+    const uploads: Array<{ path: string; contents: Buffer }> = [];
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () => Promise.reject(new Error("unused")),
+      upload: (targetPath: string, contents: Buffer) => {
+        uploads.push({ path: targetPath, contents });
+        return Promise.resolve({
+          path: targetPath,
+          sizeBytes: contents.byteLength,
+          sha256: "deadbeef",
+        });
+      },
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = await harness({ guestClientFactory: () => Promise.resolve(fakeClient as any) });
+
+    const result = (await client.callTool({
+      name: "guest_upload_file",
+      arguments: { hostPath, guestPath: "samples/sample.bin" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; result: { sizeBytes: number } }>(result);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.result.sizeBytes).toBe(6);
+    expect(uploads[0]?.path).toBe("samples/sample.bin");
+    expect(uploads[0]?.contents.toString()).toBe("sample");
+  });
+
+  it("downloads a guest file to a new host path through guest_download_file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-download-"));
+    const hostPath = path.join(dir, "artifacts", "out.bin");
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () => Promise.reject(new Error("unused")),
+      upload: () => Promise.reject(new Error("unused")),
+      download: (sourcePath: string) => Promise.resolve(Buffer.from(`downloaded:${sourcePath}`)),
+      close: () => Promise.resolve(),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = await harness({ guestClientFactory: () => Promise.resolve(fakeClient as any) });
+
+    const result = (await client.callTool({
+      name: "guest_download_file",
+      arguments: { guestPath: "artifacts/out.bin", hostPath },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { sizeBytes: number; hostPath: string };
+    }>(result);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.result).toMatchObject({
+      hostPath,
+      sizeBytes: "downloaded:artifacts/out.bin".length,
+    });
+    await expect(readFile(hostPath, "utf8")).resolves.toBe("downloaded:artifacts/out.bin");
   });
 
   it("createCrucibleMcpServer rejects duplicate tool registration", () => {
