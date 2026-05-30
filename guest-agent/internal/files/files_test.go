@@ -120,14 +120,32 @@ func TestUploadAcceptsAbsolutePathAndRejectsEscapedRelativePath(t *testing.T) {
 			t.Fatalf("%s: expected 400, got %d", target, resp.StatusCode)
 		}
 	}
+
+	badReq, _ := http.NewRequest(http.MethodPost, srv.URL+"?path=bad.bin", strings.NewReader("not gzip"))
+	badReq.Header.Set("Content-Encoding", "gzip")
+	badResp, err := http.DefaultClient.Do(badReq)
+	if err != nil {
+		t.Fatalf("bad gzip request: %v", err)
+	}
+	if badResp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(badResp.Body)
+		t.Fatalf("bad gzip expected 400, got %d body=%s", badResp.StatusCode, string(body))
+	}
 }
 
 func postGzip(url string, payload []byte) (*http.Response, error) {
 	var compressed bytes.Buffer
 	zw := gzip.NewWriter(&compressed)
-	_, _ = zw.Write(payload)
-	_ = zw.Close()
-	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(compressed.String()))
+	if _, err := zw.Write(payload); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(compressed.Bytes()))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Encoding", "gzip")
 	return http.DefaultClient.Do(req)
 }

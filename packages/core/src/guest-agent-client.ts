@@ -1,7 +1,7 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 
@@ -183,11 +183,14 @@ export class GuestAgentClient {
     targetPath: string,
     source: NodeJS.ReadableStream,
   ): Promise<GuestAgentUploadResult> {
+    const body = new PassThrough();
+    const compression = pipeline(source, createGzip(), body);
     const res = await this.#request("POST", `/upload?path=${encodeURIComponent(targetPath)}`, {
       headers: { "Content-Type": "application/octet-stream", "Content-Encoding": "gzip" },
-      body: source.pipe(createGzip()),
+      body,
       duplex: "half",
     });
+    await compression;
     return (await res.json()) as GuestAgentUploadResult;
   }
 

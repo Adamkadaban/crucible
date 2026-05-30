@@ -71,6 +71,10 @@ func UploadHandler(auditor *audit.Auditor, stagingDir string) http.HandlerFunc {
 		closeErr := f.Close()
 		if err != nil {
 			_ = os.Remove(clean)
+			if isGzipReadError(err) {
+				http.Error(w, "read gzip payload: "+err.Error(), http.StatusBadRequest)
+				return
+			}
 			http.Error(w, "write: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -87,6 +91,10 @@ func UploadHandler(auditor *audit.Auditor, stagingDir string) http.HandlerFunc {
 			Path:   r.URL.Path,
 		})
 	}
+}
+
+func isGzipReadError(err error) bool {
+	return errors.Is(err, gzip.ErrHeader) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // DownloadHandler streams the requested guest file back with gzip transfer
