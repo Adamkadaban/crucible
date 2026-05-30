@@ -337,7 +337,7 @@ describe("crucible CLI bootstrap", () => {
                   symbolPath: "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols",
                   symbolCachePath: "C:\\symbols",
                   symbolCacheWritable: true,
-                  sysinternals: { procmon: "C:\\Tools\\Sysinternals\\Procmon64.exe" },
+                  sysinternals: { handle: "C:\\Tools\\Sysinternals\\handle64.exe" },
                   malwareTools: { x64dbg: null },
                   crucibleAdminPresent: true,
                   crucibleUserPresent: true,
@@ -368,7 +368,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("KD path: C:\\Debuggers\\kd.exe");
     expect(result.stdout).toContain("GFlags path: C:\\Debuggers\\gflags.exe");
     expect(result.stdout).toContain("symbol cache writable: yes");
-    expect(result.stdout).toContain("Sysinternals: procmon=C:\\Tools\\Sysinternals\\Procmon64.exe");
+    expect(result.stdout).toContain("Sysinternals: handle=C:\\Tools\\Sysinternals\\handle64.exe");
     expect(result.stdout).toContain("Defender real-time protection: no");
     expect(result.stdout).toContain("code-integrity state recorded: yes");
     expect(result.stdout).toContain("code-integrity enforcement disabled: yes");

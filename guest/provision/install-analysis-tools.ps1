@@ -43,11 +43,14 @@ function Find-ToolExecutable {
 function Get-ToolReport {
     return [ordered]@{
         sysinternals = [ordered]@{
-            procmon = Find-ToolExecutable -FileNames @("Procmon64.exe", "Procmon.exe")
-            procexp = Find-ToolExecutable -FileNames @("procexp64.exe", "procexp.exe")
             handle = Find-ToolExecutable -FileNames @("handle64.exe", "handle.exe")
             strings = Find-ToolExecutable -FileNames @("strings64.exe", "strings.exe")
             tcpview = Find-ToolExecutable -FileNames @("Tcpview.exe", "Tcpview64.exe")
+            tcpvcon = Find-ToolExecutable -FileNames @("tcpvcon64.exe", "tcpvcon.exe")
+            procdump = Find-ToolExecutable -FileNames @("procdump64.exe", "procdump.exe")
+            listdlls = Find-ToolExecutable -FileNames @("Listdlls64.exe", "Listdlls.exe")
+            autorunsc = Find-ToolExecutable -FileNames @("autorunsc64.exe", "autorunsc.exe")
+            sigcheck = Find-ToolExecutable -FileNames @("sigcheck64.exe", "sigcheck.exe")
         }
         malwareTools = [ordered]@{
             x64dbg = Find-ToolExecutable -FileNames @("x64dbg.exe")
@@ -57,11 +60,13 @@ function Get-ToolReport {
 
 function Test-SysinternalsPresent {
     $report = Get-ToolReport
-    return ($null -ne $report.sysinternals.procmon) -and
-        ($null -ne $report.sysinternals.procexp) -and
-        ($null -ne $report.sysinternals.handle) -and
+    return ($null -ne $report.sysinternals.handle) -and
         ($null -ne $report.sysinternals.strings) -and
-        ($null -ne $report.sysinternals.tcpview)
+        ($null -ne $report.sysinternals.tcpvcon) -and
+        ($null -ne $report.sysinternals.procdump) -and
+        ($null -ne $report.sysinternals.listdlls) -and
+        ($null -ne $report.sysinternals.autorunsc) -and
+        ($null -ne $report.sysinternals.sigcheck)
 }
 
 function Install-Sysinternals {
