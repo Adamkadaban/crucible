@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,7 +14,11 @@ import {
   buildNetworkPlan,
   buildNetworkRuntimeStatus,
   type CrucibleConfig,
+  type CruciblePolicy,
   defaultCrucibleConfig,
+  DEFAULT_POLICY,
+  decideDownloadTarget,
+  decideHostShare,
   type DebuggerSession,
   type DebuggerSessionSpec,
   GuestAgentClient,
@@ -285,6 +289,7 @@ export type RegisterCrucibleToolsOptions = {
   readonly auditLogPath?: string;
   readonly config?: CrucibleConfig;
   readonly networkMode?: NetworkMode;
+  readonly policy?: CruciblePolicy;
 };
 
 /**
@@ -298,6 +303,10 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   const { server, vmAdapter, snapshotAdapter, auditLogPath } = options;
   const hostCheck = options.hostCheck ?? runHostCheck;
   const guestClientFactory = options.guestClientFactory;
+  const policy = options.policy ?? {
+    ...DEFAULT_POLICY,
+    allowedHostShareDirectories: [process.cwd()],
+  };
 
   server.registerTool(
     "host_check",
@@ -455,16 +464,13 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
     },
     async (input: GuestUploadFileInputType) => {
       try {
+        const decision = decideHostShare(policy, input.hostPath);
+        if (!decision.allowed) {
+          return validationError(decision.reason, auditLogPath);
+        }
         const info = await stat(input.hostPath);
         if (!info.isFile()) {
-          return toJsonContent({
-            ok: false,
-            error: {
-              kind: "validation" as const,
-              message: `hostPath is not a regular file: ${input.hostPath}`,
-              auditLogPath,
-            },
-          });
+          return validationError(`hostPath is not a regular file: ${input.hostPath}`, auditLogPath);
         }
         const client = await requireGuestClient(guestClientFactory);
         const payload = await readFile(input.hostPath);
@@ -473,7 +479,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
       } catch (error) {
         return toJsonContent({
           ok: false,
-          error: toToolError(classifyError(error), error, auditLogPath),
+          error: toToolError(classifyFileTransferError(error), error, auditLogPath),
         });
       }
     },
@@ -519,9 +525,15 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
     },
     async (input: GuestDownloadFileInputType) => {
       try {
+        const decision = decideDownloadTarget(policy, input.hostPath);
+        if (!decision.allowed) {
+          return validationError(decision.reason, auditLogPath);
+        }
+        await mkdir(path.dirname(input.hostPath), { recursive: true });
+        await writeFile(input.hostPath, Buffer.alloc(0), { flag: "wx" });
+        await rm(input.hostPath, { force: true });
         const client = await requireGuestClient(guestClientFactory);
         const buffer = await client.download(input.guestPath);
-        await mkdir(path.dirname(input.hostPath), { recursive: true });
         await writeFile(input.hostPath, buffer, { flag: "wx" });
         return toJsonContent({
           ok: true,
@@ -535,7 +547,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
       } catch (error) {
         return toJsonContent({
           ok: false,
-          error: toToolError(classifyError(error), error, auditLogPath),
+          error: toToolError(classifyFileTransferError(error), error, auditLogPath),
         });
       }
     },
@@ -925,6 +937,7 @@ export async function runStdioMcpServer(
     | "auditLogPath"
     | "config"
     | "networkMode"
+    | "policy"
   >,
 ): Promise<void> {
   const server = createCrucibleMcpServer(options);
@@ -943,6 +956,7 @@ export function createCrucibleMcpServer(
     | "auditLogPath"
     | "config"
     | "networkMode"
+    | "policy"
   >,
 ): McpServer {
   const server = new McpServer({ name: "crucible", version: CRUCIBLE_VERSION });
@@ -983,6 +997,28 @@ function classifyError(error: unknown): CrucibleToolErrorKind {
     return "policy-denied";
   }
   return "internal";
+}
+
+function classifyFileTransferError(error: unknown): CrucibleToolErrorKind {
+  if (isFsInputError(error)) {
+    return "validation";
+  }
+  return classifyError(error);
+}
+
+function isFsInputError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    ["ENOENT", "EACCES", "EISDIR", "ENOTDIR", "EEXIST", "EPERM"].includes(String(error.code))
+  );
+}
+
+function validationError(message: string, auditLogPath: string | undefined) {
+  return toJsonContent({
+    ok: false,
+    error: { kind: "validation" as const, message, auditLogPath },
+  });
 }
 
 function toToolError(
