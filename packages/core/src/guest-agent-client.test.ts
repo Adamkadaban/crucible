@@ -117,6 +117,23 @@ describe.runIf(!process.env.SKIP_GUEST_AGENT_IT)("GuestAgentClient (integration)
     const downloaded = await client.download("samples/hello.bin");
     expect(downloaded.equals(payload)).toBe(true);
 
+    const hostUploadPath = join(server.workDir, "host-upload.bin");
+    const hostDownloadPath = join(server.workDir, "host-download.bin");
+    await writeFile(hostUploadPath, payload);
+    const uploadedFile = await client.uploadFile(
+      hostUploadPath,
+      join(server.workDir, "absolute.bin"),
+    );
+    expect(uploadedFile.sizeBytes).toBe(payload.byteLength);
+    const inspection = await client.inspect(join(server.workDir, "absolute.bin"));
+    expect(inspection.headerAscii).toBe("hello crucible");
+    const downloadedFile = await client.downloadFile(
+      join(server.workDir, "absolute.bin"),
+      hostDownloadPath,
+    );
+    expect(downloadedFile.sizeBytes).toBe(payload.byteLength);
+    await expect(readFile(hostDownloadPath)).resolves.toEqual(payload);
+
     if (process.platform !== "win32") {
       const execResult = await client.exec({
         executable: "/bin/sh",

@@ -18,7 +18,8 @@ designed to keep configuration files, secrets, and snapshots intact across versi
 
 1. `bash scripts/package-release.sh` to produce `dist/release/crucible-guest-agent.exe` and the
    release manifest.
-2. Upload the binary into the guest staging directory:
+2. Upload the binary directly to the guest replacement path, or to staging if you prefer a manual
+   copy step:
    ```sh
    crucible mcp --stdio  # then use guest_upload_file from your MCP client
    ```

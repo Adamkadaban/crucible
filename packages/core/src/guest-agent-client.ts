@@ -1,4 +1,10 @@
-import { Buffer } from "node:buffer";
+import { createReadStream, createWriteStream } from "node:fs";
+import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { PassThrough, Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
+
 import { Agent, fetch } from "undici";
 import type { Dispatcher } from "undici";
 
@@ -14,7 +20,7 @@ export type GuestAgentClientOptions = {
   readonly clientPrivateKeyPem: string;
   /** Optional override for per-request timeout in ms. Default 30s. */
   readonly timeoutMs?: number;
-  /** Optional override for the maximum upload/download body size. */
+  /** Optional override for the maximum buffered body size for exec/preview helpers. */
   readonly maxBodyBytes?: number;
 };
 
@@ -48,11 +54,20 @@ export type GuestAgentExecResult = {
   readonly truncated: boolean;
 };
 
-export type GuestAgentUploadResult = {
+export type GuestAgentTransferResult = {
   readonly path: string;
   readonly sizeBytes: number;
   readonly sha256: string;
 };
+
+export type GuestAgentFileInspection = {
+  readonly path: string;
+  readonly sizeBytes: number;
+  readonly headerHex: string;
+  readonly headerAscii: string;
+};
+
+export type GuestAgentUploadResult = GuestAgentTransferResult;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BODY = 64 * 1024 * 1024;
@@ -97,16 +112,11 @@ export class GuestAgentClient {
   }
 
   async upload(targetPath: string, contents: Buffer): Promise<GuestAgentUploadResult> {
-    if (contents.byteLength > this.#maxBodyBytes) {
-      throw new Error(
-        `upload payload (${contents.byteLength} bytes) exceeds maxBodyBytes (${this.#maxBodyBytes})`,
-      );
-    }
-    const res = await this.#request("POST", `/upload?path=${encodeURIComponent(targetPath)}`, {
-      headers: { "Content-Type": "application/octet-stream" },
-      body: contents,
-    });
-    return (await res.json()) as GuestAgentUploadResult;
+    return this.#uploadStream(targetPath, Readable.from(contents));
+  }
+
+  async uploadFile(hostPath: string, guestPath: string): Promise<GuestAgentUploadResult> {
+    return this.#uploadStream(guestPath, createReadStream(hostPath));
   }
 
   async download(sourcePath: string): Promise<Buffer> {
@@ -116,23 +126,49 @@ export class GuestAgentClient {
     }
     const chunks: Buffer[] = [];
     let total = 0;
-    const reader = res.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
-    for (;;) {
-      const result = await reader.read();
-      if (result.done) break;
-      const value = result.value;
-      if (value === undefined) continue;
-      const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-      total += chunk.byteLength;
-      if (total > this.#maxBodyBytes) {
-        await reader.cancel(new Error("download exceeded maxBodyBytes"));
-        throw new Error(
-          `download payload exceeded maxBodyBytes (${this.#maxBodyBytes}); aborted at ${total} bytes`,
-        );
+    const maxBodyBytes = this.#maxBodyBytes;
+    await pipeline(Readable.fromWeb(res.body), async (source) => {
+      for await (const chunk of source) {
+        const buffer = Buffer.from(chunk as Uint8Array);
+        total += buffer.byteLength;
+        if (total > maxBodyBytes) {
+          throw new Error(`download payload exceeded maxBodyBytes (${maxBodyBytes})`);
+        }
+        chunks.push(buffer);
       }
-      chunks.push(chunk);
-    }
+    });
     return Buffer.concat(chunks);
+  }
+
+  async downloadFile(guestPath: string, hostPath: string): Promise<GuestAgentTransferResult> {
+    const res = await this.#request("GET", `/download?path=${encodeURIComponent(guestPath)}`);
+    const sizeBytes = Number(res.headers.get("x-crucible-size") ?? 0);
+    if (res.body === null) {
+      throw new Error("guest agent returned an empty download body");
+    }
+    const hash = createHash("sha256");
+    await pipeline(
+      Readable.fromWeb(res.body),
+      async function* (source) {
+        for await (const chunk of source) {
+          const buffer = Buffer.from(chunk as Uint8Array);
+          hash.update(buffer);
+          yield buffer;
+        }
+      },
+      createWriteStream(hostPath, { flags: "wx" }),
+    );
+    const sha256 = hash.digest("hex");
+    return {
+      path: guestPath,
+      sizeBytes,
+      sha256: res.headers.get("x-crucible-sha256") ?? sha256,
+    };
+  }
+
+  async inspect(sourcePath: string): Promise<GuestAgentFileInspection> {
+    const res = await this.#request("GET", `/inspect?path=${encodeURIComponent(sourcePath)}`);
+    return (await res.json()) as GuestAgentFileInspection;
   }
 
   /**
@@ -143,10 +179,29 @@ export class GuestAgentClient {
     await this.#dispatcher.close();
   }
 
+  async #uploadStream(
+    targetPath: string,
+    source: NodeJS.ReadableStream,
+  ): Promise<GuestAgentUploadResult> {
+    const body = new PassThrough();
+    const compression = pipeline(source, createGzip(), body);
+    const res = await this.#request("POST", `/upload?path=${encodeURIComponent(targetPath)}`, {
+      headers: { "Content-Type": "application/octet-stream", "Content-Encoding": "gzip" },
+      body,
+      duplex: "half",
+    });
+    await compression;
+    return (await res.json()) as GuestAgentUploadResult;
+  }
+
   async #request(
     method: string,
     path: string,
-    init: { headers?: Record<string, string>; body?: Buffer | string } = {},
+    init: {
+      headers?: Record<string, string>;
+      body?: Buffer | string | NodeJS.ReadableStream;
+      duplex?: "half";
+    } = {},
   ) {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -159,6 +214,7 @@ export class GuestAgentClient {
         body: init.body as Dispatcher.DispatchOptions["body"],
         dispatcher: this.#dispatcher,
         signal: controller.signal,
+        duplex: init.duplex,
       });
       if (!res.ok) {
         const errorPreview = await readBoundedText(res.body, 4 * 1024);
@@ -201,4 +257,8 @@ async function readBoundedText(
   const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)));
   const text = buf.toString("utf8");
   return text;
+}
+
+export async function fileSize(path: string): Promise<number> {
+  return (await stat(path)).size;
 }

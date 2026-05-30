@@ -42,8 +42,9 @@ default is containment, repeatability, and narrow host exposure rather than conv
 ## Host File Exposure
 
 - Host shared folders are disabled by default and are not part of the safe malware-analysis posture.
-- File movement should use audited upload/download tools that constrain staging paths, record
-  hashes, and keep operator-selected sample directories out of the repository.
+- File movement should use audited upload/download tools that stream directly between explicit host
+  and guest paths, record hashes, and keep operator-selected sample directories out of the
+  repository.
 - Do not mount the operator's home directory, repository root, SSH agent socket, package manager
   caches, browser profiles, or cloud credential directories into the guest.
 - Keep `artifacts.directory`, `artifacts.snapshotsDirectory`, and sample storage outside directories

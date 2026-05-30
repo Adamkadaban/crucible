@@ -82,8 +82,9 @@ func Run(parent context.Context, cfg Config) error {
 		return err
 	}
 	mux.HandleFunc("/exec", exec.Handler(auditor, cfg.MaxRequestBytes, execRunner))
-	mux.HandleFunc("/upload", files.UploadHandler(auditor, cfg.StagingDirectory, cfg.MaxRequestBytes))
+	mux.HandleFunc("/upload", files.UploadHandler(auditor, cfg.StagingDirectory))
 	mux.HandleFunc("/download", files.DownloadHandler(auditor, cfg.StagingDirectory))
+	mux.HandleFunc("/inspect", files.InspectHandler(auditor, cfg.StagingDirectory))
 
 	srv := &http.Server{
 		Handler:           withRequestID(withClientIdentity(auditor, mux)),

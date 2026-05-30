@@ -2,6 +2,7 @@ package files
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,19 +15,29 @@ import (
 	"github.com/Adamkadaban/crucible/guest-agent/internal/audit"
 )
 
-func TestUploadAndDownloadRoundTrip(t *testing.T) {
+func TestUploadDownloadAndInspectRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	auditor := audit.New(io.Discard)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/upload", UploadHandler(auditor, dir, 1024))
+	mux.HandleFunc("/upload", UploadHandler(auditor, dir))
 	mux.HandleFunc("/download", DownloadHandler(auditor, dir))
+	mux.HandleFunc("/inspect", InspectHandler(auditor, dir))
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	payload := []byte("hello crucible")
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/upload?path=samples/hello.bin", bytes.NewReader(payload))
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(payload); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/upload?path=samples/hello.bin", &compressed)
+	req.Header.Set("Content-Encoding", "gzip")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -48,32 +59,60 @@ func TestUploadAndDownloadRoundTrip(t *testing.T) {
 		t.Fatalf("payload mismatch")
 	}
 
-	downloadResp, err := http.Get(srv.URL + "/download?path=samples/hello.bin")
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	downloadResp, err := client.Get(srv.URL + "/download?path=samples/hello.bin")
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
 	if downloadResp.StatusCode != http.StatusOK {
 		t.Fatalf("download status=%d", downloadResp.StatusCode)
 	}
-	body, _ := io.ReadAll(downloadResp.Body)
+	zr, err := gzip.NewReader(downloadResp.Body)
+	if err != nil {
+		t.Fatalf("download gzip: %v", err)
+	}
+	body, _ := io.ReadAll(zr)
+	_ = zr.Close()
 	if !bytes.Equal(body, payload) {
 		t.Fatalf("download mismatch")
 	}
+
+	inspectResp, err := http.Get(srv.URL + "/inspect?path=samples/hello.bin")
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if inspectResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(inspectResp.Body)
+		t.Fatalf("inspect status=%d body=%s", inspectResp.StatusCode, string(body))
+	}
+	var inspect map[string]any
+	if err := json.NewDecoder(inspectResp.Body).Decode(&inspect); err != nil {
+		t.Fatalf("inspect decode: %v", err)
+	}
+	if inspect["headerAscii"] != "hello crucible" {
+		t.Fatalf("header ascii: %v", inspect["headerAscii"])
+	}
 }
 
-func TestUploadRejectsPathEscape(t *testing.T) {
+func TestUploadAcceptsAbsolutePathAndRejectsEscapedRelativePath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	target := filepath.Join(dir, "absolute.bin")
 	auditor := audit.New(io.Discard)
-	srv := httptest.NewServer(UploadHandler(auditor, dir, 1024))
+	srv := httptest.NewServer(UploadHandler(auditor, dir))
 	defer srv.Close()
 
-	for _, target := range []string{
-		"../escape",
-		"/absolute/path",
-		"sub/../../escape",
-	} {
-		resp, err := http.Post(srv.URL+"?path="+target, "application/octet-stream", strings.NewReader("x"))
+	resp, err := postGzip(srv.URL+"?path="+target, []byte("absolute"))
+	if err != nil {
+		t.Fatalf("absolute request: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("absolute status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	for _, target := range []string{"../escape", "sub/../../escape"} {
+		resp, err := postGzip(srv.URL+"?path="+target, []byte("x"))
 		if err != nil {
 			t.Fatalf("%s: request: %v", target, err)
 		}
@@ -81,4 +120,32 @@ func TestUploadRejectsPathEscape(t *testing.T) {
 			t.Fatalf("%s: expected 400, got %d", target, resp.StatusCode)
 		}
 	}
+
+	badReq, _ := http.NewRequest(http.MethodPost, srv.URL+"?path=bad.bin", strings.NewReader("not gzip"))
+	badReq.Header.Set("Content-Encoding", "gzip")
+	badResp, err := http.DefaultClient.Do(badReq)
+	if err != nil {
+		t.Fatalf("bad gzip request: %v", err)
+	}
+	if badResp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(badResp.Body)
+		t.Fatalf("bad gzip expected 400, got %d body=%s", badResp.StatusCode, string(body))
+	}
+}
+
+func postGzip(url string, payload []byte) (*http.Response, error) {
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(payload); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(compressed.Bytes()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Encoding", "gzip")
+	return http.DefaultClient.Do(req)
 }

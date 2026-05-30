@@ -208,7 +208,8 @@ describe("crucible MCP tools", () => {
           truncated: false,
         });
       },
-      upload: () => Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
       download: () => Promise.resolve(Buffer.from("downloaded")),
       close: () => Promise.resolve(),
     };
@@ -252,7 +253,8 @@ describe("crucible MCP tools", () => {
           truncated: false,
         });
       },
-      upload: () => Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
       download: () => Promise.resolve(Buffer.from("downloaded")),
       close: () => Promise.resolve(),
     };
@@ -290,19 +292,19 @@ describe("crucible MCP tools", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-upload-"));
     const hostPath = path.join(dir, "sample.bin");
     await writeFile(hostPath, Buffer.from("sample"));
-    const uploads: Array<{ path: string; contents: Buffer }> = [];
+    const uploads: Array<{ hostPath: string; guestPath: string }> = [];
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
       exec: () => Promise.reject(new Error("unused")),
-      upload: (targetPath: string, contents: Buffer) => {
-        uploads.push({ path: targetPath, contents });
+      uploadFile: (uploadedHostPath: string, guestPath: string) => {
+        uploads.push({ hostPath: uploadedHostPath, guestPath });
         return Promise.resolve({
-          path: targetPath,
-          sizeBytes: contents.byteLength,
+          path: guestPath,
+          sizeBytes: 6,
           sha256: "deadbeef",
         });
       },
-      download: () => Promise.resolve(Buffer.from("downloaded")),
+      downloadFile: () => Promise.resolve({ path: "guest", sizeBytes: 0, sha256: "deadbeef" }),
       close: () => Promise.resolve(),
     };
     const client = await harness({
@@ -317,8 +319,7 @@ describe("crucible MCP tools", () => {
 
     expect(payload.ok).toBe(true);
     expect(payload.result.sizeBytes).toBe(6);
-    expect(uploads[0]?.path).toBe("samples/sample.bin");
-    expect(uploads[0]?.contents.toString()).toBe("sample");
+    expect(uploads[0]).toEqual({ hostPath, guestPath: "samples/sample.bin" });
   });
 
   it("rejects relative host paths in guest_upload_file", async () => {
@@ -342,7 +343,14 @@ describe("crucible MCP tools", () => {
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
       exec: () => Promise.reject(new Error("unused")),
-      upload: () => Promise.reject(new Error("unused")),
+      uploadFile: () => Promise.reject(new Error("unused")),
+      inspect: () =>
+        Promise.resolve({
+          path: "logs/out.txt",
+          sizeBytes: "hello\ncrucible\n".length,
+          headerHex: Buffer.from("hello\ncrucible\n", "ascii").toString("hex"),
+          headerAscii: "hello.crucible.",
+        }),
       download: () => Promise.resolve(Buffer.from("hello\ncrucible\n", "ascii")),
       close: () => Promise.resolve(),
     };
@@ -371,7 +379,14 @@ describe("crucible MCP tools", () => {
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
       exec: () => Promise.reject(new Error("unused")),
-      upload: () => Promise.reject(new Error("unused")),
+      uploadFile: () => Promise.reject(new Error("unused")),
+      inspect: () =>
+        Promise.resolve({
+          path: "samples/payload.exe",
+          sizeBytes: 5,
+          headerHex: "4d5a0090ff",
+          headerAscii: "MZ...",
+        }),
       download: () => Promise.resolve(Buffer.from([0x4d, 0x5a, 0x00, 0x90, 0xff])),
       close: () => Promise.resolve(),
     };
@@ -401,8 +416,11 @@ describe("crucible MCP tools", () => {
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
       exec: () => Promise.reject(new Error("unused")),
-      upload: () => Promise.reject(new Error("unused")),
-      download: (sourcePath: string) => Promise.resolve(Buffer.from(`downloaded:${sourcePath}`)),
+      uploadFile: () => Promise.reject(new Error("unused")),
+      downloadFile: async (guestPath: string, outputHostPath: string) => {
+        await writeFile(outputHostPath, `downloaded:${guestPath}`);
+        return { path: guestPath, sizeBytes: `downloaded:${guestPath}`.length, sha256: "deadbeef" };
+      },
       close: () => Promise.resolve(),
     };
     const client = await harness({
