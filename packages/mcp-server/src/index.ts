@@ -735,10 +735,12 @@ function registerDebuggerTools(
     (guestClientFactory === undefined
       ? undefined
       : new DebuggerSessionManager({
+          cdbExecutable: DEFAULT_CDB_EXECUTABLE,
           run: async (args) => {
             const client = await guestClientFactory();
+            const health = await client.health();
             const result = await client.exec({
-              executable: "cdb.exe",
+              executable: health.cdbPath ?? DEFAULT_CDB_EXECUTABLE,
               arguments: [...args],
               timeoutMs: 5 * 60 * 1000,
             });
@@ -880,6 +882,8 @@ function registerDebuggerTools(
     },
   );
 }
+
+const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe";
 
 /** Build a GuestAgentClient by reading the standard PEM file paths. */
 export async function buildGuestAgentClientFromFiles(
