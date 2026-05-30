@@ -389,6 +389,49 @@ describe("crucible MCP tools", () => {
     expect(payload.result).toMatchObject({ outputGuestPath: "C:\\Dumps\\p.dmp", sizeBytes: 42 });
     expect(execRequests[0]?.as).toBe("admin");
     expect(execRequests[0]?.arguments?.join(" ")).toContain("procdump64.exe");
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("RedirectStandardOutput");
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("'-ma'");
+  });
+
+  it("requests a mini dump when dump_process full is false", async () => {
+    const execRequests: Array<{ arguments?: readonly string[] }> = [];
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: (req: { arguments?: readonly string[] }) => {
+        execRequests.push(req);
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(
+            JSON.stringify({
+              pid: 1234,
+              outputGuestPath: "C:\\Dumps\\p.dmp",
+              full: false,
+              sizeBytes: 42,
+              sha256: "deadbeef",
+              tool: "procdump64.exe",
+            }),
+          ).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    await client.callTool({
+      name: "dump_process",
+      arguments: { pid: 1234, outputGuestPath: "C:\\Dumps\\p.dmp", full: false },
+    });
+
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("'-mm'");
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {
