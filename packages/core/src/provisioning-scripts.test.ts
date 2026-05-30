@@ -91,6 +91,8 @@ describe("WinDbg provisioning scripts", () => {
     expect(script).toContain("strings64.exe");
     expect(script).toContain("tcpvcon64.exe");
     expect(script).toContain("procdump64.exe");
+    expect(script).toContain("Listdlls64.exe");
+    expect(script).toContain("autorunsc64.exe");
     expect(script).toContain("sigcheck64.exe");
     expect(script).toContain("x64dbg.x64dbg");
     expect(script).not.toContain("Ghidra");
