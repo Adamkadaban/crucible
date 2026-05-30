@@ -8,7 +8,6 @@ import {
   aggregateAuditEvents,
   DEFAULT_POLICY,
   decideDownloadTarget,
-  decideHostShare,
   decideInternetEgress,
   exportArtifactBundle,
   rotateGuestServiceCertificatesPlan,
@@ -17,16 +16,6 @@ import {
 } from "./index.js";
 
 describe("policy", () => {
-  it("denies host-share by default and accepts paths under allowlists", () => {
-    const denied = decideHostShare(DEFAULT_POLICY, "/tmp/payload");
-    expect(denied.allowed).toBe(false);
-
-    const policy = { ...DEFAULT_POLICY, allowedHostShareDirectories: ["/var/lib/crucible"] };
-    expect(decideHostShare(policy, "/var/lib/crucible/sample").allowed).toBe(true);
-    expect(decideHostShare(policy, "/etc/passwd").allowed).toBe(false);
-    expect(decideHostShare(policy, "passwd").allowed).toBe(false);
-  });
-
   it("forces downloads to land in the configured directories", () => {
     expect(decideDownloadTarget(DEFAULT_POLICY, "artifacts/downloads/report.json").allowed).toBe(
       true,
@@ -35,9 +24,7 @@ describe("policy", () => {
     expect(decideDownloadTarget(DEFAULT_POLICY, "../escape").allowed).toBe(false);
   });
 
-  it("rejects ../ traversal in host-share and download targets", () => {
-    const policy = { ...DEFAULT_POLICY, allowedHostShareDirectories: ["/var/lib/crucible"] };
-    expect(decideHostShare(policy, "/var/lib/crucible/../secrets").allowed).toBe(false);
+  it("rejects ../ traversal in download targets", () => {
     expect(
       decideDownloadTarget(DEFAULT_POLICY, "artifacts/downloads/../secrets/file").allowed,
     ).toBe(false);

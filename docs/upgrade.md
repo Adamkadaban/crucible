@@ -20,7 +20,7 @@ designed to keep configuration files, secrets, and snapshots intact across versi
    release manifest.
 2. Upload the binary into the guest staging directory:
    ```sh
-   crucible mcp --stdio  # then use guest_upload from your MCP client
+   crucible mcp --stdio  # then use guest_upload_file from your MCP client
    ```
 3. Stop the service inside the guest, replace the binary, and start the service again:
    ```sh

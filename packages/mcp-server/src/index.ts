@@ -18,7 +18,6 @@ import {
   defaultCrucibleConfig,
   DEFAULT_POLICY,
   decideDownloadTarget,
-  decideHostShare,
   type DebuggerSession,
   type DebuggerSessionSpec,
   GuestAgentClient,
@@ -86,19 +85,13 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     description: "Run a process as the provisioned Windows admin account.",
   },
   {
-    name: "guest_upload",
-    description:
-      "Upload base64 content into the guest staging directory through the Crucible guest agent.",
-  },
-  {
     name: "guest_upload_file",
-    description:
-      "Upload a local host file path into the guest staging directory. Prefer this over guest_upload when moving existing files.",
+    description: "Upload a local host file path into the guest staging directory.",
   },
   {
-    name: "guest_download",
+    name: "guest_read_file",
     description:
-      "Download a guest staging file and return base64 content. Prefer guest_download_file for existing files.",
+      "Read a small ASCII guest staging file inline, or report size and header metadata for large/binary files.",
   },
   {
     name: "guest_download_file",
@@ -143,13 +136,6 @@ export type CrucibleToolError = {
   readonly auditLogPath?: string;
 };
 
-const Base64String = z
-  .string()
-  .min(1)
-  .refine((value) => /^[A-Za-z0-9+/]+={0,2}$/.test(value) && value.length % 4 === 0, {
-    message: "must be a canonical base64 string",
-  });
-
 const GuestExecInput = z
   .object({
     executable: z.string().min(1),
@@ -162,14 +148,6 @@ const GuestExecInput = z
   .strict();
 type GuestExecInputType = z.infer<typeof GuestExecInput>;
 
-const GuestUploadInput = z
-  .object({
-    targetPath: z.string().min(1),
-    contentsBase64: Base64String,
-  })
-  .strict();
-type GuestUploadInputType = z.infer<typeof GuestUploadInput>;
-
 const GuestUploadFileInput = z
   .object({
     hostPath: z.string().min(1),
@@ -178,12 +156,12 @@ const GuestUploadFileInput = z
   .strict();
 type GuestUploadFileInputType = z.infer<typeof GuestUploadFileInput>;
 
-const GuestDownloadInput = z
+const GuestReadFileInput = z
   .object({
     sourcePath: z.string().min(1),
   })
   .strict();
-type GuestDownloadInputType = z.infer<typeof GuestDownloadInput>;
+type GuestReadFileInputType = z.infer<typeof GuestReadFileInput>;
 
 const GuestDownloadFileInput = z
   .object({
@@ -303,10 +281,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   const { server, vmAdapter, snapshotAdapter, auditLogPath } = options;
   const hostCheck = options.hostCheck ?? runHostCheck;
   const guestClientFactory = options.guestClientFactory;
-  const policy = options.policy ?? {
-    ...DEFAULT_POLICY,
-    allowedHostShareDirectories: [process.cwd()],
-  };
+  const policy = options.policy ?? DEFAULT_POLICY;
 
   server.registerTool(
     "host_check",
@@ -432,29 +407,6 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   );
 
   server.registerTool(
-    "guest_upload",
-    {
-      title: "Upload to guest staging",
-      description:
-        "Write a base64-encoded payload into the guest staging directory. Mirrors POST /upload on the guest agent.",
-      inputSchema: GuestUploadInput.shape,
-    },
-    async (input: GuestUploadInputType) => {
-      try {
-        const client = await requireGuestClient(guestClientFactory);
-        const payload = Buffer.from(input.contentsBase64, "base64");
-        const result: GuestAgentUploadResult = await client.upload(input.targetPath, payload);
-        return toJsonContent({ ok: true, result, auditLogPath });
-      } catch (error) {
-        return toJsonContent({
-          ok: false,
-          error: toToolError(classifyError(error), error, auditLogPath),
-        });
-      }
-    },
-  );
-
-  server.registerTool(
     "guest_upload_file",
     {
       title: "Upload host file to guest staging",
@@ -464,9 +416,8 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
     },
     async (input: GuestUploadFileInputType) => {
       try {
-        const decision = decideHostShare(policy, input.hostPath);
-        if (!decision.allowed) {
-          return validationError(decision.reason, auditLogPath);
+        if (!path.isAbsolute(input.hostPath)) {
+          return validationError("hostPath must be absolute", auditLogPath);
         }
         const info = await stat(input.hostPath);
         if (!info.isFile()) {
@@ -486,23 +437,24 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   );
 
   server.registerTool(
-    "guest_download",
+    "guest_read_file",
     {
-      title: "Download from guest staging",
+      title: "Read guest staging file",
       description:
-        "Read a file from the guest staging directory and return it base64-encoded. Mirrors GET /download on the guest agent.",
-      inputSchema: GuestDownloadInput.shape,
+        "Read a guest staging file inline only when it is small ASCII text. Large or binary files return size and header metadata instead.",
+      inputSchema: GuestReadFileInput.shape,
     },
-    async (input: GuestDownloadInputType) => {
+    async (input: GuestReadFileInputType) => {
       try {
         const client = await requireGuestClient(guestClientFactory);
         const buffer = await client.download(input.sourcePath);
+        const preview = summarizeGuestFile(buffer);
         return toJsonContent({
           ok: true,
           result: {
             sourcePath: input.sourcePath,
             sizeBytes: buffer.byteLength,
-            contentsBase64: buffer.toString("base64"),
+            ...preview,
           },
           auditLogPath,
         });
@@ -1023,6 +975,49 @@ function validationError(message: string, auditLogPath: string | undefined) {
     ok: false,
     error: { kind: "validation" as const, message, auditLogPath },
   });
+}
+
+const INLINE_READ_LIMIT_BYTES = 64 * 1024;
+const HEADER_PREVIEW_BYTES = 64;
+
+function summarizeGuestFile(buffer: Buffer):
+  | { readonly inline: true; readonly encoding: "ascii"; readonly contents: string }
+  | {
+      readonly inline: false;
+      readonly reason: "too-large" | "non-ascii";
+      readonly headerHex: string;
+      readonly headerAscii: string;
+    } {
+  const header = buffer.subarray(0, HEADER_PREVIEW_BYTES);
+  if (buffer.byteLength > INLINE_READ_LIMIT_BYTES) {
+    return {
+      inline: false,
+      reason: "too-large",
+      headerHex: header.toString("hex"),
+      headerAscii: printableAsciiHeader(header),
+    };
+  }
+  if (!isSafeAscii(buffer)) {
+    return {
+      inline: false,
+      reason: "non-ascii",
+      headerHex: header.toString("hex"),
+      headerAscii: printableAsciiHeader(header),
+    };
+  }
+  return { inline: true, encoding: "ascii", contents: buffer.toString("ascii") };
+}
+
+function isSafeAscii(buffer: Buffer): boolean {
+  return buffer.every(
+    (byte) => byte === 0x09 || byte === 0x0a || byte === 0x0d || (byte >= 0x20 && byte <= 0x7e),
+  );
+}
+
+function printableAsciiHeader(buffer: Buffer): string {
+  return Array.from(buffer, (byte) =>
+    byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : ".",
+  ).join("");
 }
 
 function toToolError(

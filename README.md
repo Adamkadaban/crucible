@@ -327,13 +327,14 @@ Add to `~/.config/Claude/claude_desktop_config.json` (or the equivalent client c
 
 The currently registered tools are:
 
-| Tool             | Purpose                                                      |
-| ---------------- | ------------------------------------------------------------ |
-| `host_check`     | Report Linux host prerequisites (QEMU/KVM, OVMF, virtio, …). |
-| `guest_health`   | Hit `/health` on the Crucible guest agent.                   |
-| `guest_exec`     | Run a bounded process inside the guest.                      |
-| `guest_upload`   | Write a base64 payload into the guest staging directory.     |
-| `guest_download` | Read a file back from staging.                               |
+| Tool                  | Purpose                                                                     |
+| --------------------- | --------------------------------------------------------------------------- |
+| `host_check`          | Report Linux host prerequisites (QEMU/KVM, OVMF, virtio, …).                |
+| `guest_health`        | Hit `/health` on the Crucible guest agent.                                  |
+| `guest_exec`          | Run a bounded process inside the guest.                                     |
+| `guest_upload_file`   | Upload a host file into the guest staging directory.                        |
+| `guest_read_file`     | Read a small ASCII staging file inline; binary/large files return metadata. |
+| `guest_download_file` | Download a guest staging file into `artifacts/downloads/...` on the host.   |
 
 Every tool returns a structured JSON envelope of the form
 `{ "ok": true, "result": { ... }, "auditLogPath": "..." }` on success and

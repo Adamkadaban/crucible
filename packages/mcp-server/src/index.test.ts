@@ -48,9 +48,8 @@ describe("crucible MCP tools", () => {
       "guest_health",
       "guest_exec",
       "guest_exec_admin",
-      "guest_upload",
       "guest_upload_file",
-      "guest_download",
+      "guest_read_file",
       "guest_download_file",
       "debug_open",
       "debug_command",
@@ -287,15 +286,6 @@ describe("crucible MCP tools", () => {
     expect(result.isError).toBe(true);
   });
 
-  it("rejects non-canonical base64 in guest_upload", async () => {
-    const client = await harness({});
-    const result = (await client.callTool({
-      name: "guest_upload",
-      arguments: { targetPath: "stage/bad.bin", contentsBase64: "not!!!valid!!!" },
-    })) as ToolCallText & { isError?: boolean };
-    expect(result.isError).toBe(true);
-  });
-
   it("uploads an existing host file through guest_upload_file", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-upload-"));
     const hostPath = path.join(dir, "sample.bin");
@@ -317,11 +307,6 @@ describe("crucible MCP tools", () => {
     };
     const client = await harness({
       guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
-      policy: {
-        allowedHostShareDirectories: [dir],
-        allowedDownloadDirectories: ["artifacts/downloads"],
-        allowInternetEgress: false,
-      },
     });
 
     const result = (await client.callTool({
@@ -334,6 +319,81 @@ describe("crucible MCP tools", () => {
     expect(payload.result.sizeBytes).toBe(6);
     expect(uploads[0]?.path).toBe("samples/sample.bin");
     expect(uploads[0]?.contents.toString()).toBe("sample");
+  });
+
+  it("rejects relative host paths in guest_upload_file", async () => {
+    const client = await harness({});
+    const result = (await client.callTool({
+      name: "guest_upload_file",
+      arguments: { hostPath: "samples/payload.exe", guestPath: "payload.exe" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      error: { kind: string; message: string };
+    }>(result);
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatchObject({
+      kind: "validation",
+      message: "hostPath must be absolute",
+    });
+  });
+
+  it("reads small ASCII guest files inline", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () => Promise.reject(new Error("unused")),
+      upload: () => Promise.reject(new Error("unused")),
+      download: () => Promise.resolve(Buffer.from("hello\ncrucible\n", "ascii")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const result = (await client.callTool({
+      name: "guest_read_file",
+      arguments: { sourcePath: "logs/out.txt" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { inline: boolean; encoding?: string; contents?: string };
+    }>(result);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.result).toMatchObject({
+      inline: true,
+      encoding: "ascii",
+      contents: "hello\ncrucible\n",
+    });
+  });
+
+  it("reports header metadata for binary guest files", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () => Promise.reject(new Error("unused")),
+      upload: () => Promise.reject(new Error("unused")),
+      download: () => Promise.resolve(Buffer.from([0x4d, 0x5a, 0x00, 0x90, 0xff])),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const result = (await client.callTool({
+      name: "guest_read_file",
+      arguments: { sourcePath: "samples/payload.exe" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { inline: boolean; reason: string; headerHex: string; headerAscii: string };
+    }>(result);
+
+    expect(payload.result).toMatchObject({
+      inline: false,
+      reason: "non-ascii",
+      headerHex: "4d5a0090ff",
+      headerAscii: "MZ...",
+    });
   });
 
   it("downloads a guest file to a new host path through guest_download_file", async () => {
