@@ -8,7 +8,8 @@ the host appends each invocation to the session transcript.
 ## Session lifecycle
 
 1. `debug_open` — register a session. `mode: "launch"` spawns a new target executable;
-   `mode: "attach"` attaches to an existing pid. A `symbolPath`
+   `mode: "attach"` attaches to an existing pid. Set `arch: "x86"` for 32-bit/WOW64 targets or
+   `arch: "x64"` for native 64-bit targets; omitted defaults to x64. A `symbolPath`
    (`srv*<cache>*https://msdl.microsoft.com/download/symbols`) may be provided per session. No
    `cdb.exe` invocation happens at this step; the session is purely host-side state.
 2. `debug_command` — execute one or more cdb commands inside the session. Commands are joined with
