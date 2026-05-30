@@ -309,6 +309,43 @@ describe("VmLifecycleManager", () => {
     });
   });
 
+  it("recovers provisioned OVMF and payload args if state was clobbered by a bare plan", async () => {
+    const harness = await createLifecycleHarness();
+    await mkdirFor(harness.paths.stateManifest);
+    await writeFile(
+      harness.paths.stateManifest,
+      JSON.stringify({
+        version: 1,
+        vmName: "life-test",
+        state: "stopped",
+        paths: harness.paths,
+        qemu: { executable: "qemu-system-x86_64", args: ["-name", "life-test"] },
+        lastTransitionAt: "2026-05-28T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+    const ovmfVars = path.join(
+      harness.config.artifacts.directory,
+      "boot",
+      "life-test.OVMF_VARS.fd",
+    );
+    const payloadIso = path.join(
+      harness.config.artifacts.directory,
+      "boot",
+      "crucible-payload.iso",
+    );
+    await mkdirFor(ovmfVars);
+    await writeFile(ovmfVars, "vars");
+    await writeFile(payloadIso, "iso");
+
+    await harness.manager.start();
+
+    expect(harness.spawnRequests[0]?.args.some((arg) => arg.includes("OVMF_CODE"))).toBe(true);
+    expect(harness.spawnRequests[0]?.args).toContain(
+      "ide-cd,drive=crucible-payload,bus=crucible-sata0.3",
+    );
+  });
+
   it("preserves recorded qemu argv if restart spawn fails", async () => {
     const harness = await createLifecycleHarness({ spawnError: new Error("spawn failed") });
     const richArgs = ["-name", "life-test", "-cdrom", "payload.iso"];
