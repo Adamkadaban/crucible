@@ -61,7 +61,7 @@ account creation, guest agent installation, analysis policy changes, health chec
 snapshot preparation. The WinDbg stage has PowerShell scripts for installing debugger tooling with
 `winget install Microsoft.WinDbg` or a Windows SDK Debugging Tools fallback, configuring
 `_NT_SYMBOL_PATH`, and detecting debugger readiness. The analysis-tools stage installs or reports
-Sysinternals and x64dbg availability; host-side static tools such as Ghidra stay on Linux.
+Sysinternals availability; host-side static tools such as Ghidra stay on Linux.
 
 The analysis policy stage disables Defender policy, records observed code-integrity policy state,
 confirms test signing is disabled, and can apply optional malware-reversing profile settings such as

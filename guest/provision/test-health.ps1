@@ -124,10 +124,6 @@ $sysinternals = [ordered]@{
     autorunsc = Find-ToolExecutable -FileNames @("autorunsc64.exe", "autorunsc.exe")
     sigcheck = Find-ToolExecutable -FileNames @("sigcheck64.exe", "sigcheck.exe")
 }
-$malwareTools = [ordered]@{
-    x64dbg = Find-ToolExecutable -FileNames @("x64dbg.exe")
-}
-
 $crucibleAdmin = Test-AccountExists -Name "CrucibleAdmin"
 $crucibleUser = Test-AccountExists -Name "CrucibleUser"
 $qemuAgentStatus = Get-ServiceStatusOrMissing -Name "qemu-ga"
@@ -145,7 +141,6 @@ $checks = [ordered]@{
     symbolCachePath = $symbolCache
     symbolCacheWritable = $symbolCacheWritable
     sysinternals = $sysinternals
-    malwareTools = $malwareTools
     crucibleAdminPresent = $crucibleAdmin
     crucibleUserPresent = $crucibleUser
     qemuAgentStatus = $qemuAgentStatus

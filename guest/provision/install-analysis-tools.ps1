@@ -52,9 +52,6 @@ function Get-ToolReport {
             autorunsc = Find-ToolExecutable -FileNames @("autorunsc64.exe", "autorunsc.exe")
             sigcheck = Find-ToolExecutable -FileNames @("sigcheck64.exe", "sigcheck.exe")
         }
-        malwareTools = [ordered]@{
-            x64dbg = Find-ToolExecutable -FileNames @("x64dbg.exe")
-        }
     }
 }
 
@@ -99,41 +96,11 @@ function Install-Sysinternals {
     }
 }
 
-function Try-WingetInstall {
-    param(
-        [Parameter(Mandatory = $true)][string]$PackageId,
-        [Parameter(Mandatory = $true)][string]$Name
-    )
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($null -eq $winget) { return $false }
-    if ($DryRun) {
-        Write-Status "dry-run: winget install $PackageId ($Name)"
-        return $true
-    }
-    try {
-        & $winget.Source install --id $PackageId --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
-        if ($LASTEXITCODE -eq 0) { return $true }
-        if ($AllowSkipOnNetworkFailure) {
-            Write-Status "$Name install skipped (winget exit $LASTEXITCODE)"
-            return $false
-        }
-        throw "$Name winget install failed with exit code $LASTEXITCODE"
-    } catch {
-        if ($AllowSkipOnNetworkFailure) {
-            Write-Status "$Name install skipped ($($_.Exception.Message))"
-            return $false
-        }
-        throw
-    }
-}
-
 New-Item -ItemType Directory -Force -Path $ToolsRoot | Out-Null
 $sysinternalsAttempted = Install-Sysinternals
-$x64dbgAttempted = Try-WingetInstall -PackageId "x64dbg.x64dbg" -Name "x64dbg"
 
 $report = Get-ToolReport
 $report.installedOrAttempted = [ordered]@{
     sysinternals = [bool]$sysinternalsAttempted
-    x64dbg = [bool]$x64dbgAttempted
 }
 $report | ConvertTo-Json -Depth 8 -Compress
