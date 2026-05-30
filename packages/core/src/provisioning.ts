@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  access,
   chmod,
   copyFile,
   lstat,
@@ -622,6 +623,9 @@ export async function prepareRealFirstBootProvisioning(
     outputPath: payloadIsoPath,
     bootDirectory,
     agentBinaryPath: options.agentBinaryPath,
+    sysinternalsZipPath: await optionalReadableFile(
+      path.join(config.media.cacheDir, "SysinternalsSuite.zip"),
+    ),
     mtlsCaCertificatePath: mtls.caCertificatePath,
     mtlsServerCertificatePath: mtls.serverCertificatePath,
     mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
@@ -662,6 +666,7 @@ async function buildPayloadIsoCommand(options: {
   readonly outputPath: string;
   readonly bootDirectory: string;
   readonly agentBinaryPath: string | undefined;
+  readonly sysinternalsZipPath: string | undefined;
   readonly mtlsCaCertificatePath: string;
   readonly mtlsServerCertificatePath: string;
   readonly mtlsServerPrivateKeyPath: string;
@@ -692,6 +697,10 @@ async function buildPayloadIsoCommand(options: {
   if (options.agentBinaryPath !== undefined) {
     await assertReadableFile("guest agent binary", options.agentBinaryPath);
     graftPoints.push(`/agent/crucible-agent.exe=${options.agentBinaryPath}`);
+  }
+  if (options.sysinternalsZipPath !== undefined) {
+    await assertReadableFile("Sysinternals Suite zip", options.sysinternalsZipPath);
+    graftPoints.push(`/tools/SysinternalsSuite.zip=${options.sysinternalsZipPath}`);
   }
   return {
     executable: options.xorrisoExecutable,
@@ -733,6 +742,22 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
       return false;
+    }
+    throw error;
+  }
+}
+
+async function optionalReadableFile(filePath: string): Promise<string | undefined> {
+  try {
+    const info = await stat(filePath);
+    if (!info.isFile()) {
+      throw new CrucibleError("CONFIG_INVALID", `${filePath} exists but is not a file`);
+    }
+    await access(filePath);
+    return filePath;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
     }
     throw error;
   }

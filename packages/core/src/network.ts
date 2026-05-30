@@ -417,7 +417,10 @@ function buildControlAddressAllocation(guestApiPort: number): ControlAddressAllo
   return {
     hostAddress: "192.0.2.1",
     guestAddress: "192.0.2.2",
-    prefixLength: 30,
+    // QEMU user networking exposes the built-in DNS server at x.x.x.3.
+    // A /30 would make .3 the broadcast address from the guest's point of
+    // view, so use /29 to keep host=.1, guest=.2, and DNS=.3 usable.
+    prefixLength: 29,
     guestApiPort,
   };
 }
