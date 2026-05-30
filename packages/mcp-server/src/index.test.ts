@@ -234,25 +234,35 @@ describe("crucible MCP tools", () => {
     expect(execRequests.map((req) => req.as)).toEqual(["service", "service", "service", "admin"]);
   });
 
-  it("runs default debugger commands through the installed CDB path", async () => {
-    const execRequests: Array<{ executable: string; arguments?: readonly string[] }> = [];
+  it("runs persistent debugger commands through the installed CDB path", async () => {
+    const opens: Array<{ executable: string; arguments?: readonly string[] }> = [];
+    const commands: Array<{ id: string; input: string; waitMs?: number }> = [];
     const fakeClient = {
       health: () =>
         Promise.resolve({
           status: "ok",
           cdbPath: "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
         }),
-      exec: (req: { executable: string; arguments?: readonly string[] }) => {
-        execRequests.push(req);
+      debugOpen: (req: { executable: string; arguments?: readonly string[] }) => {
+        opens.push(req);
         return Promise.resolve({
-          exitCode: 0,
-          stdoutBase64: Buffer.from("0:000>").toString("base64"),
-          stderrBase64: "",
-          timedOut: false,
-          durationMs: 1,
-          truncated: false,
+          id: "guest-dbg-1",
+          pid: 4321,
+          logPath: "C:\\ProgramData\\Crucible\\Exec\\guest-dbg-1.log",
+          startedAt: "2026-01-01T00:00:00Z",
         });
       },
+      debugCommand: (id: string, input: string, waitMs?: number) => {
+        commands.push({ id, input, waitMs });
+        return Promise.resolve({
+          id,
+          outputBase64: Buffer.from("0:000>").toString("base64"),
+          truncated: false,
+          logPath: "C:\\ProgramData\\Crucible\\Exec\\guest-dbg-1.log",
+          exited: false,
+        });
+      },
+      exec: () => Promise.reject(new Error("unused")),
       uploadFile: () =>
         Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
       download: () => Promise.resolve(Buffer.from("downloaded")),
@@ -265,39 +275,47 @@ describe("crucible MCP tools", () => {
       name: "debug_open",
       arguments: { mode: "attach", pid: 1234 },
     })) as ToolCallText;
-    const sessionId = parseFirstTextPayload<{ ok: boolean; result: { id: string } }>(open).result
-      .id;
+    const openPayload = parseFirstTextPayload<{ ok: boolean; result: { id: string } }>(open);
+    const sessionId = openPayload.result.id;
 
     await client.callTool({
       name: "debug_command",
-      arguments: { sessionId, commands: ["lm"] },
+      arguments: { sessionId, commands: ["lm"], waitMs: 25 },
     });
 
-    expect(execRequests[0]?.executable).toBe(
+    expect(opens[0]?.executable).toBe(
       "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
     );
-    expect(execRequests[0]?.arguments).toEqual(["-c", "lm; q", "-p", "1234"]);
+    expect(opens[0]?.arguments).toEqual(["-p", "1234"]);
+    expect(commands[0]).toEqual({ id: "guest-dbg-1", input: "lm", waitMs: 25 });
   });
 
   it("routes x86 debugger sessions through x86 CDB", async () => {
-    const execRequests: Array<{ executable: string; arguments?: readonly string[] }> = [];
+    const opens: Array<{ executable: string; arguments?: readonly string[] }> = [];
     const fakeClient = {
       health: () =>
         Promise.resolve({
           status: "ok",
           cdbPath: "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
         }),
-      exec: (req: { executable: string; arguments?: readonly string[] }) => {
-        execRequests.push(req);
+      debugOpen: (req: { executable: string; arguments?: readonly string[] }) => {
+        opens.push(req);
         return Promise.resolve({
-          exitCode: 0,
-          stdoutBase64: Buffer.from("0:000>").toString("base64"),
-          stderrBase64: "",
-          timedOut: false,
-          durationMs: 1,
-          truncated: false,
+          id: "guest-dbg-2",
+          pid: 4321,
+          logPath: "C:\\ProgramData\\Crucible\\Exec\\guest-dbg-2.log",
+          startedAt: "2026-01-01T00:00:00Z",
         });
       },
+      debugCommand: (id: string) =>
+        Promise.resolve({
+          id,
+          outputBase64: "",
+          truncated: false,
+          logPath: "C:\\ProgramData\\Crucible\\Exec\\guest-dbg-2.log",
+          exited: false,
+        }),
+      exec: () => Promise.reject(new Error("unused")),
       uploadFile: () =>
         Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
       download: () => Promise.resolve(Buffer.from("downloaded")),
@@ -318,7 +336,7 @@ describe("crucible MCP tools", () => {
       arguments: { sessionId, commands: ["lm"] },
     });
 
-    expect(execRequests[0]?.executable).toBe(
+    expect(opens[0]?.executable).toBe(
       "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x86\\cdb.exe",
     );
   });

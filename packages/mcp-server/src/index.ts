@@ -29,7 +29,6 @@ import {
   type GuestAgentUploadResult,
   type HostCheckProbeResult,
   type NetworkMode,
-  type RunResult,
   runHostCheck,
 } from "@crucible/core";
 
@@ -213,6 +212,7 @@ const DebugCommandInput = z
   .object({
     sessionId: z.string().min(1),
     commands: z.array(z.string().min(1)).min(1).max(32),
+    waitMs: z.number().int().positive().max(30_000).optional(),
   })
   .strict();
 type DebugCommandInputType = z.infer<typeof DebugCommandInput>;
@@ -697,38 +697,7 @@ function registerDebuggerTools(
   guestClientFactory: (() => Promise<GuestAgentClient>) | undefined,
   auditLogPath: string | undefined,
 ): void {
-  // If no manager was injected but a guest client factory is, build a
-  // default manager that issues cdb invocations through the guest agent's
-  // /exec endpoint.
-  const effective =
-    manager ??
-    (guestClientFactory === undefined
-      ? undefined
-      : new DebuggerSessionManager({
-          cdbExecutable: DEFAULT_CDB_EXECUTABLE,
-          cdbExecutableForArch: (arch) => defaultCdbPathForArch(arch),
-          run: async (args, cdbExecutable) => {
-            const client = await guestClientFactory();
-            const health = await client.health();
-            const executable =
-              cdbExecutable === DEFAULT_CDB_EXECUTABLE
-                ? (health.cdbPath ?? cdbExecutable)
-                : cdbExecutable;
-            const result = await client.exec({
-              executable,
-              arguments: [...args],
-              timeoutMs: 5 * 60 * 1000,
-            });
-            return {
-              stdoutBase64: result.stdoutBase64 ?? "",
-              stderrBase64: result.stderrBase64 ?? "",
-              exitCode: result.exitCode,
-              timedOut: result.timedOut,
-              truncated: result.truncated,
-              durationMs: result.durationMs,
-            } satisfies RunResult;
-          },
-        }));
+  const effective = manager;
 
   const guard = (
     handler: (mgr: DebuggerSessionManager) => Promise<ReturnType<typeof toJsonContent>>,
@@ -747,6 +716,16 @@ function registerDebuggerTools(
       }
       return handler(effective);
     };
+  };
+
+  const requireDebugClient = async (): Promise<GuestAgentClient> => {
+    if (guestClientFactory === undefined) {
+      throw new CrucibleError(
+        "QMP_CONNECTION_FAILED",
+        "guest client is not configured; install the guest agent and wire CRUCIBLE_GUEST_BASE_URL et al.",
+      );
+    }
+    return guestClientFactory();
   };
 
   server.registerTool(
@@ -776,17 +755,43 @@ function registerDebuggerTools(
           error: { kind: "validation" as const, message: parsed.error.message, auditLogPath },
         });
       }
-      return guard((mgr) =>
-        Promise.resolve().then(() => {
-          const spec: DebuggerSessionSpec = parsed.data;
-          const session: DebuggerSession = mgr.open(spec);
-          return toJsonContent({
-            ok: true,
-            result: { id: session.id, createdAt: session.createdAt, spec: session.spec },
-            auditLogPath,
-          });
-        }),
-      )();
+      if (manager !== undefined) {
+        return guard((mgr) =>
+          Promise.resolve().then(() => {
+            const spec: DebuggerSessionSpec = parsed.data;
+            const session: DebuggerSession = mgr.open(spec);
+            return toJsonContent({
+              ok: true,
+              result: { id: session.id, createdAt: session.createdAt, spec: session.spec },
+              auditLogPath,
+            });
+          }),
+        )();
+      }
+      try {
+        const client = await requireDebugClient();
+        const spec: DebuggerSessionSpec = parsed.data;
+        const cdbExecutable = await resolveCdbExecutable(client, spec.arch);
+        const cdbArgs = buildPersistentCdbArgs(spec);
+        const opened = await client.debugOpen({ executable: cdbExecutable, arguments: cdbArgs });
+        return toJsonContent({
+          ok: true,
+          result: {
+            id: opened.id,
+            pid: opened.pid,
+            createdAt: opened.startedAt,
+            logPath: opened.logPath,
+            spec,
+            cdbExecutable,
+          },
+          auditLogPath,
+        });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
     },
   );
 
@@ -798,6 +803,37 @@ function registerDebuggerTools(
       inputSchema: DebugCommandInput.shape,
     },
     async (input: DebugCommandInputType) => {
+      if (manager === undefined) {
+        try {
+          const client = await requireDebugClient();
+          const result = await client.debugCommand(
+            input.sessionId,
+            input.commands.join("\r\n"),
+            input.waitMs,
+          );
+          return toJsonContent({
+            ok: true,
+            result: {
+              command: input.commands.join("; "),
+              stdoutBase64: result.outputBase64 ?? "",
+              stderrBase64: "",
+              exitCode: result.exitCode,
+              timedOut: !result.exited,
+              truncated: result.truncated,
+              durationMs: input.waitMs ?? 750,
+              logPath: result.logPath,
+              exited: result.exited,
+              exitError: result.exitError,
+            },
+            auditLogPath,
+          });
+        } catch (error) {
+          return toJsonContent({
+            ok: false,
+            error: toToolError(classifyError(error), error, auditLogPath),
+          });
+        }
+      }
       return guard(async (mgr) => {
         try {
           const result = await mgr.command(input.sessionId, input.commands);
@@ -820,6 +856,35 @@ function registerDebuggerTools(
       inputSchema: DebugDumpInput.shape,
     },
     async (input: DebugDumpInputType) => {
+      if (manager === undefined) {
+        const flag = input.minidump ? "" : "/ma ";
+        const command = `.dump ${flag}${input.outputGuestPath}`;
+        try {
+          const client = await requireDebugClient();
+          const result = await client.debugCommand(input.sessionId, command, 5_000);
+          return toJsonContent({
+            ok: true,
+            result: {
+              command,
+              stdoutBase64: result.outputBase64 ?? "",
+              stderrBase64: "",
+              exitCode: result.exitCode,
+              timedOut: !result.exited,
+              truncated: result.truncated,
+              durationMs: 5_000,
+              logPath: result.logPath,
+              exited: result.exited,
+              exitError: result.exitError,
+            },
+            auditLogPath,
+          });
+        } catch (error) {
+          return toJsonContent({
+            ok: false,
+            error: toToolError(classifyError(error), error, auditLogPath),
+          });
+        }
+      }
       return guard(async (mgr) => {
         try {
           const result = await mgr.dump(input.sessionId, {
@@ -845,6 +910,18 @@ function registerDebuggerTools(
       inputSchema: DebugCloseInput.shape,
     },
     async (input: DebugCloseInputType) => {
+      if (manager === undefined) {
+        try {
+          const client = await requireDebugClient();
+          const result = await client.debugClose(input.sessionId);
+          return toJsonContent({ ok: true, result, auditLogPath });
+        } catch (error) {
+          return toJsonContent({
+            ok: false,
+            error: toToolError(classifyError(error), error, auditLogPath),
+          });
+        }
+      }
       return guard((mgr) =>
         Promise.resolve().then(() => {
           mgr.close(input.sessionId);
@@ -861,9 +938,33 @@ function registerDebuggerTools(
 
 const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe";
 
+async function resolveCdbExecutable(
+  client: GuestAgentClient,
+  arch: "x86" | "x64" | undefined,
+): Promise<string> {
+  if (arch === undefined) {
+    const health = await client.health();
+    return health.cdbPath ?? DEFAULT_CDB_EXECUTABLE;
+  }
+  return defaultCdbPathForArch(arch);
+}
+
 function defaultCdbPathForArch(arch: "x86" | "x64"): string {
   const suffix = arch === "x86" ? "x86" : "x64";
   return `C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\${suffix}\\cdb.exe`;
+}
+
+function buildPersistentCdbArgs(spec: DebuggerSessionSpec): readonly string[] {
+  const args: string[] = [];
+  if (spec.symbolPath !== undefined && spec.symbolPath !== "") {
+    args.push("-y", spec.symbolPath);
+  }
+  if (spec.mode === "launch") {
+    args.push(spec.executable, ...(spec.arguments ?? []));
+  } else {
+    args.push("-p", String(spec.pid));
+  }
+  return args;
 }
 
 /** Build a GuestAgentClient by reading the standard PEM file paths. */

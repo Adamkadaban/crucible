@@ -1,31 +1,30 @@
 # Debugger automation (Phase 6)
 
 Crucible exposes a tight wrapper around the Windows command-line debugger (`cdb.exe`) so the host
-can drive triage from MCP tools without having to shell-script the guest manually. Every session is
-host-side metadata; the guest runs one `cdb.exe -c "..."` invocation per `debug_command` call and
-the host appends each invocation to the session transcript.
+can drive triage from MCP tools without having to shell-script the guest manually. Production MCP
+sessions keep a guest-side CDB process alive; injected test managers can still exercise the older
+one-shot command builder.
 
 ## Session lifecycle
 
 1. `debug_open` — register a session. `mode: "launch"` spawns a new target executable;
    `mode: "attach"` attaches to an existing pid. Set `arch: "x86"` for 32-bit/WOW64 targets or
    `arch: "x64"` for native 64-bit targets; omitted defaults to x64. A `symbolPath`
-   (`srv*<cache>*https://msdl.microsoft.com/download/symbols`) may be provided per session. No
-   `cdb.exe` invocation happens at this step; the session is purely host-side state.
-2. `debug_command` — execute one or more cdb commands inside the session. Commands are joined with
-   `; ` and terminated with `q` so `cdb.exe` exits afterwards. Output is captured as base64
-   (stdout/stderr) along with exit code, duration, and a `truncated` flag inherited from the bounded
-   buffer.
-3. `debug_dump` — `command(['.dump /ma <path>'])` shorthand. Pass `minidump: true` for a smaller
-   triage dump.
-4. `debug_close` — drop the session and discard its transcript.
+   (`srv*<cache>*https://msdl.microsoft.com/download/symbols`) may be provided per session. In
+   production this starts CDB in the guest and returns a `logPath` where all debugger output is
+   mirrored.
+2. `debug_command` — send one or more CDB commands to the live session. Commands are not
+   automatically terminated with `q`; use `debug_close` when done.
+3. `debug_dump` — sends `.dump /ma <path>` (or `.dump <path>` for `minidump: true`) to the live
+   session.
+4. `debug_close` — terminate the debugger process and close the session.
 
 The first three tools return a uniform `DebuggerCommandResult` envelope:
 
 ```json
 {
   "command": "!analyze -v",
-  "cdbArgs": ["-c", "!analyze -v; q", "-p", "1234"],
+  "logPath": "C:\\ProgramData\\Crucible\\Exec\\dbg-...log",
   "stdoutBase64": "...",
   "stderrBase64": "",
   "exitCode": 0,
@@ -45,9 +44,9 @@ and `windbg` paths so the MCP server can confirm the toolchain is present before
 
 ## Limits & known gaps
 
-- **No interactive stdin.** Every `debug_command` runs as a fresh `cdb.exe` invocation; long-lived
-  sessions, single-step debugging, and breakpoints that span commands require a future change to the
-  guest agent (out-of-scope for the current phase).
+- **CDB remains command/response, not a full terminal.** The guest agent writes commands to CDB
+  stdin and returns output collected during a bounded wait window. Use `logPath` to recover all
+  output if a command runs longer than expected.
 - **No kernel debugging.** This wrapper targets user-mode triage of Windows processes. KD over named
   pipe / TTD recording is deferred.
 - **Output bounded at 4 MiB per stream**, matching the guest agent's `/exec` cap. Large
