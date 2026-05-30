@@ -54,6 +54,7 @@ describe("crucible MCP tools", () => {
       "debug_open",
       "debug_command",
       "debug_dump",
+      "dump_process",
       "debug_close",
     ]);
   });
@@ -339,6 +340,55 @@ describe("crucible MCP tools", () => {
     expect(opens[0]?.executable).toBe(
       "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x86\\cdb.exe",
     );
+  });
+
+  it("runs dump_process through ProcDump as admin", async () => {
+    const execRequests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> =
+      [];
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: (req: { executable: string; arguments?: readonly string[]; as?: string }) => {
+        execRequests.push(req);
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(
+            JSON.stringify({
+              pid: 1234,
+              outputGuestPath: "C:\\Dumps\\p.dmp",
+              full: true,
+              sizeBytes: 42,
+              sha256: "deadbeef",
+              tool: "procdump64.exe",
+            }),
+          ).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const result = (await client.callTool({
+      name: "dump_process",
+      arguments: { pid: 1234, outputGuestPath: "C:\\Dumps\\p.dmp", full: true },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { outputGuestPath: string; sizeBytes: number };
+    }>(result);
+
+    expect(payload.ok).toBe(true);
+    expect(payload.result).toMatchObject({ outputGuestPath: "C:\\Dumps\\p.dmp", sizeBytes: 42 });
+    expect(execRequests[0]?.as).toBe("admin");
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("procdump64.exe");
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {

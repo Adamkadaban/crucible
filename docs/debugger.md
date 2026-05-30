@@ -19,6 +19,10 @@ one-shot command builder.
    session.
 4. `debug_close` — terminate the debugger process and close the session.
 
+For samples that detect debugger attachment, use `dump_process` instead. It runs ProcDump/ProcDump64
+from the guest when installed, writes the dump to a guest path, and returns size/hash metadata
+without opening CDB.
+
 The first three tools return a uniform `DebuggerCommandResult` envelope:
 
 ```json
