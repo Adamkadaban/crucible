@@ -722,7 +722,7 @@ function registerDebuggerTools(
     if (guestClientFactory === undefined) {
       throw new CrucibleError(
         "QMP_CONNECTION_FAILED",
-        "debugger manager is not configured; install the guest agent and wire CRUCIBLE_GUEST_BASE_URL et al.",
+        "guest client is not configured; install the guest agent and wire CRUCIBLE_GUEST_BASE_URL et al.",
       );
     }
     return guestClientFactory();
@@ -817,8 +817,8 @@ function registerDebuggerTools(
               command: input.commands.join("; "),
               stdoutBase64: result.outputBase64 ?? "",
               stderrBase64: "",
-              exitCode: result.exited ? (result.exitError === undefined ? 0 : 1) : undefined,
-              timedOut: false,
+              exitCode: result.exitCode,
+              timedOut: !result.exited,
               truncated: result.truncated,
               durationMs: input.waitMs ?? 750,
               logPath: result.logPath,
@@ -868,8 +868,8 @@ function registerDebuggerTools(
               command,
               stdoutBase64: result.outputBase64 ?? "",
               stderrBase64: "",
-              exitCode: result.exited ? (result.exitError === undefined ? 0 : 1) : undefined,
-              timedOut: false,
+              exitCode: result.exitCode,
+              timedOut: !result.exited,
               truncated: result.truncated,
               durationMs: 5_000,
               logPath: result.logPath,

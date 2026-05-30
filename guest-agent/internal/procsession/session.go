@@ -3,7 +3,6 @@ package procsession
 
 import (
 	"bufio"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -23,6 +22,7 @@ const (
 	defaultCommandWaitMs = 750
 	maxCommandWaitMs     = 30_000
 	maxCommandBytes      = 32 * 1024
+	maxJSONBytes         = 128 * 1024
 	maxResponseBytes     = 4 * 1024 * 1024
 )
 
@@ -38,10 +38,14 @@ type Session struct {
 	stdin     io.WriteCloser
 	logPath   string
 	started   time.Time
+	cmdMu     sync.Mutex
 	mu        sync.Mutex
 	buffer    []byte
 	truncated bool
 	done      chan error
+	exitErr   error
+	exitCode  int
+	exited    bool
 }
 
 type openRequest struct {
@@ -71,6 +75,7 @@ type commandResponse struct {
 	Truncated    bool   `json:"truncated"`
 	LogPath      string `json:"logPath"`
 	Exited       bool   `json:"exited"`
+	ExitCode     *int   `json:"exitCode,omitempty"`
 	ExitError    string `json:"exitError,omitempty"`
 }
 
@@ -99,11 +104,15 @@ func (m *Manager) OpenHandler(auditor *audit.Auditor) http.HandlerFunc {
 			return
 		}
 		var req openRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes)).Decode(&req); err != nil {
 			http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		session, err := m.Open(r.Context(), req)
+		if err := validateOpenRequest(req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		session, err := m.Open(req)
 		if err != nil {
 			http.Error(w, "open session: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -123,7 +132,7 @@ func (m *Manager) CommandHandler(auditor *audit.Auditor) http.HandlerFunc {
 			return
 		}
 		var req commandRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes)).Decode(&req); err != nil {
 			http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -146,7 +155,7 @@ func (m *Manager) CloseHandler(auditor *audit.Auditor) http.HandlerFunc {
 			return
 		}
 		var req closeRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes)).Decode(&req); err != nil {
 			http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -161,26 +170,20 @@ func (m *Manager) CloseHandler(auditor *audit.Auditor) http.HandlerFunc {
 	}
 }
 
-func (m *Manager) Open(ctx context.Context, req openRequest) (*Session, error) {
-	if req.Executable == "" {
-		return nil, errors.New("executable is required")
-	}
-	if len(req.Arguments) > 128 {
-		return nil, errors.New("too many arguments")
-	}
+func (m *Manager) Open(req openRequest) (*Session, error) {
 	if err := os.MkdirAll(m.baseDir, 0o700); err != nil {
 		return nil, err
 	}
 	id := fmt.Sprintf("dbg-%d", time.Now().UnixNano())
-	logPath := req.LogPath
-	if logPath == "" {
-		logPath = filepath.Join(m.baseDir, id+".log")
+	logPath, err := m.resolveLogPath(id, req.LogPath)
+	if err != nil {
+		return nil, err
 	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, req.Executable, req.Arguments...)
+	cmd := exec.Command(req.Executable, req.Arguments...)
 	if req.WorkingDirectory != "" {
 		cmd.Dir = req.WorkingDirectory
 	}
@@ -217,10 +220,23 @@ func (m *Manager) Open(ctx context.Context, req openRequest) (*Session, error) {
 	go session.capture(stdout, logFile)
 	go session.capture(stderr, logFile)
 	go func() {
-		session.done <- cmd.Wait()
+		err := cmd.Wait()
+		session.markExited(err)
 		_ = logFile.Close()
+		m.remove(id)
+		close(session.done)
 	}()
 	return session, nil
+}
+
+func validateOpenRequest(req openRequest) error {
+	if req.Executable == "" {
+		return errors.New("executable is required")
+	}
+	if len(req.Arguments) > 128 {
+		return errors.New("too many arguments")
+	}
+	return nil
 }
 
 func (m *Manager) Command(req commandRequest) (commandResponse, error) {
@@ -241,18 +257,20 @@ func (m *Manager) Command(req commandRequest) (commandResponse, error) {
 	if !ok {
 		return commandResponse{}, errors.New("session not found")
 	}
+	session.cmdMu.Lock()
+	defer session.cmdMu.Unlock()
 	if _, err := io.WriteString(session.stdin, req.Input+"\r\n"); err != nil {
 		return commandResponse{}, err
 	}
 	timer := time.NewTimer(time.Duration(waitMs) * time.Millisecond)
 	defer timer.Stop()
 	select {
-	case err := <-session.done:
-		m.remove(req.ID)
+	case <-session.done:
 		out, truncated := session.drain()
-		resp := commandResponse{ID: req.ID, OutputBase64: base64.StdEncoding.EncodeToString(out), Truncated: truncated, LogPath: session.logPath, Exited: true}
-		if err != nil {
-			resp.ExitError = err.Error()
+		exitCode, exitErr := session.exitStatus()
+		resp := commandResponse{ID: req.ID, OutputBase64: base64.StdEncoding.EncodeToString(out), Truncated: truncated, LogPath: session.logPath, Exited: true, ExitCode: &exitCode}
+		if exitErr != nil {
+			resp.ExitError = exitErr.Error()
 		}
 		return resp, nil
 	case <-timer.C:
@@ -287,6 +305,36 @@ func (m *Manager) remove(id string) {
 	delete(m.sessions, id)
 }
 
+func (m *Manager) resolveLogPath(id string, requested string) (string, error) {
+	base, err := filepath.Abs(m.baseDir)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(base, id+".log")
+	if requested != "" {
+		if filepath.IsAbs(requested) {
+			path = filepath.Clean(requested)
+		} else {
+			path = filepath.Clean(filepath.Join(base, requested))
+		}
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(base, absPath)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || filepath.IsAbs(rel) || len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator) {
+		return "", errors.New("logPath escapes session directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o700); err != nil {
+		return "", err
+	}
+	return absPath, nil
+}
+
 func (s *Session) capture(reader io.Reader, logFile *os.File) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
@@ -317,4 +365,27 @@ func (s *Session) drain() ([]byte, bool) {
 	s.buffer = nil
 	s.truncated = false
 	return out, truncated
+}
+
+func (s *Session) markExited(err error) {
+	exitCode := 0
+	if err != nil {
+		var exitErr interface{ ExitCode() int }
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+	s.mu.Lock()
+	s.exitErr = err
+	s.exitCode = exitCode
+	s.exited = true
+	s.mu.Unlock()
+}
+
+func (s *Session) exitStatus() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.exitCode, s.exitErr
 }

@@ -90,6 +90,7 @@ export type GuestAgentDebugCommandResult = {
   readonly truncated: boolean;
   readonly logPath: string;
   readonly exited: boolean;
+  readonly exitCode?: number;
   readonly exitError?: string;
 };
 
