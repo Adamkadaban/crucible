@@ -79,7 +79,8 @@ debugger use:
 setup, policy lockdown, health, and clean snapshot creation. It installs or reports Windows-only or
 dynamic analysis tools:
 
-- Sysinternals Suite tools such as ProcMon, ProcExp, handle, strings, and TcpView.
+- Sysinternals Suite command-line/runtime tools such as handle, strings, tcpvcon/TcpView, ProcDump,
+  ListDLLs, AutorunsC, and Sigcheck.
 - x64dbg when `winget` and network access are available.
 
 The VM profile intentionally excludes host-side/static analysis tools such as Ghidra and Cutter; use
