@@ -190,7 +190,10 @@ export class VmLifecycleManager {
       });
     } catch (error) {
       await this.#writeStateManifest(
-        this.#buildStateManifest("stopped", { stoppedAt: this.#nowIso() }),
+        this.#buildStateManifest("stopped", {
+          stoppedAt: this.#nowIso(),
+          previousQemu: qemuToStart,
+        }),
       );
       throw error;
     }
