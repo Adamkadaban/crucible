@@ -210,12 +210,14 @@ export class VmLifecycleManager {
   async #qemuPlanForStart(
     recorded?: VmLifecycleStateManifest["qemu"],
   ): Promise<VmLifecycleStateManifest["qemu"]> {
-    if (recorded !== undefined && hasProvisionedFirmware(recorded.args)) {
+    if (recorded !== undefined && !looksLikeBareDefaultArgs(recorded.args)) {
       return recorded;
     }
     const bootDirectory = path.join(this.#config.artifacts.directory, "boot");
     const recovered = buildQemuCommandPlan({
       config: this.#config,
+      executable: this.#plan.executable,
+      diskPath: this.#plan.disk.path,
       bootMedia: {
         ovmfCodePath: "/usr/share/OVMF/OVMF_CODE_4M.fd",
         ovmfVarsPath: path.join(bootDirectory, `${this.#config.vm.name}.OVMF_VARS.fd`),
@@ -587,11 +589,8 @@ async function allPathsExist(paths: readonly string[]): Promise<boolean> {
   return (await Promise.all(paths.map(pathExists))).every(Boolean);
 }
 
-function hasProvisionedFirmware(args: readonly string[]): boolean {
-  return (
-    args.some((arg) => arg.includes("OVMF_CODE")) &&
-    args.some((arg) => arg.includes("crucible-payload.iso"))
-  );
+function looksLikeBareDefaultArgs(args: readonly string[]): boolean {
+  return !args.some((arg) => arg.includes("if=pflash") || arg.includes("media=cdrom"));
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
