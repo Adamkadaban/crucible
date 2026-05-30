@@ -81,6 +81,17 @@ describe("DebuggerSessionManager", () => {
     expect(x64.cdbExecutable).toBe("C:\\Debuggers\\x64\\cdb.exe");
   });
 
+  it("keeps default CDB executable when architecture is omitted", () => {
+    const mgr = new DebuggerSessionManager({
+      run: () => Promise.resolve(fakeRun("")),
+      cdbExecutable: "C:\\Discovered\\x64\\cdb.exe",
+      cdbExecutableForArch: (arch) => `C:\\Debuggers\\${arch}\\cdb.exe`,
+    });
+    const session = mgr.open({ mode: "attach", pid: 1 });
+
+    expect(session.cdbExecutable).toBe("C:\\Discovered\\x64\\cdb.exe");
+  });
+
   it("records every command in the session transcript", async () => {
     const mgr = new DebuggerSessionManager({
       run: () => Promise.resolve(fakeRun("hi")),

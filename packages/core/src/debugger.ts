@@ -96,7 +96,7 @@ export class DebuggerSessionManager {
     const session: DebuggerSession = {
       id,
       spec,
-      cdbExecutable: this.#cdbForArch(spec.arch ?? "x64"),
+      cdbExecutable: spec.arch === undefined ? this.#cdb : this.#cdbForArch(spec.arch),
       createdAt: this.#now().toISOString(),
       transcript: [],
     };
