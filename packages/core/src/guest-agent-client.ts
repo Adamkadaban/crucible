@@ -69,6 +69,36 @@ export type GuestAgentFileInspection = {
 
 export type GuestAgentUploadResult = GuestAgentTransferResult;
 
+export type GuestAgentDebugOpenRequest = {
+  readonly executable: string;
+  readonly arguments?: readonly string[];
+  readonly workingDirectory?: string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly logPath?: string;
+};
+
+export type GuestAgentDebugOpenResult = {
+  readonly id: string;
+  readonly pid: number;
+  readonly logPath: string;
+  readonly startedAt: string;
+};
+
+export type GuestAgentDebugCommandResult = {
+  readonly id: string;
+  readonly outputBase64?: string;
+  readonly truncated: boolean;
+  readonly logPath: string;
+  readonly exited: boolean;
+  readonly exitError?: string;
+};
+
+export type GuestAgentDebugCloseResult = {
+  readonly id: string;
+  readonly closed: boolean;
+  readonly logPath?: string;
+};
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BODY = 64 * 1024 * 1024;
 
@@ -109,6 +139,34 @@ export class GuestAgentClient {
       body: JSON.stringify(request),
     });
     return (await res.json()) as GuestAgentExecResult;
+  }
+
+  async debugOpen(request: GuestAgentDebugOpenRequest): Promise<GuestAgentDebugOpenResult> {
+    const res = await this.#request("POST", "/debug/open", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    return (await res.json()) as GuestAgentDebugOpenResult;
+  }
+
+  async debugCommand(
+    id: string,
+    input: string,
+    waitMs?: number,
+  ): Promise<GuestAgentDebugCommandResult> {
+    const res = await this.#request("POST", "/debug/command", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, input, waitMs }),
+    });
+    return (await res.json()) as GuestAgentDebugCommandResult;
+  }
+
+  async debugClose(id: string): Promise<GuestAgentDebugCloseResult> {
+    const res = await this.#request("POST", "/debug/close", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return (await res.json()) as GuestAgentDebugCloseResult;
   }
 
   async upload(targetPath: string, contents: Buffer): Promise<GuestAgentUploadResult> {

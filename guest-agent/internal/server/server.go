@@ -22,6 +22,7 @@ import (
 	"github.com/Adamkadaban/crucible/guest-agent/internal/exec"
 	"github.com/Adamkadaban/crucible/guest-agent/internal/files"
 	"github.com/Adamkadaban/crucible/guest-agent/internal/health"
+	"github.com/Adamkadaban/crucible/guest-agent/internal/procsession"
 )
 
 // Config controls the bound listener, TLS material, and bounded transfer sizes.
@@ -85,6 +86,10 @@ func Run(parent context.Context, cfg Config) error {
 	mux.HandleFunc("/upload", files.UploadHandler(auditor, cfg.StagingDirectory))
 	mux.HandleFunc("/download", files.DownloadHandler(auditor, cfg.StagingDirectory))
 	mux.HandleFunc("/inspect", files.InspectHandler(auditor, cfg.StagingDirectory))
+	sessions := procsession.NewManager(cfg.ExecDirectory)
+	mux.HandleFunc("/debug/open", sessions.OpenHandler(auditor))
+	mux.HandleFunc("/debug/command", sessions.CommandHandler(auditor))
+	mux.HandleFunc("/debug/close", sessions.CloseHandler(auditor))
 
 	srv := &http.Server{
 		Handler:           withRequestID(withClientIdentity(auditor, mux)),

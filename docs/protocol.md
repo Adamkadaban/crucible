@@ -129,6 +129,23 @@ Returns JSON metadata without streaming the file body: resolved path, byte count
 header preview as hex plus printable ASCII. MCP `guest_read_file` uses this endpoint before deciding
 whether it is safe to inline small ASCII content.
 
+### `POST /debug/open`
+
+Starts a long-running guest-side debugger process and returns a session id, process id, and log
+path. The request body includes `executable`, optional `arguments`, optional `workingDirectory`,
+optional environment overrides, and optional `logPath`. MCP uses this endpoint to start the selected
+CDB binary with launch or attach arguments.
+
+### `POST /debug/command`
+
+Writes a command string to a live debugger session's stdin and returns output collected during a
+bounded wait window. Output is also mirrored to the guest-side `logPath`, so long-running commands
+do not lose logs if the MCP call times out or returns before the command finishes.
+
+### `POST /debug/close`
+
+Terminates a live debugger session and removes it from the agent's process-session registry.
+
 ### Threat model and limits
 
 - The agent only binds the host-only address by default; the firewall rule added by
