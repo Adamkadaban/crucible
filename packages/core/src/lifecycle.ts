@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
@@ -171,10 +171,7 @@ export class VmLifecycleManager {
     await this.cleanupStaleResources();
     await this.#ensureDirectories();
 
-    const qemuToStart = current.stateManifest?.qemu ?? {
-      executable: this.#plan.executable,
-      args: this.#plan.args,
-    };
+    const qemuToStart = await this.#qemuPlanForStart(current.stateManifest?.qemu);
 
     const starting = this.#buildStateManifest("starting", { previousQemu: qemuToStart });
     await this.#writeStateManifest(starting);
@@ -208,6 +205,34 @@ export class VmLifecycleManager {
     );
 
     return { pid: spawned.pid, status: await this.status() };
+  }
+
+  async #qemuPlanForStart(
+    recorded?: VmLifecycleStateManifest["qemu"],
+  ): Promise<VmLifecycleStateManifest["qemu"]> {
+    if (recorded !== undefined && !looksLikeBareDefaultArgs(recorded.args)) {
+      return recorded;
+    }
+    const bootDirectory = path.join(this.#config.artifacts.directory, "boot");
+    const recovered = buildQemuCommandPlan({
+      config: this.#config,
+      executable: this.#plan.executable,
+      diskPath: this.#plan.disk.path,
+      bootMedia: {
+        ovmfCodePath: "/usr/share/OVMF/OVMF_CODE_4M.fd",
+        ovmfVarsPath: path.join(bootDirectory, `${this.#config.vm.name}.OVMF_VARS.fd`),
+        payloadIsoPath: path.join(bootDirectory, "crucible-payload.iso"),
+      },
+    });
+    if (
+      await allPathsExist([
+        path.join(bootDirectory, `${this.#config.vm.name}.OVMF_VARS.fd`),
+        path.join(bootDirectory, "crucible-payload.iso"),
+      ])
+    ) {
+      return { executable: recovered.executable, args: recovered.args };
+    }
+    return recorded ?? { executable: this.#plan.executable, args: this.#plan.args };
   }
 
   async stop(): Promise<VmStopResult> {
@@ -546,6 +571,26 @@ async function readJsonIfExists<T>(filePath: string): Promise<T | undefined> {
     }
     throw error;
   }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function allPathsExist(paths: readonly string[]): Promise<boolean> {
+  return (await Promise.all(paths.map(pathExists))).every(Boolean);
+}
+
+function looksLikeBareDefaultArgs(args: readonly string[]): boolean {
+  return !args.some((arg) => arg.includes("if=pflash") || arg.includes("media=cdrom"));
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
