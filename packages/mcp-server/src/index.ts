@@ -195,6 +195,7 @@ const DebugOpenInput = z.discriminatedUnion("mode", [
       executable: z.string().min(1),
       arguments: z.array(z.string()).max(64).optional(),
       symbolPath: z.string().optional(),
+      arch: z.enum(["x86", "x64"]).optional(),
     })
     .strict(),
   z
@@ -202,6 +203,7 @@ const DebugOpenInput = z.discriminatedUnion("mode", [
       mode: z.literal("attach"),
       pid: z.number().int().positive(),
       symbolPath: z.string().optional(),
+      arch: z.enum(["x86", "x64"]).optional(),
     })
     .strict(),
 ]);
@@ -704,11 +706,16 @@ function registerDebuggerTools(
       ? undefined
       : new DebuggerSessionManager({
           cdbExecutable: DEFAULT_CDB_EXECUTABLE,
-          run: async (args) => {
+          cdbExecutableForArch: (arch) => defaultCdbPathForArch(arch),
+          run: async (args, cdbExecutable) => {
             const client = await guestClientFactory();
             const health = await client.health();
+            const executable =
+              cdbExecutable === DEFAULT_CDB_EXECUTABLE
+                ? (health.cdbPath ?? cdbExecutable)
+                : cdbExecutable;
             const result = await client.exec({
-              executable: health.cdbPath ?? DEFAULT_CDB_EXECUTABLE,
+              executable,
               arguments: [...args],
               timeoutMs: 5 * 60 * 1000,
             });
@@ -758,6 +765,7 @@ function registerDebuggerTools(
           .describe("Forwarded to the launched executable; ignored for attach"),
         pid: z.number().int().positive().optional().describe("Required when mode=attach"),
         symbolPath: z.string().optional(),
+        arch: z.enum(["x86", "x64"]).optional(),
       },
     },
     async (raw: unknown) => {
@@ -852,6 +860,11 @@ function registerDebuggerTools(
 }
 
 const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe";
+
+function defaultCdbPathForArch(arch: "x86" | "x64"): string {
+  const suffix = arch === "x86" ? "x86" : "x64";
+  return `C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\${suffix}\\cdb.exe`;
+}
 
 /** Build a GuestAgentClient by reading the standard PEM file paths. */
 export async function buildGuestAgentClientFromFiles(

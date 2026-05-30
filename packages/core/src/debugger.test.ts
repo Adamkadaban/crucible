@@ -69,6 +69,29 @@ describe("DebuggerSessionManager", () => {
     expect(captured).toEqual(["-c", "~*k; q", "-p", "4321"]);
   });
 
+  it("records architecture-specific CDB path on sessions", () => {
+    const mgr = new DebuggerSessionManager({
+      run: () => Promise.resolve(fakeRun("")),
+      cdbExecutableForArch: (arch) => `C:\\Debuggers\\${arch}\\cdb.exe`,
+    });
+    const x86 = mgr.open({ mode: "attach", pid: 1, arch: "x86" });
+    const x64 = mgr.open({ mode: "attach", pid: 2, arch: "x64" });
+
+    expect(x86.cdbExecutable).toBe("C:\\Debuggers\\x86\\cdb.exe");
+    expect(x64.cdbExecutable).toBe("C:\\Debuggers\\x64\\cdb.exe");
+  });
+
+  it("keeps default CDB executable when architecture is omitted", () => {
+    const mgr = new DebuggerSessionManager({
+      run: () => Promise.resolve(fakeRun("")),
+      cdbExecutable: "C:\\Discovered\\x64\\cdb.exe",
+      cdbExecutableForArch: (arch) => `C:\\Debuggers\\${arch}\\cdb.exe`,
+    });
+    const session = mgr.open({ mode: "attach", pid: 1 });
+
+    expect(session.cdbExecutable).toBe("C:\\Discovered\\x64\\cdb.exe");
+  });
+
   it("records every command in the session transcript", async () => {
     const mgr = new DebuggerSessionManager({
       run: () => Promise.resolve(fakeRun("hi")),

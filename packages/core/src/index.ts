@@ -123,8 +123,10 @@ export type {
   DebuggerSession,
   DebuggerSessionSpec,
   DebuggerSessionMode,
+  DebuggerArchitecture,
   DebuggerCommandResult,
   DebuggerDumpRequest,
+  DebuggerExecutableResolver,
   DebuggerSessionManagerOptions,
   RunResult,
 } from "./debugger.js";

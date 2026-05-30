@@ -5,6 +5,7 @@
 // accumulates the transcript.
 
 export type DebuggerSessionMode = "launch" | "attach";
+export type DebuggerArchitecture = "x86" | "x64";
 
 export type DebuggerSessionSpec =
   | {
@@ -12,11 +13,13 @@ export type DebuggerSessionSpec =
       readonly executable: string;
       readonly arguments?: readonly string[];
       readonly symbolPath?: string;
+      readonly arch?: DebuggerArchitecture;
     }
   | {
       readonly mode: "attach";
       readonly pid: number;
       readonly symbolPath?: string;
+      readonly arch?: DebuggerArchitecture;
     };
 
 export type DebuggerCommandResult = {
@@ -38,6 +41,8 @@ export type DebuggerSession = {
   readonly transcript: DebuggerCommandResult[];
 };
 
+export type DebuggerExecutableResolver = (arch: DebuggerArchitecture) => string;
+
 export type DebuggerDumpRequest = {
   readonly outputGuestPath: string;
   readonly minidump?: boolean;
@@ -53,8 +58,9 @@ export type DebuggerSessionManagerOptions = {
    * production the MCP tool wires this to GuestAgentClient.exec, in tests
    * the unit suite injects a fake.
    */
-  readonly run: (cdbArgs: readonly string[]) => Promise<RunResult>;
+  readonly run: (cdbArgs: readonly string[], cdbExecutable: string) => Promise<RunResult>;
   readonly cdbExecutable?: string;
+  readonly cdbExecutableForArch?: DebuggerExecutableResolver;
   readonly idFactory?: () => string;
   readonly now?: () => Date;
 };
@@ -71,6 +77,7 @@ export type RunResult = {
 export class DebuggerSessionManager {
   readonly #run: DebuggerSessionManagerOptions["run"];
   readonly #cdb: string;
+  readonly #cdbForArch: DebuggerExecutableResolver;
   readonly #idFactory: () => string;
   readonly #now: () => Date;
   readonly #sessions = new Map<string, DebuggerSession>();
@@ -78,6 +85,7 @@ export class DebuggerSessionManager {
   constructor(options: DebuggerSessionManagerOptions) {
     this.#run = options.run;
     this.#cdb = options.cdbExecutable ?? DEFAULT_CDB_EXECUTABLE;
+    this.#cdbForArch = options.cdbExecutableForArch ?? (() => this.#cdb);
     this.#idFactory = options.idFactory ?? defaultIdFactory;
     this.#now = options.now ?? (() => new Date());
   }
@@ -88,7 +96,7 @@ export class DebuggerSessionManager {
     const session: DebuggerSession = {
       id,
       spec,
-      cdbExecutable: this.#cdb,
+      cdbExecutable: spec.arch === undefined ? this.#cdb : this.#cdbForArch(spec.arch),
       createdAt: this.#now().toISOString(),
       transcript: [],
     };
@@ -127,7 +135,7 @@ export class DebuggerSessionManager {
     }
     const session = this.get(id);
     const args = this.#buildCdbArgs(session.spec, `${joined}; q`);
-    const result = await this.#run(args);
+    const result = await this.#run(args, session.cdbExecutable);
     const recorded: DebuggerCommandResult = {
       command: joined,
       cdbArgs: args,

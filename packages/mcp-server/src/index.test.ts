@@ -279,6 +279,50 @@ describe("crucible MCP tools", () => {
     expect(execRequests[0]?.arguments).toEqual(["-c", "lm; q", "-p", "1234"]);
   });
 
+  it("routes x86 debugger sessions through x86 CDB", async () => {
+    const execRequests: Array<{ executable: string; arguments?: readonly string[] }> = [];
+    const fakeClient = {
+      health: () =>
+        Promise.resolve({
+          status: "ok",
+          cdbPath: "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
+        }),
+      exec: (req: { executable: string; arguments?: readonly string[] }) => {
+        execRequests.push(req);
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from("0:000>").toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+    const open = (await client.callTool({
+      name: "debug_open",
+      arguments: { mode: "attach", pid: 1234, arch: "x86" },
+    })) as ToolCallText;
+    const sessionId = parseFirstTextPayload<{ ok: boolean; result: { id: string } }>(open).result
+      .id;
+
+    await client.callTool({
+      name: "debug_command",
+      arguments: { sessionId, commands: ["lm"] },
+    });
+
+    expect(execRequests[0]?.executable).toBe(
+      "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x86\\cdb.exe",
+    );
+  });
+
   it("returns isError when guest_exec input fails Zod validation", async () => {
     const client = await harness({});
     const result = (await client.callTool({
