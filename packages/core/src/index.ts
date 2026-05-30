@@ -127,12 +127,7 @@ export type {
   DebuggerSessionManagerOptions,
   RunResult,
 } from "./debugger.js";
-export {
-  DEFAULT_POLICY,
-  decideHostShare,
-  decideDownloadTarget,
-  decideInternetEgress,
-} from "./policy.js";
+export { DEFAULT_POLICY, decideDownloadTarget, decideInternetEgress } from "./policy.js";
 export type { CruciblePolicy, PolicyDecision } from "./policy.js";
 export { runScenario } from "./scenario.js";
 export type {

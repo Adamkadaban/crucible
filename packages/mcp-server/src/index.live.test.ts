@@ -1,4 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { GuestAgentClient } from "@crucible/core";
 
@@ -92,33 +95,37 @@ describe.runIf(liveConfigured)("MCP tools against the live guest agent (env-gate
     expect(stdout.toLowerCase()).toContain("nt authority\\system");
   });
 
-  it("guest_upload + guest_download round-trip a payload via staging", async () => {
+  it("guest_upload_file + guest_read_file round-trip ASCII via staging", async () => {
     const { mcp } = await harness();
-    const payload = Buffer.from(`crucible-mcp-it-${Date.now()}`);
-    const targetPath = `mcp-it-${Date.now()}.bin`;
+    const payload = `crucible-mcp-it-${Date.now()}\n`;
+    const targetPath = `mcp-it-${Date.now()}.txt`;
+    const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-it-"));
+    const hostPath = path.join(dir, "payload.txt");
+    await writeFile(hostPath, payload, "ascii");
 
-    const upload = (await mcp.callTool({
-      name: "guest_upload",
-      arguments: {
-        targetPath,
-        contentsBase64: payload.toString("base64"),
-      },
-    })) as ToolCallText;
-    const uploadResp = parsePayload<{
-      ok: boolean;
-      result: { sizeBytes: number; sha256: string };
-    }>(upload);
-    expect(uploadResp.ok).toBe(true);
-    expect(uploadResp.result.sizeBytes).toBe(payload.byteLength);
+    try {
+      const upload = (await mcp.callTool({
+        name: "guest_upload_file",
+        arguments: { hostPath, guestPath: targetPath },
+      })) as ToolCallText;
+      const uploadResp = parsePayload<{
+        ok: boolean;
+        result: { sizeBytes: number; sha256: string };
+      }>(upload);
+      expect(uploadResp.ok).toBe(true);
+      expect(uploadResp.result.sizeBytes).toBe(Buffer.byteLength(payload, "ascii"));
 
-    const download = (await mcp.callTool({
-      name: "guest_download",
-      arguments: { sourcePath: targetPath },
-    })) as ToolCallText;
-    const downloadResp = parsePayload<{ ok: boolean; result: { contentsBase64: string } }>(
-      download,
-    );
-    expect(downloadResp.ok).toBe(true);
-    expect(Buffer.from(downloadResp.result.contentsBase64, "base64").equals(payload)).toBe(true);
+      const read = (await mcp.callTool({
+        name: "guest_read_file",
+        arguments: { sourcePath: targetPath },
+      })) as ToolCallText;
+      const readResp = parsePayload<{ ok: boolean; result: { inline: boolean; contents: string } }>(
+        read,
+      );
+      expect(readResp.ok).toBe(true);
+      expect(readResp.result).toMatchObject({ inline: true, contents: payload });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

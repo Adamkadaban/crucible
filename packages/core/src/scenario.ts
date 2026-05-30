@@ -5,7 +5,7 @@
 // scenario must restore *before* and *after* execution unless explicitly
 // opted out.
 
-import { decideDownloadTarget, decideHostShare, decideInternetEgress } from "./policy.js";
+import { decideDownloadTarget, decideInternetEgress } from "./policy.js";
 
 export type ScenarioStepKind = "snapshot-restore-pre" | "scenario-step" | "snapshot-restore-post";
 
@@ -144,4 +144,4 @@ export async function runScenario(
 }
 
 /** Re-export so callers can drive policy denials inside a scenario step. */
-export { decideDownloadTarget, decideHostShare, decideInternetEgress };
+export { decideDownloadTarget, decideInternetEgress };
