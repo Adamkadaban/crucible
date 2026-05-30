@@ -194,8 +194,14 @@ export async function runCrucibleCli(
     case "mcp": {
       const wantsStdio = rest.includes("--stdio");
       if (wantsStdio) {
+        const config = getRuntimeConfig(runtime);
         const guestClientFactory = buildEnvGuestClientFactory();
-        await runStdioMcpServer({ guestClientFactory });
+        await runStdioMcpServer({
+          config,
+          guestClientFactory,
+          vmAdapter: buildMcpVmAdapter(config),
+          snapshotAdapter: buildMcpSnapshotAdapter(config),
+        });
         return { exitCode: 0, stdout: "", stderr: "" };
       }
       return {
@@ -343,6 +349,42 @@ function getLifecycleManager(runtime: CliRuntime): CliLifecycleManager {
 
 function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
   return runtime.snapshotManager ?? new SnapshotManager({ config: getRuntimeConfig(runtime) });
+}
+
+function buildMcpVmAdapter(config: CrucibleConfig) {
+  const manager = new VmLifecycleManager({ config });
+  const render = async () => {
+    const status = await manager.status();
+    return {
+      state: status.status,
+      pid: status.pid,
+      startedAt: status.stateManifest?.startedAt,
+    };
+  };
+  return {
+    status: render,
+    start: async () => {
+      await manager.start();
+      return render();
+    },
+    stop: async () => {
+      await manager.stop();
+      return render();
+    },
+  };
+}
+
+function buildMcpSnapshotAdapter(config: CrucibleConfig) {
+  const manager = new SnapshotManager({ config });
+  const render = (snapshot: SnapshotRecord) => ({
+    name: snapshot.name,
+    path: snapshot.path,
+    createdAt: snapshot.createdAt,
+  });
+  return {
+    list: async () => (await manager.list()).map(render),
+    restore: async (snapshotName: string) => render((await manager.restore(snapshotName)).snapshot),
+  };
 }
 
 async function runSnapshotCreateCommand(

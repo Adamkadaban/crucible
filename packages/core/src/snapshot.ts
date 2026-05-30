@@ -64,6 +64,7 @@ export class SnapshotManager {
 
   async create(name = CLEAN_BASE_SNAPSHOT_NAME): Promise<SnapshotCreateResult> {
     const snapshotName = normalizeSnapshotName(name);
+    await this.#assertCanCreateSnapshot(snapshotName);
     await this.#ensureSnapshotDirectory();
     const qmpCommands: string[] = [];
     const qcow2Commands: ProcessCommand[] = [];
@@ -172,6 +173,23 @@ export class SnapshotManager {
 
   async #ensureSnapshotDirectory(): Promise<void> {
     await mkdir(this.#config.artifacts.snapshotsDirectory, { recursive: true });
+  }
+
+  async #assertCanCreateSnapshot(snapshotName: string): Promise<void> {
+    if (snapshotName !== CLEAN_BASE_SNAPSHOT_NAME) {
+      return;
+    }
+    const manifest = await this.#readManifest();
+    const existing = manifest.artifacts.find(
+      (record) => isSnapshotRecord(record) && record.name === CLEAN_BASE_SNAPSHOT_NAME,
+    );
+    if (existing !== undefined) {
+      throw new CrucibleError(
+        "STATE_INVALID",
+        "clean-base snapshot already exists; refusing to overwrite protected baseline",
+        { snapshotName },
+      );
+    }
   }
 
   #qemuImgCommand(args: readonly string[]): ProcessCommand {

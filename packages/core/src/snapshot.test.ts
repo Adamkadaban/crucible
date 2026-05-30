@@ -86,6 +86,15 @@ describe("SnapshotManager", () => {
     expect(snapshots.map((snapshot) => snapshot.name)).toEqual(["clean-base", "z-last"]);
   });
 
+  it("refuses to overwrite an existing clean-base snapshot", async () => {
+    const harness = await createSnapshotHarness();
+    await harness.manager.create("clean-base");
+
+    await expect(harness.manager.create("clean-base")).rejects.toThrow(
+      /clean-base snapshot already exists/,
+    );
+  });
+
   it("restores online snapshots with QMP stop/load/cont semantics", async () => {
     const harness = await createSnapshotHarness();
     await harness.manager.create("clean-base");
