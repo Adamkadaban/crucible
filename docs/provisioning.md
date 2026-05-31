@@ -1,10 +1,10 @@
 # Windows Provisioning Contracts
 
-Phase 3 provisioning is contract-first. The current implementation defines the machine-readable
-state, stage, script, result, policy-audit, secret, snapshot, and health shapes that real-VM
-adapters execute against a Windows VM. WinDbg, account, service, analysis policy, provision-command,
-snapshot, and health behavior are fixture-tested, but CI tests inspect them with host-only fakes and
-JSON fixtures instead of running a Windows VM.
+Provisioning is contract-first. The implementation defines the machine-readable state, stage,
+script, result, policy-audit, secret, snapshot, and health shapes that real-VM adapters execute
+against a Windows VM. WinDbg, account, service, analysis policy, provision-command, snapshot, and
+health behavior are fixture-tested, but CI tests inspect them with host-only fakes and JSON fixtures
+instead of running a Windows VM.
 
 ## State Machine
 
@@ -204,9 +204,9 @@ or `::`.
 OpenSSH remains a bootstrap fallback for environments where QGA cannot complete early provisioning.
 It is not the steady-state control plane and is not opened by the account or service scripts.
 
-## Real-VM Exit Test
+## Real-VM Smoke Test
 
-The Phase 3 exit command is:
+The real provisioning smoke command is:
 
 ```sh
 pnpm crucible provision && \
@@ -216,11 +216,4 @@ pnpm crucible provision && \
 ```
 
 This must be run on a Linux/KVM host with Windows media, virtio media, QEMU Guest Agent readiness,
-and the guest-service adapter available. It is intentionally not part of CI. If the host cannot run
-the real VM test, leave Phase 3 incomplete and file or reference the blocker.
-
-## Not Implemented Yet
-
-The remaining gap is real QGA and guest-service invocation against an installed Windows VM.
-Host-only tests cover the command behavior and contracts, but they are not a substitute for the
-Phase 3 real-VM exit test.
+and the guest-service adapter available. It is intentionally not part of CI.

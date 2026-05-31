@@ -1,4 +1,4 @@
-# Debugger automation (Phase 6)
+# Debugger Automation
 
 Crucible exposes a tight wrapper around the Windows command-line debugger (`cdb.exe`) so the host
 can drive triage from MCP tools without having to shell-script the guest manually. Production MCP
