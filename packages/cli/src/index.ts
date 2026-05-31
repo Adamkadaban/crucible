@@ -1614,7 +1614,12 @@ async function doctorCommand(args: readonly string[]): Promise<CommandResult> {
       `Status: ${result.healthy ? "healthy" : "missing prerequisites"}`,
       result.missing.length > 0 ? `Missing: ${result.missing.join(", ")}` : "Missing: none",
       `Notes: ${result.notes ?? "none"}`,
-      ...(!result.healthy ? ["", "Manual install (Debian/Ubuntu):", getAptInstallCommand()] : []),
+      ...(!result.healthy && result.platform === "linux"
+        ? ["", "Manual install (Debian/Ubuntu):", getAptInstallCommand()]
+        : []),
+      ...(!result.healthy && result.platform !== "linux"
+        ? ["", "Crucible currently supports Linux/KVM hosts only."]
+        : []),
     ].join("\n"),
     stderr: "",
   };
@@ -1633,7 +1638,7 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
     for (const target of targets) {
       const result = await setupCommand([target, ...setupFlags(parsed.args)], runtime);
       if (result.exitCode !== 0) exitCode = result.exitCode;
-      results.push(`## ${target}`, result.stdout || result.stderr);
+      results.push(`## ${target}`, [result.stdout, result.stderr].filter(Boolean).join("\n"));
     }
     return { exitCode, stdout: results.join("\n\n"), stderr: "" };
   }
@@ -1675,6 +1680,13 @@ async function setupHostCommand(args: SetupArgs): Promise<CommandResult> {
     return { exitCode: 0, stdout: "Host prerequisites are already satisfied.", stderr: "" };
   }
   const command = getAptInstallCommand();
+  if (result.platform !== "linux") {
+    return {
+      exitCode: 1,
+      stdout: `Missing: ${result.missing.join(", ")}`,
+      stderr: "Automatic host dependency installation is supported only on Linux.",
+    };
+  }
   if (args.printOnly || !args.yes) {
     return {
       exitCode: args.printOnly ? 0 : 1,
@@ -1738,9 +1750,13 @@ async function setupClaudeCommand(printOnly: boolean): Promise<CommandResult> {
     "mcp",
     "--stdio",
   ]);
+  const prefix =
+    result.exitCode === 0
+      ? "Updated Claude Code MCP config via claude CLI."
+      : "Failed to update Claude Code MCP config via claude CLI.";
   return {
     exitCode: result.exitCode,
-    stdout: [`Updated Claude Code MCP config via claude CLI.`, result.stdout].join("\n"),
+    stdout: [prefix, result.stdout].filter(Boolean).join("\n"),
     stderr: result.stderr,
   };
 }
@@ -1765,14 +1781,11 @@ async function setupJsonMcpCommand(options: {
   const existing: JsonObject = isJsonObject(currentMcp) ? currentMcp : {};
   config[options.mcpKey] = { ...existing, crucible: entry };
   const backupPath = await writeJsonConfigWithBackup(options.configPath, config);
-  return {
-    exitCode: 0,
-    stdout: [
-      `Updated ${options.targetName} config: ${options.configPath}`,
-      `Backup: ${backupPath}`,
-    ].join("\n"),
-    stderr: "",
-  };
+  const lines = [`Updated ${options.targetName} config: ${options.configPath}`];
+  if (backupPath !== undefined) {
+    lines.push(`Backup: ${backupPath}`);
+  }
+  return { exitCode: 0, stdout: lines.join("\n"), stderr: "" };
 }
 
 function getMcpServerEntry(): JsonObject {
@@ -1792,10 +1805,14 @@ async function readJsonObjectIfExists(filePath: string): Promise<JsonObject> {
   }
 }
 
-async function writeJsonConfigWithBackup(filePath: string, config: JsonObject): Promise<string> {
+async function writeJsonConfigWithBackup(
+  filePath: string,
+  config: JsonObject,
+): Promise<string | undefined> {
   await mkdir(dirname(filePath), { recursive: true });
-  const backupPath = `${filePath}.bak`;
+  let backupPath: string | undefined;
   if (await fileExists(filePath)) {
+    backupPath = `${filePath}.bak.${Date.now()}`;
     await rename(filePath, backupPath);
   }
   await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, {

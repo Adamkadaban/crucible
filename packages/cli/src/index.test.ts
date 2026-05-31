@@ -319,6 +319,45 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain('"mcp"');
   });
 
+  it("updates opencode config idempotently while preserving existing keys", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    process.env.HOME = root;
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ theme: "dark", mcp: { existing: { command: "other" } } }, null, 2),
+    );
+
+    try {
+      const first = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+      const second = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+      const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+        theme: string;
+        mcp: { existing?: { command: string }; crucible?: { command: string; args: string[] } };
+      };
+
+      expect(first.exitCode).toBe(0);
+      expect(first.stdout).toContain(`Updated opencode config: ${configPath}`);
+      expect(first.stdout).toContain("Backup:");
+      expect(second.exitCode).toBe(0);
+      expect(parsed.theme).toBe("dark");
+      expect(parsed.mcp.existing?.command).toBe("other");
+      expect(parsed.mcp.crucible).toEqual({
+        type: "stdio",
+        command: "crucible",
+        args: ["mcp", "--stdio"],
+      });
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
   it("prints claude setup command without writing", async () => {
     const result = await runCrucibleCli(["setup", "claude", "--print"], defaultRuntime);
 
