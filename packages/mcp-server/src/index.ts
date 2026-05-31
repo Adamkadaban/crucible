@@ -1433,6 +1433,12 @@ function registerMemoryTools(
             .trim();
           throw new Error(stderr || stdout || `memory scan failed with exit ${result.exitCode}`);
         }
+        if (stdout === "") {
+          const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+            .toString("utf8")
+            .trim();
+          throw new Error(stderr || "memory scan produced no JSON output");
+        }
         return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
       } catch (error) {
         return toJsonContent({
@@ -1471,6 +1477,12 @@ function registerMemoryTools(
             stderr || stdout || `memory region dump failed with exit ${result.exitCode}`,
           );
         }
+        if (stdout === "") {
+          const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+            .toString("utf8")
+            .trim();
+          throw new Error(stderr || "memory region dump produced no JSON output");
+        }
         return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
       } catch (error) {
         return toJsonContent({
@@ -1491,7 +1503,7 @@ function buildMemoryScanScript(input: MemoryScanInputType): string {
   }).replaceAll("'", "''");
   return (
     memoryHelperPreamble() +
-    `; $req='${payload}' | ConvertFrom-Json; [CrucibleMemory]::Scan([int]$req.pid, [string[]]$req.patterns, [string]$req.regions, [int]$req.maxMatches) | ConvertTo-Json -Compress -Depth 6`
+    `; $req='${payload}' | ConvertFrom-Json; $scanResult=[CrucibleMemory]::Scan([int]$req.pid, [string[]]$req.patterns, [string]$req.regions, [int]$req.maxMatches); $scanResult | ConvertTo-Json -Compress -Depth 6`
   );
 }
 
@@ -1499,7 +1511,7 @@ function buildMemoryDumpRegionScript(input: MemoryDumpRegionInputType): string {
   const payload = JSON.stringify(input).replaceAll("'", "''");
   return (
     memoryHelperPreamble() +
-    `; $req='${payload}' | ConvertFrom-Json; [CrucibleMemory]::DumpRegion([int]$req.pid, [string]$req.baseAddress, [int64]$req.size, [string]$req.outputGuestPath) | ConvertTo-Json -Compress -Depth 4`
+    `; $req='${payload}' | ConvertFrom-Json; $dumpResult=[CrucibleMemory]::DumpRegion([int]$req.pid, [string]$req.baseAddress, [int64]$req.size, [string]$req.outputGuestPath); $dumpResult | ConvertTo-Json -Compress -Depth 4`
   );
 }
 
