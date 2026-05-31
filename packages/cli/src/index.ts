@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { readFile, stat as fsStat } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
+import { dirname, resolve as resolvePath } from "node:path";
 
 import {
   buildNetworkPlan,
@@ -123,6 +124,10 @@ type MediaPlanArgs = {
   readonly includeManualInstructions: boolean;
 };
 
+type FetchToolsArgs = {
+  readonly force: boolean;
+};
+
 type NetPlanArgs = {
   readonly mode: NetworkMode;
   readonly firewallBackend: FirewallBackend;
@@ -155,6 +160,8 @@ export async function runCrucibleCli(
       return { exitCode: 0, stdout: getHelpText(), stderr: "" };
     case "media:plan":
       return renderMediaPlanCommand(rest, runtime);
+    case "media:fetch-tools":
+      return fetchToolsCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
     case "net:status":
@@ -1361,6 +1368,19 @@ function renderMediaPlanCommand(args: readonly string[], runtime: CliRuntime): C
   return { exitCode: 0, stdout: renderMediaPlan(parsed.args, config), stderr: "" };
 }
 
+async function fetchToolsCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseFetchToolsArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+  const config = getRuntimeConfig(runtime);
+  const results = await fetchToolArchives(config.media.cacheDir, parsed.args);
+  return { exitCode: 0, stdout: renderFetchToolsResult(results), stderr: "" };
+}
+
 function renderNetPlanCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   const config = getRuntimeConfig(runtime);
   const parsed = parseNetPlanArgs(args, config.network.mode);
@@ -1577,7 +1597,16 @@ function renderMediaPlan(args: MediaPlanArgs, config: CrucibleConfig): string {
   ];
 
   if (args.includeManualInstructions) {
-    lines.push("", getManualDownloadInstructions(plan.cacheDirectory, plan.manualDownloads));
+    lines.push(
+      "",
+      getManualDownloadInstructions(plan.cacheDirectory, plan.manualDownloads),
+      "",
+      "Optional tool archives:",
+      ...TOOL_ARCHIVES.map(
+        (archive) =>
+          `- ${archive.name}: ${archive.url} -> ${resolvePath(plan.cacheDirectory, archive.fileName)}`,
+      ),
+    );
   } else {
     lines.push(
       "",
@@ -1588,8 +1617,98 @@ function renderMediaPlan(args: MediaPlanArgs, config: CrucibleConfig): string {
   return lines.join("\n");
 }
 
+type ToolArchive = {
+  readonly name: string;
+  readonly url: string;
+  readonly fileName: string;
+};
+
+type ToolFetchResult = {
+  readonly name: string;
+  readonly url: string;
+  readonly path: string;
+  readonly status: "downloaded" | "cached";
+  readonly sizeBytes: number;
+  readonly sha256: string;
+};
+
+const TOOL_ARCHIVES: readonly ToolArchive[] = [
+  {
+    name: "Sysinternals Suite",
+    url: "https://download.sysinternals.com/files/SysinternalsSuite.zip",
+    fileName: "SysinternalsSuite.zip",
+  },
+  {
+    name: "ProcDump",
+    url: "https://download.sysinternals.com/files/Procdump.zip",
+    fileName: "Procdump.zip",
+  },
+  {
+    name: "Process Monitor",
+    url: "https://download.sysinternals.com/files/ProcessMonitor.zip",
+    fileName: "ProcessMonitor.zip",
+  },
+];
+
+async function fetchToolArchives(
+  cacheDirectory: string,
+  args: FetchToolsArgs,
+): Promise<readonly ToolFetchResult[]> {
+  await mkdir(cacheDirectory, { recursive: true });
+  const results: ToolFetchResult[] = [];
+  for (const archive of TOOL_ARCHIVES) {
+    const destination = resolvePath(cacheDirectory, archive.fileName);
+    if (!args.force && (await fileExists(destination))) {
+      const data = await readFile(destination);
+      results.push({
+        name: archive.name,
+        url: archive.url,
+        path: destination,
+        status: "cached",
+        sizeBytes: data.byteLength,
+        sha256: sha256Hex(data),
+      });
+      continue;
+    }
+    const response = await fetch(archive.url);
+    if (!response.ok) {
+      throw new Error(`download ${archive.url} failed: HTTP ${response.status}`);
+    }
+    const data = Buffer.from(await response.arrayBuffer());
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, data, { mode: 0o644 });
+    results.push({
+      name: archive.name,
+      url: archive.url,
+      path: destination,
+      status: "downloaded",
+      sizeBytes: data.byteLength,
+      sha256: sha256Hex(data),
+    });
+  }
+  return results;
+}
+
+function sha256Hex(data: Buffer): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function renderFetchToolsResult(results: readonly ToolFetchResult[]): string {
+  return [
+    "Fetched tool archives:",
+    ...results.map(
+      (result) =>
+        `- ${result.name}: ${result.status}, ${result.sizeBytes} bytes, sha256=${result.sha256}, path=${result.path}`,
+    ),
+  ].join("\n");
+}
+
 type MediaPlanArgsResult =
   | { readonly ok: true; readonly args: MediaPlanArgs }
+  | { readonly ok: false; readonly message: string };
+
+type FetchToolsArgsResult =
+  | { readonly ok: true; readonly args: FetchToolsArgs }
   | { readonly ok: false; readonly message: string };
 
 type NetPlanArgsResult =
@@ -1879,6 +1998,18 @@ function parseMediaPlanArgs(
   return { ok: true, args: { profile, includeManualInstructions } };
 }
 
+function parseFetchToolsArgs(args: readonly string[]): FetchToolsArgsResult {
+  let force = false;
+  for (const arg of args) {
+    if (arg === "--force") {
+      force = true;
+      continue;
+    }
+    return { ok: false, message: `Unknown media:fetch-tools option: ${arg}` };
+  }
+  return { ok: true, args: { force } };
+}
+
 function isMediaProfileName(value: string): value is MediaProfileName {
   return value === "windows11-enterprise-eval" || value === "windows-server-2025-eval";
 }
@@ -1962,6 +2093,7 @@ function getHelpText(): string {
     "  crucible package",
     "  crucible mcp         Start the MCP server (scaffolded)",
     "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
+    "  crucible media:fetch-tools [--force]  Download optional tool archives into media/cache",
     "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
     "  crucible net:status",
     "  crucible net:set isolated|nat|capture",

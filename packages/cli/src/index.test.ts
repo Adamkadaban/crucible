@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildLifecyclePaths,
@@ -14,6 +14,10 @@ import {
 import { runCrucibleCli } from "./index.js";
 
 const defaultRuntime = { config: defaultCrucibleConfig };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("crucible CLI bootstrap", () => {
   it("prints help", async () => {
@@ -43,6 +47,9 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Windows 11 Enterprise Evaluation page");
     expect(result.stdout).toContain("stable virtio-win ISO");
+    expect(result.stdout).toContain("Optional tool archives:");
+    expect(result.stdout).toContain("Procdump.zip");
+    expect(result.stdout).toContain("ProcessMonitor.zip");
     expect(result.stdout).not.toContain("Windows Server 2025 Evaluation page");
     expect(result.stdout).not.toContain("latest virtio-win ISO");
   });
@@ -180,6 +187,60 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("stable virtio-win ISO");
     expect(result.stdout).not.toContain("Windows 11 Enterprise Evaluation page");
     expect(result.stdout).not.toContain("latest virtio-win ISO");
+  });
+
+  it("fetches optional tool archives into the media cache", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-fetch-tools-"));
+    const config = parseCrucibleConfig({ media: { cacheDir: path.join(root, "cache") } });
+    const bodies = new Map<string, Buffer>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const body = Buffer.from(`payload:${url}`);
+        bodies.set(url, body);
+        return new Response(body, { status: 200 });
+      }),
+    );
+
+    const result = await runCrucibleCli(["media:fetch-tools"], { config });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Sysinternals Suite: downloaded");
+    expect(result.stdout).toContain("ProcDump: downloaded");
+    expect(result.stdout).toContain("Process Monitor: downloaded");
+    await expect(readFile(path.join(root, "cache", "Procdump.zip"), "utf8")).resolves.toContain(
+      "Procdump.zip",
+    );
+    expect(bodies.size).toBe(3);
+  });
+
+  it("reuses cached tool archives unless forced", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-fetch-tools-cached-"));
+    const cacheDir = path.join(root, "cache");
+    await mkdir(cacheDir, { recursive: true });
+    for (const file of ["SysinternalsSuite.zip", "Procdump.zip", "ProcessMonitor.zip"]) {
+      await writeFile(path.join(cacheDir, file), `cached:${file}`);
+    }
+    const config = parseCrucibleConfig({ media: { cacheDir } });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runCrucibleCli(["media:fetch-tools"], { config });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("ProcDump: cached");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => new Response(Buffer.from(`forced:${url}`), { status: 200 })),
+    );
+    const forced = await runCrucibleCli(["media:fetch-tools", "--force"], { config });
+    expect(forced.exitCode).toBe(0);
+    expect(forced.stdout).toContain("ProcDump: downloaded");
+    await expect(readFile(path.join(cacheDir, "Procdump.zip"), "utf8")).resolves.toContain(
+      "forced:",
+    );
   });
 
   it("rejects unknown media profile", async () => {
