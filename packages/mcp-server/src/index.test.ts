@@ -714,6 +714,44 @@ describe("crucible MCP tools", () => {
     expect(execRequests[0]?.arguments?.join(" ")).toContain("CrucibleMemory");
   });
 
+  it("reports memory helper empty stdout with stderr context", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () =>
+        Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: "",
+          stderrBase64: Buffer.from("helper wrote no output").toString("base64"),
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const scan = (await client.callTool({
+      name: "memory_scan",
+      arguments: { pid: 1234, patterns: ["4d5a"] },
+    })) as ToolCallText;
+    const dump = (await client.callTool({
+      name: "memory_dump_region",
+      arguments: { pid: 1234, baseAddress: "0x1000", size: 16, outputGuestPath: "C:\\region.bin" },
+    })) as ToolCallText;
+    const scanPayload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(scan);
+    const dumpPayload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(dump);
+
+    expect(scanPayload.ok).toBe(false);
+    expect(scanPayload.error.message).toContain("helper wrote no output");
+    expect(dumpPayload.ok).toBe(false);
+    expect(dumpPayload.error.message).toContain("helper wrote no output");
+  });
+
   it("returns isError when guest_exec input fails Zod validation", async () => {
     const client = await harness({});
     const result = (await client.callTool({
