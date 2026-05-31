@@ -261,6 +261,7 @@ describe("crucible CLI bootstrap", () => {
         },
       },
     });
+    const progressEvents: string[] = [];
     const result = await runCrucibleCli(["provision"], {
       config,
       lifecycleManager: fakeLifecycleManager(config, { processAlive: true, qmpAvailable: true }),
@@ -276,6 +277,12 @@ describe("crucible CLI bootstrap", () => {
       },
       snapshotManager: fakeSnapshotManager(config),
       skipBootKeyNudge: true,
+      progress: {
+        start: () => progressEvents.push("start"),
+        stageStarted: (stage) => progressEvents.push(`start:${stage.id}`),
+        stageCompleted: (stage) => progressEvents.push(`done:${stage.id}`),
+        finish: (status) => progressEvents.push(`finish:${status}`),
+      },
     });
 
     expect(result.exitCode).toBe(0);
@@ -285,6 +292,10 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("Snapshot created: clean-base");
     expect(result.stdout).toContain("Guest health: degraded");
     expect(result.stdout).toContain("debugger-health: unknown");
+    expect(progressEvents[0]).toBe("start");
+    expect(progressEvents).toContain("start:media-ready");
+    expect(progressEvents).toContain("done:snapshot-prepared");
+    expect(progressEvents.at(-1)).toBe("finish:complete");
   });
 
   it("restarts into the final lifecycle after analysis tools stage", async () => {
