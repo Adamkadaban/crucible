@@ -124,6 +124,10 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     description: "Capture a user-mode dump file for a debugger session target.",
   },
   {
+    name: "debug_run_script",
+    description: "Run a multi-line CDB script in a temporary persistent debugger session.",
+  },
+  {
     name: "dump_process",
     description:
       "Capture a user-mode process dump without attaching CDB, using ProcDump when available.",
@@ -229,6 +233,8 @@ const DebugOpenInput = z.discriminatedUnion("mode", [
       arguments: z.array(z.string()).max(64).optional(),
       symbolPath: z.string().optional(),
       arch: z.enum(["x86", "x64"]).optional(),
+      debuggerArch: z.enum(["auto", "x86", "x64"]).optional(),
+      initialCommands: z.array(z.string().min(1)).max(64).optional(),
     })
     .strict(),
   z
@@ -237,6 +243,8 @@ const DebugOpenInput = z.discriminatedUnion("mode", [
       pid: z.number().int().positive(),
       symbolPath: z.string().optional(),
       arch: z.enum(["x86", "x64"]).optional(),
+      debuggerArch: z.enum(["auto", "x86", "x64"]).optional(),
+      initialCommands: z.array(z.string().min(1)).max(64).optional(),
     })
     .strict(),
 ]);
@@ -259,6 +267,19 @@ const DebugDumpInput = z
   })
   .strict();
 type DebugDumpInputType = z.infer<typeof DebugDumpInput>;
+
+const DebugRunScriptInput = z
+  .object({
+    target: DebugOpenInput,
+    script: z
+      .string()
+      .min(1)
+      .max(64 * 1024),
+    timeoutMs: z.number().int().positive().max(120_000).optional(),
+    logPath: z.string().min(1).optional(),
+  })
+  .strict();
+type DebugRunScriptInputType = z.infer<typeof DebugRunScriptInput>;
 
 const DumpProcessInput = z
   .object({
@@ -936,9 +957,21 @@ function registerDebuggerTools(
       try {
         const client = await requireDebugClient();
         const spec: DebuggerSessionSpec = parsed.data;
-        const cdbExecutable = await resolveCdbExecutable(client, spec.arch);
+        const cdbExecutable = await resolveCdbExecutable(
+          client,
+          requestedDebuggerArch(parsed.data),
+        );
         const cdbArgs = buildPersistentCdbArgs(spec);
         const opened = await client.debugOpen({ executable: cdbExecutable, arguments: cdbArgs });
+        let initialOutputBase64 = "";
+        if (parsed.data.initialCommands !== undefined && parsed.data.initialCommands.length > 0) {
+          const initial = await client.debugCommand(
+            opened.id,
+            parsed.data.initialCommands.join("\r\n"),
+            1_000,
+          );
+          initialOutputBase64 = initial.outputBase64 ?? "";
+        }
         return toJsonContent({
           ok: true,
           result: {
@@ -948,6 +981,9 @@ function registerDebuggerTools(
             logPath: opened.logPath,
             spec,
             cdbExecutable,
+            state: "running",
+            lastEvent: "opened",
+            stdoutBase64: initialOutputBase64,
           },
           auditLogPath,
         });
@@ -1064,6 +1100,58 @@ function registerDebuggerTools(
           });
         }
       })();
+    },
+  );
+
+  server.registerTool(
+    "debug_run_script",
+    {
+      title: "Run debugger script",
+      description: "Run a multi-line CDB script in a temporary persistent debugger session.",
+      inputSchema: DebugRunScriptInput.shape,
+    },
+    async (input: DebugRunScriptInputType) => {
+      try {
+        const client = await requireDebugClient();
+        const target = input.target;
+        const cdbExecutable = await resolveCdbExecutable(client, requestedDebuggerArch(target));
+        const cdbArgs = buildPersistentCdbArgs(target);
+        const opened = await client.debugOpen({
+          executable: cdbExecutable,
+          arguments: cdbArgs,
+          logPath: input.logPath,
+        });
+        try {
+          if (target.initialCommands !== undefined && target.initialCommands.length > 0) {
+            await client.debugCommand(opened.id, target.initialCommands.join("\r\n"), 1_000);
+          }
+          const result = await client.debugCommand(
+            opened.id,
+            input.script,
+            input.timeoutMs ?? 30_000,
+          );
+          return toJsonContent({
+            ok: true,
+            result: {
+              exitCode: result.exitCode,
+              timedOut: !result.exited,
+              stdoutBase64: result.outputBase64 ?? "",
+              logPath: result.logPath,
+              exited: result.exited,
+              exitError: result.exitError,
+              createdFiles: [] as string[],
+            },
+            auditLogPath,
+          });
+        } finally {
+          await client.debugClose(opened.id).catch(() => undefined);
+        }
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
     },
   );
 
@@ -1251,13 +1339,20 @@ const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\
 
 async function resolveCdbExecutable(
   client: GuestAgentClient,
-  arch: "x86" | "x64" | undefined,
+  arch: "auto" | "x86" | "x64" | undefined,
 ): Promise<string> {
-  if (arch === undefined) {
+  if (arch === undefined || arch === "auto") {
     const health = await client.health();
     return health.cdbPath ?? DEFAULT_CDB_EXECUTABLE;
   }
   return defaultCdbPathForArch(arch);
+}
+
+function requestedDebuggerArch(input: {
+  readonly arch?: "x86" | "x64";
+  readonly debuggerArch?: "auto" | "x86" | "x64";
+}): "auto" | "x86" | "x64" | undefined {
+  return input.debuggerArch ?? input.arch;
 }
 
 function defaultCdbPathForArch(arch: "x86" | "x64"): string {
