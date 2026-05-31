@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { setTimeout as wait } from "node:timers/promises";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { GuestAgentClient } from "./guest-agent-client.js";
+import { GuestAgentClient, fileSize } from "./guest-agent-client.js";
 
 // These tests build the Go guest agent once and run it locally over a fresh
 // mTLS test PKI so we can verify the host TS client against the real wire
@@ -283,3 +284,354 @@ async function generatePki(): Promise<{
     await rm(tmp, { recursive: true, force: true });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests using a local Node.js HTTPS server (no Go dependency)
+// ---------------------------------------------------------------------------
+describe("GuestAgentClient (unit)", () => {
+  let httpsServer: HttpsServer;
+  let client: GuestAgentClient;
+  let baseUrl: string;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    const pki = await generatePki();
+    tmpDir = await mkdtemp(join(tmpdir(), "crucible-unit-"));
+
+    httpsServer = createHttpsServer(
+      {
+        cert: pki.server.cert,
+        key: pki.server.key,
+        ca: pki.ca.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      (req, res) => {
+        const url = new URL(req.url ?? "/", `https://localhost`);
+
+        if (req.method === "GET" && url.pathname === "/health") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              status: "ok",
+              version: "test",
+              hostName: "unit",
+              startedAt: "2024-01-01T00:00:00Z",
+              uptimeSeconds: 42,
+              goVersion: "test",
+              windbgInstalled: false,
+            }),
+          );
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/exec") {
+          let body = "";
+          req.on("data", (c: Buffer) => (body += c.toString()));
+          req.on("end", () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                exitCode: 0,
+                timedOut: false,
+                durationMs: 10,
+                truncated: false,
+                stdoutBase64: Buffer.from("hello\n").toString("base64"),
+              }),
+            );
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/debug/open") {
+          let body = "";
+          req.on("data", (c: Buffer) => (body += c.toString()));
+          req.on("end", () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                id: "sess-1",
+                pid: 1234,
+                logPath: "C:\\log.txt",
+                startedAt: "2024-01-01T00:00:00Z",
+              }),
+            );
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/debug/command") {
+          let body = "";
+          req.on("data", (c: Buffer) => (body += c.toString()));
+          req.on("end", () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                id: "sess-1",
+                truncated: false,
+                logPath: "C:\\log.txt",
+                exited: false,
+                outputBase64: Buffer.from("output").toString("base64"),
+              }),
+            );
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/debug/close") {
+          let body = "";
+          req.on("data", (c: Buffer) => (body += c.toString()));
+          req.on("end", () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ id: "sess-1", closed: true, logPath: "C:\\log.txt" }));
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/upload") {
+          // Consume the gzipped body, return a fake result
+          const chunks: Buffer[] = [];
+          req.on("data", (c: Buffer) => chunks.push(c));
+          req.on("end", () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                path: url.searchParams.get("path") ?? "",
+                sizeBytes: 14,
+                sha256: "abcd".repeat(16),
+              }),
+            );
+          });
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/download") {
+          const p = url.searchParams.get("path") ?? "";
+          if (p === "large") {
+            // Return a body that is large (for maxBodyBytes test)
+            res.writeHead(200, {
+              "Content-Type": "application/octet-stream",
+              "x-crucible-size": "999999",
+              "x-crucible-sha256": "ff".repeat(32),
+            });
+            res.end(Buffer.alloc(256, 0x41));
+            return;
+          }
+          const content = Buffer.from("downloaded-data");
+          res.writeHead(200, {
+            "Content-Type": "application/octet-stream",
+            "x-crucible-size": String(content.byteLength),
+            "x-crucible-sha256": "cc".repeat(32),
+          });
+          res.end(content);
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/inspect") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              path: url.searchParams.get("path") ?? "",
+              sizeBytes: 100,
+              headerHex: "68656c6c6f",
+              headerAscii: "hello",
+            }),
+          );
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/error") {
+          res.writeHead(500, { "Content-Type": "text/plain" });
+          res.end("internal server error");
+          return;
+        }
+
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+      },
+    );
+
+    const port = await pickPort();
+    await new Promise<void>((resolve) => {
+      httpsServer.listen(port, "127.0.0.1", () => resolve());
+    });
+    baseUrl = `https://127.0.0.1:${port}`;
+
+    client = new GuestAgentClient({
+      baseUrl,
+      caPem: pki.ca.cert,
+      clientCertificatePem: pki.client.cert,
+      clientPrivateKeyPem: pki.client.key,
+      timeoutMs: 5_000,
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    await client?.close();
+    await new Promise<void>((resolve) => {
+      if (httpsServer) httpsServer.close(() => resolve());
+      else resolve();
+    });
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("health() returns parsed JSON", async () => {
+    const h = await client.health();
+    expect(h.status).toBe("ok");
+    expect(h.version).toBe("test");
+    expect(h.uptimeSeconds).toBe(42);
+  });
+
+  it("exec() posts and returns result", async () => {
+    const r = await client.exec({ executable: "/bin/sh", arguments: ["-c", "echo hello"] });
+    expect(r.exitCode).toBe(0);
+    expect(r.timedOut).toBe(false);
+    expect(Buffer.from(r.stdoutBase64 ?? "", "base64").toString()).toBe("hello\n");
+  });
+
+  it("debugOpen() returns session info", async () => {
+    const r = await client.debugOpen({ executable: "cdb.exe" });
+    expect(r.id).toBe("sess-1");
+    expect(r.pid).toBe(1234);
+  });
+
+  it("debugCommand() returns output", async () => {
+    const r = await client.debugCommand("sess-1", "g", 1000);
+    expect(r.id).toBe("sess-1");
+    expect(r.exited).toBe(false);
+  });
+
+  it("debugClose() returns closed status", async () => {
+    const r = await client.debugClose("sess-1");
+    expect(r.closed).toBe(true);
+  });
+
+  it("upload() sends buffer and returns result", async () => {
+    const r = await client.upload("test/file.bin", Buffer.from("hello crucible"));
+    expect(r.path).toBe("test/file.bin");
+    expect(r.sizeBytes).toBe(14);
+  });
+
+  it("uploadFile() sends file contents", async () => {
+    const filePath = join(tmpDir, "upload-src.bin");
+    await writeFile(filePath, "file-content");
+    const r = await client.uploadFile(filePath, "remote/path.bin");
+    expect(r.path).toBe("remote/path.bin");
+  });
+
+  it("download() returns buffer", async () => {
+    const buf = await client.download("some/file.bin");
+    expect(buf.toString()).toBe("downloaded-data");
+  });
+
+  it("download() exceeds maxBodyBytes with same PKI", async () => {
+    // Reconstruct the HTTPS server's PKI for a new client with tiny limit
+    // The existing client works, so we know the PKI is valid. We access the
+    // constructor options via a helper.
+    // Actually, we stored pki in beforeAll but it's scoped. Let's generate a
+    // fresh PKI and server, or simpler: just test via the "large" path with
+    // the existing client that has default 64MB limit - won't trigger.
+    // The cleanest approach: create a subclass that exposes maxBodyBytes
+    // or re-generate pki.
+    // For now, let's just test the error by calling the /download?path=large
+    // endpoint which returns 256 bytes, with a client that has maxBodyBytes=10.
+    // We need the same PKI... Let's regenerate.
+    const pki = await generatePki();
+    const port = await pickPort();
+    const srv = createHttpsServer(
+      {
+        cert: pki.server.cert,
+        key: pki.server.key,
+        ca: pki.ca.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/octet-stream" });
+        res.end(Buffer.alloc(256, 0x41));
+      },
+    );
+    await new Promise<void>((r) => srv.listen(port, "127.0.0.1", () => r()));
+    const tinyClient = new GuestAgentClient({
+      baseUrl: `https://127.0.0.1:${port}`,
+      caPem: pki.ca.cert,
+      clientCertificatePem: pki.client.cert,
+      clientPrivateKeyPem: pki.client.key,
+      maxBodyBytes: 10,
+      timeoutMs: 5_000,
+    });
+    await expect(tinyClient.download("any")).rejects.toThrow(/maxBodyBytes/);
+    await tinyClient.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  }, 30_000);
+
+  it("downloadFile() writes to disk and returns metadata", async () => {
+    const dest = join(tmpDir, "dl-output.bin");
+    const r = await client.downloadFile("some/file.bin", dest);
+    expect(r.path).toBe("some/file.bin");
+    expect(r.sizeBytes).toBe(15); // "downloaded-data".length
+    const content = await readFile(dest);
+    expect(content.toString()).toBe("downloaded-data");
+  });
+
+  it("inspect() returns file metadata", async () => {
+    const r = await client.inspect("some/file.bin");
+    expect(r.headerAscii).toBe("hello");
+    expect(r.sizeBytes).toBe(100);
+  });
+
+  it("close() resolves without error", async () => {
+    // Create a throwaway client just to test close
+    const pki = await generatePki();
+    const c = new GuestAgentClient({
+      baseUrl: "https://127.0.0.1:1",
+      caPem: pki.ca.cert,
+      clientCertificatePem: pki.client.cert,
+      clientPrivateKeyPem: pki.client.key,
+    });
+    await expect(c.close()).resolves.toBeUndefined();
+  });
+
+  it("#request throws on non-ok response", async () => {
+    // Hit a 404 endpoint
+    await expect(client.download("__nonexistent__")).resolves.toBeDefined();
+    // Actually the server returns 200 for any /download path. Use a
+    // separate approach: hit an unknown endpoint via health-like call.
+    // The simplest: create a client that targets /error.
+    // We can't call #request directly, but we can trigger it via inspect
+    // on a server that returns 500. Let's use a dedicated server.
+    const pki = await generatePki();
+    const port = await pickPort();
+    const srv = createHttpsServer(
+      {
+        cert: pki.server.cert,
+        key: pki.server.key,
+        ca: pki.ca.cert,
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      (_req, res) => {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("something went wrong");
+      },
+    );
+    await new Promise<void>((r) => srv.listen(port, "127.0.0.1", () => r()));
+    const errClient = new GuestAgentClient({
+      baseUrl: `https://127.0.0.1:${port}`,
+      caPem: pki.ca.cert,
+      clientCertificatePem: pki.client.cert,
+      clientPrivateKeyPem: pki.client.key,
+      timeoutMs: 5_000,
+    });
+    await expect(errClient.health()).rejects.toThrow(/500/);
+    await errClient.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  }, 30_000);
+
+  it("fileSize() returns file size", async () => {
+    const p = join(tmpDir, "sized.txt");
+    await writeFile(p, "abcdef");
+    const sz = await fileSize(p);
+    expect(sz).toBe(6);
+  });
+});

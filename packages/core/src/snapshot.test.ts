@@ -223,6 +223,69 @@ describe("SnapshotManager", () => {
       message: "qemu-img snapshot command failed",
     });
   });
+
+  it("resumes the VM when QMP create fails after stop", async () => {
+    const harness = await createSnapshotHarness({ qmpFailureCommand: "snapshot-save" });
+
+    await expect(harness.manager.create()).rejects.toThrow("snapshot-save failed");
+
+    expect(harness.qmp.calls.map((call) => call.command)).toEqual([
+      "stop",
+      "snapshot-save",
+      "cont",
+    ]);
+  });
+
+  it("allows non-clean-base snapshots with the same name to be recreated", async () => {
+    const harness = await createSnapshotHarness();
+
+    await harness.manager.create("my-snapshot");
+    const result = await harness.manager.create("my-snapshot");
+
+    expect(result.snapshot).toMatchObject({ name: "my-snapshot", clean: false });
+  });
+
+  it("normalizeSnapshotName accepts valid names", () => {
+    expect(normalizeSnapshotName("a")).toBe("a");
+    expect(normalizeSnapshotName("a.b")).toBe("a.b");
+    expect(normalizeSnapshotName("a-b")).toBe("a-b");
+    expect(normalizeSnapshotName("a_b")).toBe("a_b");
+    expect(normalizeSnapshotName("0abc")).toBe("0abc");
+    expect(normalizeSnapshotName("A".repeat(64))).toBe("A".repeat(64));
+  });
+
+  it("falls back to empty manifest when file does not exist", async () => {
+    const harness = await createSnapshotHarness();
+
+    const snapshots = await harness.manager.list();
+
+    expect(snapshots).toEqual([]);
+  });
+
+  it("records metadata.diskFormat and metadata.qmpSocket in snapshot", async () => {
+    const harness = await createSnapshotHarness();
+
+    await harness.manager.create();
+
+    const manifest = await readJson<ArtifactManifest>(harness.config.artifacts.manifestPath);
+    const snapshot = manifest.artifacts.find((a): a is SnapshotRecord => a.kind === "snapshot");
+    expect(snapshot?.metadata).toMatchObject({
+      diskFormat: harness.plan.disk.format,
+      qmpSocket: expect.any(String) as unknown,
+    });
+  });
+
+  it("create non-clean-base with offline fallback records clean=false", async () => {
+    const harness = await createSnapshotHarness({ qmpConnectError: new Error("no qmp") });
+
+    const result = await harness.manager.create("user-snap");
+
+    expect(result.snapshot).toMatchObject({
+      name: "user-snap",
+      clean: false,
+      mode: "offline-qcow2",
+    });
+  });
 });
 
 type HarnessOptions = {

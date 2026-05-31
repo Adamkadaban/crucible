@@ -8,6 +8,7 @@
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22.12.0-339933">
   <img alt="Platform" src="https://img.shields.io/badge/platform-linux%20%2B%20kvm-informational">
+  <img alt="made with vibes" src="https://img.shields.io/badge/made_with-vibes-ff69b4">
 </p>
 
 Crucible is a source-install beta for running a Windows analysis VM on QEMU/KVM, installing debugger

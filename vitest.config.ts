@@ -10,5 +10,18 @@ export default defineConfig({
   },
   test: {
     include: ["packages/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      reportsDirectory: "coverage",
+      include: ["packages/{cli,core,mcp-server}/src/**/*.ts"],
+      exclude: ["**/*.test.ts", "**/*.live.test.ts"],
+      thresholds: {
+        lines: 85,
+        statements: 85,
+        functions: 85,
+        branches: 75,
+      },
+    },
   },
 });

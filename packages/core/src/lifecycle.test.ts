@@ -388,6 +388,118 @@ describe("VmLifecycleManager", () => {
     );
   });
 
+  it("stop when VM is already stopped returns clean result without signals", async () => {
+    const harness = await createLifecycleHarness();
+
+    const result = await harness.manager.stop();
+
+    expect(result).toMatchObject({
+      mode: "stop",
+      qmpCommandSent: false,
+      killedAfterTimeout: false,
+    });
+    expect(harness.signals).toEqual([]);
+  });
+
+  it("kill when VM is already stopped returns clean result", async () => {
+    const harness = await createLifecycleHarness();
+
+    const result = await harness.manager.kill();
+
+    expect(result).toMatchObject({
+      qmpCommandSent: false,
+      killedAfterTimeout: false,
+    });
+    expect(harness.signals).toEqual([]);
+  });
+
+  it("status returns stale when pid file has dead pid", async () => {
+    const harness = await createLifecycleHarness();
+    await mkdirFor(harness.paths.pidFile);
+    await writeFile(harness.paths.pidFile, "9999\n", "utf8");
+
+    const status = await harness.manager.status();
+
+    expect(status.status).toBe("stale");
+  });
+
+  it("status includes QMP warning when QMP connect fails on alive process", async () => {
+    const harness = await createLifecycleHarness();
+    await harness.manager.start();
+    harness.qmp.connectError = new Error("socket hangup");
+
+    const status = await harness.manager.status();
+
+    expect(status.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("poweroff when VM is already stopped", async () => {
+    const harness = await createLifecycleHarness();
+
+    const result = await harness.manager.poweroff();
+
+    expect(result.mode).toBe("poweroff");
+    expect(result.status.status).toBe("poweredOff");
+  });
+
+  it("cleanupStaleResources skips cleanup when process is alive", async () => {
+    const harness = await createLifecycleHarness();
+    await harness.manager.start();
+
+    const cleanup = await harness.manager.cleanupStaleResources();
+
+    expect(cleanup.removedPaths).toEqual([]);
+  });
+
+  it("stop with graceful SIGTERM exit (no SIGKILL needed)", async () => {
+    const root = await createTempDir();
+    const config = parseCrucibleConfig({
+      vm: { name: "life-test" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock"), timeoutMs: 100 },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+    const plan = buildQemuCommandPlan({ config });
+    const processes = new Set<number>();
+    const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
+    const manager = new VmLifecycleManager({
+      config,
+      plan,
+      spawner: {
+        spawn() {
+          processes.add(4242);
+          return Promise.resolve({ pid: 4242 });
+        },
+      },
+      processController: {
+        isAlive: (pid) => processes.has(pid),
+        signal: (pid, signal) => {
+          signals.push({ pid, signal });
+          if (signal === "SIGTERM") {
+            processes.delete(pid);
+          }
+        },
+        waitForExit: (pid) => Promise.resolve(!processes.has(pid)),
+      },
+      qmpClientFactory: () => new FakeQmpSession(new Error("no qmp")),
+      stopTimeoutMs: 1,
+      killTimeoutMs: 1,
+      pollIntervalMs: 1,
+    });
+
+    await manager.start();
+    const result = await manager.stop();
+
+    expect(result.killedAfterTimeout).toBe(false);
+    expect(result.signalSent).toBe("SIGTERM");
+  });
+
   it("preserves recorded qemu argv if restart spawn fails", async () => {
     const harness = await createLifecycleHarness({ spawnError: new Error("spawn failed") });
     const richArgs = ["-name", "life-test", "-cdrom", "payload.iso"];
@@ -495,7 +607,7 @@ class FakeQmpSession implements VmQmpSession {
   readonly commands: string[] = [];
   nextExecute: ((command: string) => { readonly returnValue: unknown }) | undefined;
 
-  constructor(readonly connectError?: Error) {}
+  constructor(public connectError?: Error) {}
 
   connect(): Promise<unknown> {
     if (this.connectError !== undefined) {

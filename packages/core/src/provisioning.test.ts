@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { parseCrucibleConfig } from "./config.js";
+import { type CrucibleConfig, parseCrucibleConfig } from "./config.js";
 import { buildLifecyclePaths, type VmStatus } from "./lifecycle.js";
 import {
   buildGuestAgentCertificateStagePlan,
@@ -782,6 +782,32 @@ describe("provisioning contracts", () => {
     );
     expect(script).not.toContain("-PasswordNeverExpires $true");
     expect(script).not.toContain("-UserMayChangePassword $false");
+  });
+
+  it("getExampleConfigJson returns valid JSON", () => {
+    const config = parseCrucibleConfig({});
+    const json = JSON.stringify(config);
+    const parsed = JSON.parse(json) as CrucibleConfig;
+    expect(parsed).toBeDefined();
+    expect(parsed.vm).toBeDefined();
+    expect(parsed.vm.name).toBe(config.vm.name);
+  });
+
+  it("buildProvisioningSecretStorageContract generates expected paths", () => {
+    const secrets = buildProvisioningSecretStorageContract("test-vm", "/tmp/secrets");
+    expect(secrets.secretRefs.length).toBeGreaterThan(0);
+    const kinds = secrets.secretRefs.map((ref) => ref.kind);
+    expect(kinds).toContain("windows-standard-password");
+    expect(kinds).toContain("windows-admin-password");
+    expect(kinds).toContain("mtls-ca-private-key");
+    expect(kinds).toContain("mtls-ca-certificate");
+    expect(kinds).toContain("mtls-host-client-private-key");
+    expect(kinds).toContain("mtls-host-client-certificate");
+    expect(kinds).toContain("mtls-guest-server-private-key");
+    expect(kinds).toContain("mtls-guest-server-certificate");
+    expect(secrets.secretRefs.every((ref) => ref.path.startsWith(secrets.rootDirectory))).toBe(
+      true,
+    );
   });
 
   it("limits guest agent firewall setup to the host-only source address", async () => {

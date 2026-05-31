@@ -55,6 +55,7 @@
     "build": "pnpm generate:version && tsc -b packages/core packages/mcp-server packages/cli",
     "build:bundle": "node scripts/build-npm-bundle.mjs",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "coverage": "vitest run --coverage",
     "crucible": "tsx --conditions=development packages/cli/src/index.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -72,6 +73,7 @@
   "devDependencies": {
     "@eslint/js": "9.39.4",
     "@types/node": "25.9.1",
+    "@vitest/coverage-v8": "4.1.7",
     "esbuild": "^0.28.0",
     "eslint": "9.39.4",
     "prettier": "3.8.3",
