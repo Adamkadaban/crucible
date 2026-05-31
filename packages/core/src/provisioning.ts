@@ -626,6 +626,7 @@ export async function prepareRealFirstBootProvisioning(
     sysinternalsZipPath: await optionalReadableFile(
       path.join(config.media.cacheDir, "SysinternalsSuite.zip"),
     ),
+    procdumpZipPath: await optionalReadableFile(path.join(config.media.cacheDir, "Procdump.zip")),
     mtlsCaCertificatePath: mtls.caCertificatePath,
     mtlsServerCertificatePath: mtls.serverCertificatePath,
     mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
@@ -667,6 +668,7 @@ async function buildPayloadIsoCommand(options: {
   readonly bootDirectory: string;
   readonly agentBinaryPath: string | undefined;
   readonly sysinternalsZipPath: string | undefined;
+  readonly procdumpZipPath: string | undefined;
   readonly mtlsCaCertificatePath: string;
   readonly mtlsServerCertificatePath: string;
   readonly mtlsServerPrivateKeyPath: string;
@@ -701,6 +703,10 @@ async function buildPayloadIsoCommand(options: {
   if (options.sysinternalsZipPath !== undefined) {
     await assertReadableFile("Sysinternals Suite zip", options.sysinternalsZipPath);
     graftPoints.push(`/tools/SysinternalsSuite.zip=${options.sysinternalsZipPath}`);
+  }
+  if (options.procdumpZipPath !== undefined) {
+    await assertReadableFile("ProcDump zip", options.procdumpZipPath);
+    graftPoints.push(`/tools/Procdump.zip=${options.procdumpZipPath}`);
   }
   return {
     executable: options.xorrisoExecutable,
