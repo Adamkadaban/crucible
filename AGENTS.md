@@ -111,8 +111,8 @@ is `PLAN.md`.
 - `pnpm build`
 - `pnpm check` runs `format:check`, `lint`, `typecheck`, `test`, and `build`.
 - Guest agent commands:
-- `go test ./...` from `guest/agent`.
-- `go build ./...` from `guest/agent`.
+- `go test ./...` from `guest-agent`.
+- `go build ./...` from `guest-agent`.
 - All of `pnpm lint`, `pnpm typecheck`, and `pnpm test` must pass locally before opening a PR.
 - Tests ship with implementation. Deterministic tests are preferred.
 - CI uses `pull_request` trigger with concurrency cancellation, not `workflow_dispatch`-only.
@@ -263,8 +263,8 @@ concurrency cancellation, CI-safe fake tests, and no real-VM CI by default.
 - Full local check: `pnpm check`.
 - CLI during development: `pnpm crucible --help`.
 - Host prerequisite check: `scripts/check-host.sh`.
-- Guest agent tests: `cd guest/agent && go test ./...`.
-- Guest agent build: `cd guest/agent && go build ./...`.
+- Guest agent tests: `cd guest-agent && go test ./...`.
+- Guest agent build: `cd guest-agent && go build ./...`.
 
 # `references/` Contents
 

@@ -26,7 +26,7 @@ import {
 
 describe("core bootstrap exports", () => {
   it("exposes a version", () => {
-    expect(CRUCIBLE_VERSION).toBe("0.0.0");
+    expect(CRUCIBLE_VERSION).toBe("0.1.0-beta.0");
   });
 
   it("includes manual download guidance for default media", () => {

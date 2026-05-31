@@ -291,31 +291,32 @@ async function runVmStopCommand(
   args: readonly string[],
   runtime: CliRuntime,
 ): Promise<CommandResult> {
-  const manager = getLifecycleManager(runtime);
-  let result: VmStopResult;
-  let action = "stop";
-
-  switch (args[0]) {
-    case undefined:
-      result = await manager.stop();
-      break;
-    case "--poweroff":
-      action = "poweroff";
-      result = await manager.poweroff();
-      break;
-    case "--kill":
-      action = "kill";
-      result = await manager.kill();
-      break;
-    default:
-      return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[0]}` };
+  if (![undefined, "--poweroff", "--kill"].includes(args[0])) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[0]}` };
   }
 
   if (args.length > 1) {
     return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[1]}` };
   }
 
-  return { exitCode: 0, stdout: renderVmStopResult(result, action), stderr: "" };
+  const manager = getLifecycleManager(runtime);
+
+  switch (args[0]) {
+    case undefined: {
+      const result = await manager.stop();
+      return { exitCode: 0, stdout: renderVmStopResult(result, "stop"), stderr: "" };
+    }
+    case "--poweroff": {
+      const result = await manager.poweroff();
+      return { exitCode: 0, stdout: renderVmStopResult(result, "poweroff"), stderr: "" };
+    }
+    case "--kill": {
+      const result = await manager.kill();
+      return { exitCode: 0, stdout: renderVmStopResult(result, "kill"), stderr: "" };
+    }
+  }
+
+  return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${String(args[0])}` };
 }
 
 async function runVmStatusCommand(

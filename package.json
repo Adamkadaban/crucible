@@ -1,8 +1,8 @@
 {
   "name": "crucible",
-  "version": "0.0.0",
+  "version": "0.1.0-beta.0",
   "private": true,
-  "description": "Linux-hosted MCP server for provisioning and controlling isolated Windows VMs for malware analysis and debugging.",
+  "description": "Source-install beta for controlling isolated Windows analysis VMs from Linux MCP agents.",
   "author": "Adam Hassan",
   "license": "MIT",
   "type": "module",

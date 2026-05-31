@@ -1,8 +1,8 @@
 # Install
 
 Crucible runs on a Linux host with KVM, packages a Windows analysis VM inside QEMU, and exposes its
-MCP server over stdio. Beta installs follow the same shape as the development checkout — there is no
-separate distribution channel today.
+MCP server over stdio. The current public beta is installed from source; there is no npm package,
+binary installer, or stable release channel yet.
 
 ## Linux host prerequisites
 
@@ -25,18 +25,21 @@ sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
 You must supply the Windows installer ISO and the virtio drivers ISO yourself; Crucible never
 downloads them on the operator's behalf.
 
-1. Download a Windows 11 ISO (Enterprise Evaluation is fine).
+1. Download a Windows 11 ISO. Enterprise Evaluation is a good default.
 2. Download the latest stable virtio-win ISO and the virtio-win guest tools installer from
    https://github.com/virtio-win/virtio-win-pkg-scripts.
-3. Drop both files anywhere on disk and record the paths in `crucible.config.json` at the workspace
-   root:
+3. Copy `crucible.config.example.json` to `crucible.config.json` and replace the media paths:
+
+```sh
+cp crucible.config.example.json crucible.config.json
+```
 
 ```json
 {
   "media": {
-    "windowsIso": { "path": "/abs/path/Win11_25H2_English_x64_v2.iso" },
-    "virtioIso": { "path": "/abs/path/virtio-win-0.1.285.iso" },
-    "driverBundle": { "path": "/abs/path/virtio-win-guest-tools.exe" }
+    "windowsIso": { "path": "/path/to/windows.iso" },
+    "virtioIso": { "path": "/path/to/virtio-win.iso" },
+    "driverBundle": { "path": "/path/to/virtio-win-guest-tools.exe" }
   }
 }
 ```
@@ -58,8 +61,8 @@ The repo runs the same `pnpm check` on developer machines and in CI
 
 ## MCP client wiring
 
-See the `## MCP server` section of `README.md` for the `claude_desktop_config.json` snippet. The
-bare-minimum command is:
+See the `## MCP Server` section of `README.md` for an MCP client snippet. The bare-minimum command
+is:
 
 ```sh
 pnpm crucible mcp --stdio
@@ -68,10 +71,10 @@ pnpm crucible mcp --stdio
 To wire the `guest_*` tools to a live agent, export:
 
 ```sh
-export CRUCIBLE_GUEST_BASE_URL="https://192.0.2.2:8443"
-export CRUCIBLE_GUEST_CA_PATH="artifacts/secrets/<vm>/mtls/ca.pem"
-export CRUCIBLE_GUEST_CERT_PATH="artifacts/secrets/<vm>/mtls/host-client.pem"
-export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key"
+export CRUCIBLE_GUEST_BASE_URL="https://127.0.0.1:8443"
+export CRUCIBLE_GUEST_CA_PATH="artifacts/secrets/<vm>/mtls/ca.cert.pem"
+export CRUCIBLE_GUEST_CERT_PATH="artifacts/secrets/<vm>/mtls/host-client.cert.pem"
+export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
 ```
 
 ## First provision
@@ -80,20 +83,24 @@ export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key"
 # Build the guest agent binary once; the CLI looks it up at
 # dist/release/crucible-guest-agent.exe by default. Override via
 # $CRUCIBLE_GUEST_AGENT_BINARY for custom layouts.
-scripts/package-release.sh
+CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
 
 pnpm crucible provision
+pnpm crucible guest:health
+pnpm crucible snapshot:list
 ```
 
 The CLI generates a per-VM mTLS PKI under `artifacts/secrets/<vm>/mtls/` on first run (CA + server
-cert SAN'd to the host-only control address + host client cert), stages the cert material and the
-`crucible-agent.exe` binary into the guest via `qemu-ga guest-file-*`, and then runs
-`install-agent.ps1`.
+cert SAN'd to the host-only control address + host client cert), bakes the cert material, guest
+agent binary, and provisioning scripts into `artifacts/boot/crucible-payload.iso`, and mounts that
+payload as read-only guest media for `install-agent.ps1` and the other provisioning stages.
 
-The first run takes ~12–18 minutes (Windows install + auto-login + agent install). Subsequent boots
-are ~10–20 s because `clean-base` is snapshotted on success.
+The first run takes ~12-18 minutes for Windows install, auto-login, tool setup, policy lockdown, and
+guest-agent install. On success, Crucible creates `clean-base`; restore it before each new analysis
+session.
 
-To wire MCP tools at the live agent, point the env vars at the generated bundle:
+To wire MCP tools at the live agent, point the env vars at the generated bundle before starting the
+MCP server:
 
 ```sh
 export CRUCIBLE_GUEST_BASE_URL="https://127.0.0.1:8443"   # via the hostfwd

@@ -1,7 +1,7 @@
 # QEMU Plan
 
-Crucible plans QEMU before it launches anything. Phase 1 dry-run commands print the exact argv and
-socket paths that later lifecycle code will execute.
+Crucible plans QEMU before it launches anything. Dry-run commands print the exact argv and socket
+paths that lifecycle code will execute.
 
 ```sh
 pnpm crucible vm:create --dry-run
@@ -55,7 +55,7 @@ Extra arguments are appended after Crucible's required lifecycle devices so dry-
 shows both the managed baseline and operator overrides.
 
 When `network.mode` is `isolated`, the planner emits `virtio-net-pci` connected to a QEMU user-mode
-netdev with `restrict=on`, `net=192.0.2.0/30`, `dhcpstart=192.0.2.2`, and a host-control `hostfwd`
+netdev with `restrict=on`, `net=192.0.2.0/29`, `dhcpstart=192.0.2.2`, and a host-control `hostfwd`
 from `127.0.0.1:<controlPort>` to `192.0.2.2:<controlPort>`. This keeps the guest NIC present for
 the control plane without granting general egress or requiring a host interface with `192.0.2.1`.
 When `network.mode` is `nat`, the planner uses the same QEMU user-mode netdev with `restrict=off` so

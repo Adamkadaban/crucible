@@ -10,9 +10,9 @@
   "media": {
     "cacheDir": "media/cache",
     "profile": "windows11-enterprise-eval",
-    "windowsIso": { "path": "/CHANGE_ME/Win11_25H2_English_x64_v2.iso" },
-    "virtioIso": { "path": "/CHANGE_ME/virtio-win-0.1.285.iso" },
-    "driverBundle": { "path": "/CHANGE_ME/virtio-win-guest-tools.exe" }
+    "windowsIso": { "path": "/path/to/windows.iso" },
+    "virtioIso": { "path": "/path/to/virtio-win.iso" },
+    "driverBundle": { "path": "/path/to/virtio-win-guest-tools.exe" }
   },
   "network": {
     "mode": "isolated",

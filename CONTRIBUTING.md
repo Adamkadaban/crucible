@@ -14,7 +14,7 @@ Bootstrap a local checkout with:
 nvm use
 pnpm install
 pnpm check
-cd guest/agent && go test ./... && go build ./...
+cd guest-agent && go test ./... && go build ./...
 ```
 
 AI agents are welcome and must follow `AGENTS.md` like any other contributor.
