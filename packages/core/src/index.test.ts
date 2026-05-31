@@ -782,21 +782,28 @@ describe("core bootstrap exports", () => {
       config: parseNetworkConfig({
         mode: "capture",
         pcapPath: "artifacts/captures/run-1.pcap",
+        tlsKeyLogPath: "artifacts/captures/run-1.sslkeylog",
       }),
       vmName: "capture-vm",
     });
     expect(plan.qemu.pcapPath).toBe("artifacts/captures/run-1.pcap");
+    expect(plan.qemu.tlsKeyLogPath).toBe("artifacts/captures/run-1.sslkeylog");
     expect(plan.qemu.args).toContain(
       "filter-dump,id=crucible-capture-vm-net0-pcap,netdev=crucible-capture-vm-net0,file=artifacts/captures/run-1.pcap",
     );
   });
 
-  it("ignores pcapPath when network mode is not capture", () => {
+  it("ignores capture artifact paths when network mode is not capture", () => {
     const plan = buildNetworkPlan({
-      config: parseNetworkConfig({ mode: "isolated", pcapPath: "artifacts/never-used.pcap" }),
+      config: parseNetworkConfig({
+        mode: "isolated",
+        pcapPath: "artifacts/never-used.pcap",
+        tlsKeyLogPath: "artifacts/never-used.sslkeylog",
+      }),
       vmName: "isolated-vm",
     });
     expect(plan.qemu.pcapPath).toBeUndefined();
+    expect(plan.qemu.tlsKeyLogPath).toBeUndefined();
     expect(plan.qemu.args.some((arg) => arg.startsWith("filter-dump"))).toBe(false);
   });
 });
