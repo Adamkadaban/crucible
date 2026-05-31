@@ -44,6 +44,7 @@ import {
   type GuestHealthReport,
   type ProvisioningCommandResult,
   type ProvisioningExecutor,
+  type ProvisioningStageContract,
   type SnapshotCreateResult,
   type SnapshotRecord,
   type SnapshotRestoreResult,
@@ -110,6 +111,14 @@ type CliRuntime = {
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
   readonly skipBootKeyNudge?: boolean;
+  readonly progress?: ProvisionProgressReporter;
+};
+
+type ProvisionProgressReporter = {
+  readonly start: () => void;
+  readonly stageStarted: (stage: ProvisioningStageContract) => void;
+  readonly stageCompleted: (stage: ProvisioningStageContract) => void;
+  readonly finish: (status: "complete" | "failed") => void;
 };
 
 type CliLifecycleManager = Pick<
@@ -493,16 +502,25 @@ async function runProvisionCommand(
     buildDefaultProvisioningExecutor(config, lifecyclePrep, lifecycleAbort.signal);
 
   const livenessHandle = startLifecycleLivenessPoller(activeLifecycle, lifecycleAbort);
+  const progress = runtime.progress ?? createProvisionProgressReporter();
+  const progressExecutor: ProvisioningExecutor = {
+    runStage(stage) {
+      progress.stageStarted(stage);
+      return executor.runStage(stage);
+    },
+  };
   let provisionRejected = false;
 
   try {
+    progress.start();
     const result = await runProvisioningCommand({
       config,
       lifecycleManager: activeLifecycle,
-      executor,
+      executor: progressExecutor,
       snapshotManager: runtime.snapshotManager ?? new SnapshotManager({ config }),
       skipBootKeyNudge: runtime.skipBootKeyNudge,
       afterStage: async (stage) => {
+        progress.stageCompleted(stage);
         if (
           stage.id !== "analysis-tools-installed" ||
           lifecyclePrep.finalLifecycleManager === undefined
@@ -517,6 +535,7 @@ async function runProvisionCommand(
         }
       },
     });
+    progress.finish(result.status === "complete" ? "complete" : "failed");
 
     return {
       exitCode: result.status === "complete" ? 0 : 1,
@@ -525,6 +544,7 @@ async function runProvisionCommand(
     };
   } catch (error) {
     provisionRejected = true;
+    progress.finish("failed");
     // Best-effort lifecycle teardown so we don't leave QEMU + swtpm orphaned
     // after a fatal provisioning error. Only attempts kill if the process is
     // still alive — a successful guest-initiated S5 is also possible here.
@@ -669,6 +689,59 @@ async function tryKillLifecycle(manager: CliLifecycleManager): Promise<void> {
   } catch {
     // best-effort
   }
+}
+
+function createProvisionProgressReporter(): ProvisionProgressReporter {
+  if (process.stderr.isTTY !== true) {
+    return noopProvisionProgressReporter;
+  }
+  const startedAt = Date.now();
+  let completed = 0;
+  const total = 10;
+  let current = "starting";
+  const render = () => {
+    const elapsed = formatDuration(Date.now() - startedAt);
+    const width = 24;
+    const filled = Math.round((completed / total) * width);
+    const bar = `${"#".repeat(filled)}${"-".repeat(width - filled)}`;
+    process.stderr.write(
+      `\r[${bar}] ${completed}/${total} ${current} elapsed ${elapsed} ETA unknown`,
+    );
+  };
+  return {
+    start() {
+      render();
+    },
+    stageStarted(stage) {
+      current = stage.title;
+      render();
+    },
+    stageCompleted(stage) {
+      completed = Math.min(total, completed + 1);
+      current = stage.title;
+      render();
+    },
+    finish(status) {
+      current = status === "complete" ? "complete" : "failed";
+      if (status === "complete") completed = total;
+      render();
+      process.stderr.write("\n");
+    },
+  };
+}
+
+const noopProvisionProgressReporter: ProvisionProgressReporter = {
+  start() {},
+  stageStarted() {},
+  stageCompleted() {},
+  finish() {},
+};
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m${seconds.toString().padStart(2, "0")}s`;
 }
 
 type ProvisioningLifecyclePreparation = {
