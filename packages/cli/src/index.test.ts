@@ -304,9 +304,12 @@ describe("crucible CLI bootstrap", () => {
   it("prints host setup install command without --yes", async () => {
     const result = await runCrucibleCli(["setup", "host"], defaultRuntime);
 
-    expect(result.exitCode).toBeGreaterThanOrEqual(0);
-    if (result.exitCode !== 0) {
+    expect([0, 1]).toContain(result.exitCode);
+    if (result.exitCode === 0) {
+      expect(result.stdout).toContain("Host prerequisites are already satisfied");
+    } else {
       expect(result.stdout).toContain("sudo apt install");
+      expect(result.stdout).toContain("Re-run with --yes");
     }
   });
 
@@ -388,7 +391,7 @@ describe("crucible CLI bootstrap", () => {
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(configPath, JSON.stringify({ mcp: {} }), "utf8");
-    vi.spyOn(Date, "now").mockReturnValue(12345);
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(12345);
     await writeFile(`${configPath}.bak.12345`, "placeholder", "utf8");
 
     try {
@@ -397,6 +400,7 @@ describe("crucible CLI bootstrap", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`Backup: ${configPath}.bak.12345.1`);
     } finally {
+      nowSpy.mockRestore();
       if (previousHome === undefined) {
         delete process.env.HOME;
       } else {
