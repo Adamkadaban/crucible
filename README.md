@@ -72,16 +72,16 @@ downloaded tool archives are ignored by Git.
 Provision the VM:
 
 ```sh
-crucible provision
-crucible guest:health
-crucible snapshot:list
+pnpm crucible provision
+pnpm crucible guest:health
+pnpm crucible snapshot:list
 ```
 
 The first provision usually takes 12-18 minutes. On success Crucible creates a `clean-base`
 snapshot. Restore it before each new analysis session:
 
 ```sh
-crucible snapshot:restore clean-base
+pnpm crucible snapshot:restore clean-base
 ```
 
 ## MCP Server
