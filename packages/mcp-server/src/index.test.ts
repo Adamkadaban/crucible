@@ -61,6 +61,8 @@ describe("crucible MCP tools", () => {
       "dump_process",
       "process_monitor_start",
       "process_monitor_stop",
+      "memory_scan",
+      "memory_dump_region",
       "debug_close",
     ]);
   });
@@ -612,6 +614,55 @@ describe("crucible MCP tools", () => {
     expect(execRequests[0]?.arguments?.join(" ")).toContain("already running");
     expect(execRequests[1]?.arguments?.join(" ")).toContain("/Terminate");
     expect(execRequests[1]?.arguments?.join(" ")).toContain("^WriteFile$");
+  });
+
+  it("runs memory scan and region dump scripts as admin", async () => {
+    const execRequests: Array<{ arguments?: readonly string[]; as?: string }> = [];
+    let call = 0;
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: (req: { arguments?: readonly string[]; as?: string }) => {
+        execRequests.push(req);
+        call += 1;
+        const payload =
+          call === 1
+            ? { pid: 1234, matches: [{ pattern: "MZ", address: "0x1000" }] }
+            : { outputGuestPath: "C:\\region.bin", sizeBytes: 16, sha256: "deadbeef" };
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(JSON.stringify(payload)).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const scan = (await client.callTool({
+      name: "memory_scan",
+      arguments: { pid: 1234, patterns: ["4d5a", "QuantumMind"], regions: "private" },
+    })) as ToolCallText;
+    const dump = (await client.callTool({
+      name: "memory_dump_region",
+      arguments: { pid: 1234, baseAddress: "0x1000", size: 16, outputGuestPath: "C:\\region.bin" },
+    })) as ToolCallText;
+    const scanPayload = parseFirstTextPayload<{ ok: boolean; result: { matches: unknown[] } }>(
+      scan,
+    );
+    const dumpPayload = parseFirstTextPayload<{ ok: boolean; result: { sizeBytes: number } }>(dump);
+
+    expect(scanPayload.result.matches).toHaveLength(1);
+    expect(dumpPayload.result.sizeBytes).toBe(16);
+    expect(execRequests.map((req) => req.as)).toEqual(["admin", "admin"]);
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("CrucibleMemory");
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {

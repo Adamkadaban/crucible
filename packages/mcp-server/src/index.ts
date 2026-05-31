@@ -141,6 +141,14 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     description: "Stop a ProcMon-backed monitor and summarize captured CSV output.",
   },
   {
+    name: "memory_scan",
+    description: "Scan a process memory for ASCII or hex byte patterns without attaching CDB.",
+  },
+  {
+    name: "memory_dump_region",
+    description: "Dump a process memory region to a guest file without attaching CDB.",
+  },
+  {
     name: "debug_close",
     description: "Close an open debugger session and discard its transcript.",
   },
@@ -304,6 +312,30 @@ const ProcessMonitorStopInput = z
   .strict();
 type ProcessMonitorStopInputType = z.infer<typeof ProcessMonitorStopInput>;
 
+const MemoryScanInput = z
+  .object({
+    pid: z.number().int().positive(),
+    patterns: z.array(z.string().min(1).max(512)).min(1).max(64),
+    regions: z.enum(["all", "private", "image", "mapped"]).optional(),
+    maxMatches: z.number().int().positive().max(1000).optional(),
+  })
+  .strict();
+type MemoryScanInputType = z.infer<typeof MemoryScanInput>;
+
+const MemoryDumpRegionInput = z
+  .object({
+    pid: z.number().int().positive(),
+    baseAddress: z.string().min(1),
+    size: z
+      .number()
+      .int()
+      .positive()
+      .max(512 * 1024 * 1024),
+    outputGuestPath: z.string().min(1),
+  })
+  .strict();
+type MemoryDumpRegionInputType = z.infer<typeof MemoryDumpRegionInput>;
+
 const DebugCloseInput = z
   .object({
     sessionId: z.string().min(1),
@@ -407,6 +439,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   registerDebuggerTools(server, options.debuggerManager, guestClientFactory, auditLogPath);
   registerDumpTools(server, guestClientFactory, auditLogPath);
   registerMonitorTools(server, guestClientFactory, auditLogPath);
+  registerMemoryTools(server, guestClientFactory, auditLogPath);
 
   server.registerTool(
     "guest_health",
@@ -1348,6 +1381,134 @@ function buildProcMonStartScript(monitorId: string, targetPid?: number): string 
 function buildProcMonStopScript(monitorId: string): string {
   const escapedMonitorId = monitorId.replaceAll("'", "''");
   return `$ErrorActionPreference='Stop'; $tools=@('C:\\Tools\\Sysinternals\\Procmon64.exe','C:\\Tools\\Sysinternals\\Procmon.exe','Procmon64.exe','Procmon.exe'); $tool=$tools | Where-Object { if([System.IO.Path]::IsPathRooted($_)){ Test-Path -LiteralPath $_ } else { [bool](Get-Command $_ -ErrorAction SilentlyContinue) } } | Select-Object -First 1; if(-not $tool){ throw 'ProcMon is not installed or not on PATH' }; & $tool /Terminate | Out-Null; Start-Sleep -Seconds 2; $root='C:\\ProgramData\\Crucible\\staging\\monitor'; $pml=Get-ChildItem -LiteralPath $root -Filter '${escapedMonitorId}.pml' -ErrorAction SilentlyContinue | Select-Object -First 1; if(-not $pml){ throw 'ProcMon backing file not found for monitor ${escapedMonitorId}' }; $csv=[IO.Path]::ChangeExtension($pml.FullName,'.csv'); & $tool /OpenLog $pml.FullName /SaveAs $csv | Out-Null; $events=0; $summary=[ordered]@{processCreates=0; fileWrites=0; registrySets=0; networkConnects=0}; if(Test-Path -LiteralPath $csv){ $rows=Import-Csv -LiteralPath $csv; $events=@($rows).Count; foreach($r in $rows){ $op=[string]$r.Operation; if($op -match 'Process Create'){ $summary.processCreates++ } elseif($op -match '^WriteFile$|SetRenameInformationFile|SetDispositionInformationFile'){ $summary.fileWrites++ } elseif($op -match 'RegSetValue'){ $summary.registrySets++ } elseif($op -match 'TCP|UDP'){ $summary.networkConnects++ } } }; [ordered]@{monitorId='${escapedMonitorId}'; events=$events; outputGuestPath=$pml.FullName; csvGuestPath=$csv; summary=$summary; note='ProcMon capture is global; concurrent monitor sessions are intentionally rejected at start'} | ConvertTo-Json -Compress -Depth 4`;
+}
+
+function registerMemoryTools(
+  server: McpServer,
+  guestClientFactory: (() => Promise<GuestAgentClient>) | undefined,
+  auditLogPath: string | undefined,
+): void {
+  server.registerTool(
+    "memory_scan",
+    {
+      title: "Scan process memory",
+      description: "Scan process memory for ASCII or hex byte patterns without attaching CDB.",
+      inputSchema: MemoryScanInput.shape,
+    },
+    async (input: MemoryScanInputType) => {
+      try {
+        const client = await requireGuestClient(guestClientFactory);
+        const script = buildMemoryScanScript(input);
+        const result = await client.exec({
+          executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          arguments: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+          as: "admin",
+          timeoutMs: 120_000,
+        });
+        const stdout = Buffer.from(result.stdoutBase64 ?? "", "base64")
+          .toString("utf8")
+          .trim();
+        if (result.exitCode !== 0) {
+          const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+            .toString("utf8")
+            .trim();
+          throw new Error(stderr || stdout || `memory scan failed with exit ${result.exitCode}`);
+        }
+        return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_dump_region",
+    {
+      title: "Dump process memory region",
+      description: "Dump a process memory region to a guest file without attaching CDB.",
+      inputSchema: MemoryDumpRegionInput.shape,
+    },
+    async (input: MemoryDumpRegionInputType) => {
+      try {
+        const client = await requireGuestClient(guestClientFactory);
+        const script = buildMemoryDumpRegionScript(input);
+        const result = await client.exec({
+          executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          arguments: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+          as: "admin",
+          timeoutMs: 120_000,
+        });
+        const stdout = Buffer.from(result.stdoutBase64 ?? "", "base64")
+          .toString("utf8")
+          .trim();
+        if (result.exitCode !== 0) {
+          const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+            .toString("utf8")
+            .trim();
+          throw new Error(
+            stderr || stdout || `memory region dump failed with exit ${result.exitCode}`,
+          );
+        }
+        return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+}
+
+function buildMemoryScanScript(input: MemoryScanInputType): string {
+  const payload = JSON.stringify({
+    pid: input.pid,
+    patterns: input.patterns,
+    regions: input.regions ?? "all",
+    maxMatches: input.maxMatches ?? 100,
+  }).replaceAll("'", "''");
+  return (
+    memoryHelperPreamble() +
+    `; $req='${payload}' | ConvertFrom-Json; [CrucibleMemory]::Scan([int]$req.pid, [string[]]$req.patterns, [string]$req.regions, [int]$req.maxMatches) | ConvertTo-Json -Compress -Depth 6`
+  );
+}
+
+function buildMemoryDumpRegionScript(input: MemoryDumpRegionInputType): string {
+  const payload = JSON.stringify(input).replaceAll("'", "''");
+  return (
+    memoryHelperPreamble() +
+    `; $req='${payload}' | ConvertFrom-Json; [CrucibleMemory]::DumpRegion([int]$req.pid, [string]$req.baseAddress, [int64]$req.size, [string]$req.outputGuestPath) | ConvertTo-Json -Compress -Depth 4`
+  );
+}
+
+function memoryHelperPreamble(): string {
+  return `$ErrorActionPreference='Stop'; if(-not ('CrucibleMemory' -as [type])){ Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+public class CrucibleMemory {
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(UInt32 access, bool inherit, UInt32 pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buffer, UIntPtr size, out UIntPtr read);
+  [DllImport("kernel32.dll")] static extern UIntPtr VirtualQueryEx(IntPtr h, IntPtr addr, out MEMORY_BASIC_INFORMATION64 mbi, UIntPtr len);
+  [StructLayout(LayoutKind.Sequential)] public struct MEMORY_BASIC_INFORMATION64 { public UInt64 BaseAddress; public UInt64 AllocationBase; public UInt32 AllocationProtect; public UInt32 __alignment1; public UInt64 RegionSize; public UInt32 State; public UInt32 Protect; public UInt32 Type; public UInt32 __alignment2; }
+  const UInt32 PROCESS_QUERY_INFORMATION=0x0400, PROCESS_VM_READ=0x0010, MEM_COMMIT=0x1000, MEM_PRIVATE=0x20000, MEM_MAPPED=0x40000, MEM_IMAGE=0x1000000;
+  public static object Scan(int pid, string[] patterns, string regions, int maxMatches) { var h=OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_READ,false,(UInt32)pid); if(h==IntPtr.Zero) throw new Exception("OpenProcess failed"); var matches=new List<object>(); try { UInt64 addr=0; while(matches.Count<maxMatches && addr<0x0000800000000000UL) { MEMORY_BASIC_INFORMATION64 mbi; var q=VirtualQueryEx(h,(IntPtr)addr,out mbi,(UIntPtr)Marshal.SizeOf(typeof(MEMORY_BASIC_INFORMATION64))); if(q==UIntPtr.Zero) break; if(mbi.State==MEM_COMMIT && RegionMatches(mbi.Type,regions) && IsReadable(mbi.Protect)) { int size=(int)Math.Min(mbi.RegionSize, 16*1024*1024); var buf=new byte[size]; UIntPtr read; if(ReadProcessMemory(h,(IntPtr)mbi.BaseAddress,buf,(UIntPtr)buf.Length,out read)) { int len=(int)read; foreach(var pat in patterns) { var needle=PatternBytes(pat); var idx=IndexOf(buf,len,needle); if(idx>=0) matches.Add(new { pattern=pat, address=$"0x{(mbi.BaseAddress+(UInt64)idx):x}", regionBase=$"0x{mbi.BaseAddress:x}", regionSize=mbi.RegionSize, protection=$"0x{mbi.Protect:x}", previewHex=Hex(buf,idx,Math.Min(32,len-idx)) }); if(matches.Count>=maxMatches) break; } } } addr=mbi.BaseAddress+Math.Max(mbi.RegionSize,0x1000); } return new { pid=pid, matches=matches }; } finally { CloseHandle(h); } }
+  public static object DumpRegion(int pid, string baseAddress, long size, string outputGuestPath) { UInt64 b=Convert.ToUInt64(baseAddress.Replace("0x",""),16); var h=OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_READ,false,(UInt32)pid); if(h==IntPtr.Zero) throw new Exception("OpenProcess failed"); try { Directory.CreateDirectory(Path.GetDirectoryName(outputGuestPath)); if(size>Int32.MaxValue) throw new Exception("region size too large"); var buf=new byte[(int)size]; UIntPtr read; if(!ReadProcessMemory(h,(IntPtr)b,buf,(UIntPtr)buf.Length,out read)) throw new Exception("ReadProcessMemory failed"); string hash; using(var sha=SHA256.Create()){ using(var fs=File.Open(outputGuestPath,FileMode.Create,FileAccess.Write)){ fs.Write(buf,0,(int)read); var written=new byte[(int)read]; Buffer.BlockCopy(buf,0,written,0,(int)read); hash=BitConverter.ToString(sha.ComputeHash(written)).Replace("-","").ToLowerInvariant(); } } return new { outputGuestPath=outputGuestPath, sizeBytes=(int)read, sha256=hash }; } finally { CloseHandle(h); } }
+  static bool RegionMatches(UInt32 type,string regions){ return regions=="all" || (regions=="private"&&type==MEM_PRIVATE) || (regions=="mapped"&&type==MEM_MAPPED) || (regions=="image"&&type==MEM_IMAGE); }
+  static bool IsReadable(UInt32 p){ return (p&0x100)==0 && (p&0x01)==0; }
+  static byte[] PatternBytes(string p){ if(p.StartsWith("ascii:",StringComparison.OrdinalIgnoreCase)) return Encoding.ASCII.GetBytes(p.Substring(6)); bool hex=p.Length%2==0; foreach(char c in p){ if(!Uri.IsHexDigit(c)){ hex=false; break; } } if(hex){ var b=new byte[p.Length/2]; for(int i=0;i<b.Length;i++) b[i]=Convert.ToByte(p.Substring(i*2,2),16); return b; } return Encoding.ASCII.GetBytes(p); }
+  static int IndexOf(byte[] b,int len,byte[] n){ if(n.Length==0||n.Length>len) return -1; for(int i=0;i<=len-n.Length;i++){ int j=0; for(;j<n.Length;j++) if(b[i+j]!=n[j]) break; if(j==n.Length) return i; } return -1; }
+  static string Hex(byte[] b,int off,int len){ var sb=new StringBuilder(); for(int i=0;i<len;i++) sb.Append(b[off+i].ToString("x2")); return sb.ToString(); }
+}
+'@ }`;
 }
 
 const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe";
