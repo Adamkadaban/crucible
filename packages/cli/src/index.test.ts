@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -16,10 +16,18 @@ import {
 import { runCrucibleCli } from "./index.js";
 
 const defaultRuntime = { config: defaultCrucibleConfig };
+const tempDirs: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals();
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
+
+async function createTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 describe("crucible CLI bootstrap", () => {
   it("prints help", async () => {
@@ -31,7 +39,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("runs when invoked through an npm-style bin symlink", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-bin-"));
+    const root = await createTempDir("crucible-bin-");
     const binPath = path.join(root, "crucible");
     await symlink(path.resolve("packages/cli/src/index.ts"), binPath);
 
@@ -207,7 +215,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("fetches optional tool archives into the media cache", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-fetch-tools-"));
+    const root = await createTempDir("crucible-fetch-tools-");
     const config = parseCrucibleConfig({ media: { cacheDir: path.join(root, "cache") } });
     const bodies = new Map<string, Buffer>();
     vi.stubGlobal(
@@ -232,7 +240,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reuses cached tool archives unless forced", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-fetch-tools-cached-"));
+    const root = await createTempDir("crucible-fetch-tools-cached-");
     const cacheDir = path.join(root, "cache");
     await mkdir(cacheDir, { recursive: true });
     for (const file of ["SysinternalsSuite.zip", "Procdump.zip", "ProcessMonitor.zip"]) {
@@ -268,7 +276,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("initializes crucible.config.json idempotently", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     const outputPath = path.join(root, "crucible.config.json");
 
     const created = await runCrucibleCli(["config:init", "--output", outputPath], defaultRuntime);
@@ -331,7 +339,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("updates opencode config idempotently while preserving existing keys", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    const root = await createTempDir("crucible-home-");
     process.env.HOME = root;
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -370,7 +378,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("does not overwrite malformed opencode config", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    const root = await createTempDir("crucible-home-");
     process.env.HOME = root;
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -393,7 +401,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("does not overwrite non-object opencode config", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    const root = await createTempDir("crucible-home-");
     process.env.HOME = root;
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -416,7 +424,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("does not overwrite opencode config with non-object mcp key", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    const root = await createTempDir("crucible-home-");
     process.env.HOME = root;
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -439,7 +447,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("reports opencode config filesystem failures as command results", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-file-"));
+    const root = await createTempDir("crucible-home-file-");
     const homeFile = path.join(root, "not-a-directory");
     await writeFile(homeFile, "x", "utf8");
     process.env.HOME = homeFile;
@@ -461,7 +469,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("allocates unique opencode backup paths", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    const root = await createTempDir("crucible-home-");
     process.env.HOME = root;
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -504,7 +512,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("aggregates setup all output across targets", async () => {
     const previousHome = process.env.HOME;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    const root = await createTempDir("crucible-home-");
     process.env.HOME = root;
 
     try {
@@ -630,7 +638,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("reports a missing override guest agent binary before provisioning starts", async () => {
     const previous = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     process.env.CRUCIBLE_GUEST_AGENT_BINARY = path.join(root, "missing-agent.exe");
     const config = parseCrucibleConfig({
       artifacts: {
@@ -1099,7 +1107,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("uses default config instead of cwd config when tests do not inject runtime", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     const result = await runCrucibleCli(["vm:start", "--dry-run"], {
       configPath: path.join(root, "missing.config.json"),
     });
@@ -1123,7 +1131,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints stopped VM status", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     const result = await runCrucibleCli(["vm:status"], {
       config: parseCrucibleConfig({
         vm: { name: "test-win" },
@@ -1145,7 +1153,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints missing VM logs before the VM has started", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     const config = parseCrucibleConfig({
       vm: { name: "test-win" },
       artifacts: {
@@ -1167,7 +1175,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints existing VM logs", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     const logsDirectory = path.join(root, "artifacts", "logs");
     const config = parseCrucibleConfig({
       vm: { name: "test-win" },
@@ -1193,7 +1201,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints snapshot list from the artifact manifest", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const root = await createTempDir("crucible-cli-");
     const config = parseCrucibleConfig({
       vm: { name: "test-win" },
       artifacts: {
