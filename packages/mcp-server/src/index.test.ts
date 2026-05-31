@@ -523,7 +523,7 @@ describe("crucible MCP tools", () => {
 
     const start = (await client.callTool({
       name: "process_monitor_start",
-      arguments: { targetPid: 1234, outputGuestPath: "C:\\mon.pml" },
+      arguments: { targetPid: 1234 },
     })) as ToolCallText;
     const startPayload = parseFirstTextPayload<{ ok: boolean; result: { monitorId: string } }>(
       start,
@@ -540,7 +540,9 @@ describe("crucible MCP tools", () => {
     expect(startPayload.result.monitorId).toBe("mon-test");
     expect(stopPayload.result.summary.processCreates).toBe(1);
     expect(execRequests[0]?.arguments?.join(" ")).toContain("Procmon64.exe");
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("already running");
     expect(execRequests[1]?.arguments?.join(" ")).toContain("/Terminate");
+    expect(execRequests[1]?.arguments?.join(" ")).toContain("^WriteFile$");
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {
