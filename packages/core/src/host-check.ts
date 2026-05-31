@@ -13,11 +13,8 @@ export type HostCheckProbeResult = {
 const REQUIRED_BINARIES = ["qemu-system-x86_64", "qemu-img", "xorriso", "swtpm", "socat"] as const;
 
 const KVM_PATH = "/dev/kvm";
-const OVMF_CODE_CANDIDATES = [
-  "/usr/share/OVMF/OVMF_CODE_4M.fd",
-  "/usr/share/edk2-ovmf/OVMF_CODE.fd",
-  "/usr/share/edk2/x64/OVMF_CODE.fd",
-];
+const OVMF_CODE_PATH = "/usr/share/OVMF/OVMF_CODE_4M.fd";
+const OVMF_VARS_PATH = "/usr/share/OVMF/OVMF_VARS_4M.fd";
 
 /**
  * Probe the Linux host for the prerequisites Crucible needs before it can
@@ -39,14 +36,8 @@ export async function runHostCheck(): Promise<HostCheckProbeResult> {
     missing.push("device:/dev/kvm");
   }
 
-  let foundOvmf = false;
-  for (const candidate of OVMF_CODE_CANDIDATES) {
-    if (await pathReadable(candidate)) {
-      foundOvmf = true;
-      break;
-    }
-  }
-  if (!foundOvmf) missing.push("firmware:OVMF_CODE.fd");
+  if (!(await pathReadable(OVMF_CODE_PATH))) missing.push(`firmware:${OVMF_CODE_PATH}`);
+  if (!(await pathReadable(OVMF_VARS_PATH))) missing.push(`firmware:${OVMF_VARS_PATH}`);
 
   return {
     healthy: missing.length === 0,

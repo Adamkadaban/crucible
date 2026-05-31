@@ -27,8 +27,13 @@ if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
   missing=1
 fi
 
-if [[ ! -r /usr/share/OVMF/OVMF_CODE_4M.fd && ! -r /usr/share/edk2-ovmf/OVMF_CODE.fd && ! -r /usr/share/edk2/x64/OVMF_CODE.fd ]]; then
-  printf 'missing: OVMF_CODE.fd\n'
+if [[ ! -r /usr/share/OVMF/OVMF_CODE_4M.fd ]]; then
+  printf 'missing: /usr/share/OVMF/OVMF_CODE_4M.fd\n'
+  missing=1
+fi
+
+if [[ ! -r /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
+  printf 'missing: /usr/share/OVMF/OVMF_VARS_4M.fd\n'
   missing=1
 fi
 
