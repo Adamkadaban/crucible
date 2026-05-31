@@ -1841,7 +1841,10 @@ function renderSetupInstruction(target: string, message: string): CommandResult 
 async function readJsonObjectIfExists(filePath: string): Promise<JsonObject> {
   try {
     const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    return isJsonObject(value) ? value : {};
+    if (!isJsonObject(value)) {
+      throw new Error(`Expected ${filePath} to contain a JSON object`);
+    }
+    return value;
   } catch (error) {
     if (isMissingFileError(error)) {
       return {};

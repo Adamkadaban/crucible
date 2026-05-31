@@ -384,6 +384,29 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("does not overwrite non-object opencode config", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    process.env.HOME = root;
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, "[]", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("to contain a JSON object");
+      await expect(readFile(configPath, "utf8")).resolves.toBe("[]");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
   it("allocates unique opencode backup paths", async () => {
     const previousHome = process.env.HOME;
     const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));

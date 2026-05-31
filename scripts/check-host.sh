@@ -22,7 +22,7 @@ require_command xorriso
 require_command swtpm
 require_command socat
 
-if [[ ! -e /dev/kvm ]]; then
+if [[ ! -r /dev/kvm ]]; then
   printf 'missing: /dev/kvm\n'
   missing=1
 fi
