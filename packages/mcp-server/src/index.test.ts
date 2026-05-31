@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -43,6 +43,9 @@ describe("crucible MCP tools", () => {
       "vm_stop",
       "network_status",
       "network_set_mode",
+      "network_active_status",
+      "network_pcap_info",
+      "tshark_summary",
       "snapshot_list",
       "snapshot_restore",
       "guest_health",
@@ -177,6 +180,52 @@ describe("crucible MCP tools", () => {
       result: { requestedMode: string; restartRequired: boolean };
     }>(setResult);
     expect(change.result).toMatchObject({ requestedMode: "nat", restartRequired: true });
+  });
+
+  it("reports pcap info when capture path is configured", async () => {
+    const pcapPath = `artifacts/downloads/mcp-pcap-${Date.now()}.pcap`;
+    await mkdir(path.dirname(pcapPath), { recursive: true });
+    await writeFile(pcapPath, Buffer.from("pcap"));
+    const client = await harness({
+      config: parseCrucibleConfig({
+        vm: { name: "capture-vm" },
+        network: { mode: "capture", pcapPath },
+      }),
+    });
+
+    const result = (await client.callTool({
+      name: "network_pcap_info",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { pcapPath?: string; exists: boolean; sizeBytes?: number };
+    }>(result);
+
+    expect(payload.result).toMatchObject({ pcapPath, exists: true, sizeBytes: 4 });
+    await rm(pcapPath, { force: true });
+  });
+
+  it("reports missing tshark as a structured error", async () => {
+    const pcapPath = `artifacts/downloads/mcp-tshark-${Date.now()}.pcap`;
+    await mkdir(path.dirname(pcapPath), { recursive: true });
+    await writeFile(pcapPath, Buffer.from("pcap"));
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+    const client = await harness({});
+    try {
+      const result = (await client.callTool({
+        name: "tshark_summary",
+        arguments: { pcapPath },
+      })) as ToolCallText;
+      const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(result);
+
+      expect(payload.ok).toBe(false);
+      expect(payload.error.message).toMatch(/not installed|not on PATH/i);
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(pcapPath, { force: true });
+    }
   });
 
   it("returns guest-failed when the guest client is missing", async () => {

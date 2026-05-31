@@ -134,3 +134,8 @@ The path is honoured only when `mode === "capture"`; supplying it in isolated or
 documented no-op (`plan.qemu.pcapPath` is `undefined` and no `-object filter-dump` is emitted). The
 pcap file lives where the operator configured it — Crucible does not delete it on teardown, since
 post-run analysis usually outlives the VM.
+
+MCP clients can use `network_active_status` to compare the configured mode with the active QEMU
+launch arguments after a restart, `network_pcap_info` to locate the active/configured pcap and
+report size/mtime, and `tshark_summary` to extract host-side conversation, DNS, HTTP host, and TLS
+SNI summaries when `tshark` is installed on the Linux host.
