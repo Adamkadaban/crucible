@@ -18,9 +18,22 @@ fi
 
 require_command qemu-system-x86_64
 require_command qemu-img
+require_command xorriso
+require_command swtpm
+require_command socat
 
-if [[ ! -e /dev/kvm ]]; then
+if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
   printf 'missing: /dev/kvm\n'
+  missing=1
+fi
+
+if [[ ! -r /usr/share/OVMF/OVMF_CODE_4M.fd ]]; then
+  printf 'missing: /usr/share/OVMF/OVMF_CODE_4M.fd\n'
+  missing=1
+fi
+
+if [[ ! -r /usr/share/OVMF/OVMF_VARS_4M.fd ]]; then
+  printf 'missing: /usr/share/OVMF/OVMF_VARS_4M.fd\n'
   missing=1
 fi
 

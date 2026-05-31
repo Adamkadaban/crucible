@@ -9,6 +9,7 @@ Windows x64 guest-agent binary.
 ```sh
 npm install -g crucible
 crucible --help
+crucible doctor
 ```
 
 Use a source checkout only when developing Crucible itself.
@@ -116,3 +117,16 @@ export CRUCIBLE_GUEST_CA_PATH="artifacts/secrets/<vm>/mtls/ca.cert.pem"
 export CRUCIBLE_GUEST_CERT_PATH="artifacts/secrets/<vm>/mtls/host-client.cert.pem"
 export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
 ```
+
+For MCP client setup, use:
+
+```sh
+crucible setup opencode
+crucible setup claude
+crucible setup codex --print
+crucible setup copilot --print
+```
+
+`setup opencode` updates `~/.config/opencode/opencode.json`. `setup claude` uses the Claude CLI to
+add a user-scoped stdio MCP server. Codex and Copilot CLI setup currently print explicit MCP config
+guidance because their local MCP configuration formats vary by version.
