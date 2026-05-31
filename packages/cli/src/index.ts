@@ -1749,7 +1749,9 @@ function getAptInstallCommand(includeYes = false): string {
 
 function runHostCommand(command: string, args: readonly string[]): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, [...args], {
+      stdio: [process.stdin.isTTY ? "inherit" : "ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

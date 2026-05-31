@@ -35,7 +35,7 @@ export async function runHostCheck(): Promise<HostCheckProbeResult> {
     if (!found) missing.push(`bin:${bin}`);
   }
 
-  if (!(await pathReadable(KVM_PATH))) {
+  if (!(await pathReadableWritable(KVM_PATH))) {
     missing.push("device:/dev/kvm");
   }
 
@@ -63,6 +63,15 @@ export async function runHostCheck(): Promise<HostCheckProbeResult> {
 async function pathReadable(target: string): Promise<boolean> {
   try {
     await access(target, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pathReadableWritable(target: string): Promise<boolean> {
+  try {
+    await access(target, constants.R_OK | constants.W_OK);
     return true;
   } catch {
     return false;
