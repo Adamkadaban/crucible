@@ -627,6 +627,9 @@ export async function prepareRealFirstBootProvisioning(
       path.join(config.media.cacheDir, "SysinternalsSuite.zip"),
     ),
     procdumpZipPath: await optionalReadableFile(path.join(config.media.cacheDir, "Procdump.zip")),
+    procmonZipPath: await optionalReadableFile(
+      path.join(config.media.cacheDir, "ProcessMonitor.zip"),
+    ),
     mtlsCaCertificatePath: mtls.caCertificatePath,
     mtlsServerCertificatePath: mtls.serverCertificatePath,
     mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
@@ -669,6 +672,7 @@ async function buildPayloadIsoCommand(options: {
   readonly agentBinaryPath: string | undefined;
   readonly sysinternalsZipPath: string | undefined;
   readonly procdumpZipPath: string | undefined;
+  readonly procmonZipPath: string | undefined;
   readonly mtlsCaCertificatePath: string;
   readonly mtlsServerCertificatePath: string;
   readonly mtlsServerPrivateKeyPath: string;
@@ -707,6 +711,10 @@ async function buildPayloadIsoCommand(options: {
   if (options.procdumpZipPath !== undefined) {
     await assertReadableFile("ProcDump zip", options.procdumpZipPath);
     graftPoints.push(`/tools/Procdump.zip=${options.procdumpZipPath}`);
+  }
+  if (options.procmonZipPath !== undefined) {
+    await assertReadableFile("Process Monitor zip", options.procmonZipPath);
+    graftPoints.push(`/tools/ProcessMonitor.zip=${options.procmonZipPath}`);
   }
   return {
     executable: options.xorrisoExecutable,

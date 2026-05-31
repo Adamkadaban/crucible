@@ -89,6 +89,39 @@ function Install-ProcDump {
     }
 }
 
+function Install-ProcMon {
+    $target = Join-Path $ToolsRoot "Sysinternals"
+    if ($null -ne (Find-ToolExecutable -FileNames @("Procmon64.exe", "Procmon.exe", "procmon64.exe", "procmon.exe"))) { return $false }
+    $payloadZip = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' |
+        Where-Object { $_.VolumeName -eq 'CRUCIBLE' } |
+        ForEach-Object { Join-Path "$($_.DeviceID)\" "tools\ProcessMonitor.zip" } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if ($DryRun) {
+        Write-Status "dry-run: install standalone Process Monitor into $target"
+        return $true
+    }
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    if ($payloadZip) {
+        Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
+        return $true
+    }
+    try {
+        $tempDirectory = if ([string]::IsNullOrWhiteSpace($env:TEMP)) { "C:\ProgramData\Crucible\Temp" } else { $env:TEMP }
+        New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
+        $zipPath = Join-Path $tempDirectory "ProcessMonitor.zip"
+        Invoke-WebRequest -Uri "https://download.sysinternals.com/files/ProcessMonitor.zip" -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $target -Force
+        return $true
+    } catch {
+        if ($AllowSkipOnNetworkFailure) {
+            Write-Status "Process Monitor install unavailable ($($_.Exception.Message)); reporting unavailable"
+            return $false
+        }
+        throw
+    }
+}
+
 function Test-SysinternalsPresent {
     $report = Get-ToolReport
     return ($null -ne $report.sysinternals.handle) -and
@@ -134,10 +167,12 @@ function Install-Sysinternals {
 New-Item -ItemType Directory -Force -Path $ToolsRoot | Out-Null
 $sysinternalsAttempted = Install-Sysinternals
 $procdumpAttempted = Install-ProcDump
+$procmonAttempted = Install-ProcMon
 
 $report = Get-ToolReport
 $report.installedOrAttempted = [ordered]@{
     sysinternals = [bool]$sysinternalsAttempted
     procdump = [bool]$procdumpAttempted
+    procmon = [bool]$procmonAttempted
 }
 $report | ConvertTo-Json -Depth 8 -Compress

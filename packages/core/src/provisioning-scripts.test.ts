@@ -89,6 +89,7 @@ describe("WinDbg provisioning scripts", () => {
     expect(script).toContain("SysinternalsSuite.zip");
     expect(script).toContain("tools\\SysinternalsSuite.zip");
     expect(script).toContain("tools\\Procdump.zip");
+    expect(script).toContain("tools\\ProcessMonitor.zip");
     expect(script).toContain("handle64.exe");
     expect(script).toContain("strings64.exe");
     expect(script).toContain("tcpvcon64.exe");
