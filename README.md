@@ -101,6 +101,9 @@ Useful MCP tools include `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`, `s
 `debug_command`, `debug_dump`, `dump_process`, `memory_scan`, and network/ProcMon inspection
 helpers.
 
+User-mode CDB automation is supported. KD/KDNET tooling is installed and reported in health output,
+but kernel-debugging workflows are not implemented yet.
+
 If your MCP client does not inherit the shell environment, point it at `scripts/opencode-mcp.sh` or
 an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucible mcp --stdio`.
 
