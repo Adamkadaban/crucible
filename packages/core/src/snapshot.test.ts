@@ -153,6 +153,20 @@ describe("SnapshotManager", () => {
     expect(harness.processCommands).toEqual([]);
   });
 
+  it("resumes the VM when QMP restore fails after stop", async () => {
+    const harness = await createSnapshotHarness({ qmpFailureCommand: "snapshot-load" });
+    await harness.manager.create("clean-base");
+    harness.qmp.calls.length = 0;
+
+    await expect(harness.manager.restore("clean-base")).rejects.toThrow("snapshot-load failed");
+
+    expect(harness.qmp.calls.map((call) => call.command)).toEqual([
+      "stop",
+      "snapshot-load",
+      "cont",
+    ]);
+  });
+
   it("rejects restore when manifest snapshot disk does not match the current VM disk", async () => {
     const harness = await createSnapshotHarness({ qmpConnectError: new Error("no qmp") });
     await writeManifest(harness.config.artifacts.manifestPath, {
@@ -213,6 +227,7 @@ describe("SnapshotManager", () => {
 
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
+  readonly qmpFailureCommand?: string;
   readonly processExitCode?: number;
 };
 
@@ -231,7 +246,7 @@ async function createSnapshotHarness(options: HarnessOptions = {}) {
     qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
   });
   const plan = buildQemuCommandPlan({ config });
-  const qmp = new FakeQmpSession(options.qmpConnectError);
+  const qmp = new FakeQmpSession(options.qmpConnectError, options.qmpFailureCommand);
   const processCommands: ProcessCommand[] = [];
   const processRunner: ProcessRunner = {
     run(command) {
@@ -265,7 +280,10 @@ class FakeQmpSession implements VmQmpSession {
     readonly args: Readonly<Record<string, unknown>> | undefined;
   }> = [];
 
-  constructor(public connectError?: Error) {}
+  constructor(
+    public connectError?: Error,
+    readonly failureCommand?: string,
+  ) {}
 
   connect(): Promise<unknown> {
     if (this.connectError !== undefined) {
@@ -279,6 +297,9 @@ class FakeQmpSession implements VmQmpSession {
     args?: Readonly<Record<string, unknown>>,
   ): Promise<{ readonly returnValue: T }> {
     this.calls.push({ command, args });
+    if (command === this.failureCommand) {
+      return Promise.reject(new Error(`${command} failed`));
+    }
     return Promise.resolve({ returnValue: {} as T });
   }
 

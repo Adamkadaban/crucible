@@ -146,20 +146,27 @@ export class SnapshotManager {
         return await this.#recordRestore(snapshotName, snapshotMode, qmpCommands, qcow2Commands);
       }
 
-      await executeQmp(qmp, "stop", undefined, this.#config.qmp.timeoutMs, qmpCommands);
-      await executeQmp(
-        qmp,
-        "snapshot-load",
-        {
-          "job-id": `crucible-snapshot-load-${jobIdSuffix()}`,
-          tag: snapshotName,
-          vmstate: "crucible-disk0",
-          devices: ["crucible-disk0"],
-        },
-        this.#config.qmp.timeoutMs,
-        qmpCommands,
-      );
-      await executeQmp(qmp, "cont", undefined, this.#config.qmp.timeoutMs, qmpCommands);
+      try {
+        await executeQmp(qmp, "stop", undefined, this.#config.qmp.timeoutMs, qmpCommands);
+        await executeQmp(
+          qmp,
+          "snapshot-load",
+          {
+            "job-id": `crucible-snapshot-load-${jobIdSuffix()}`,
+            tag: snapshotName,
+            vmstate: "crucible-disk0",
+            devices: ["crucible-disk0"],
+          },
+          this.#config.qmp.timeoutMs,
+          qmpCommands,
+        );
+        await executeQmp(qmp, "cont", undefined, this.#config.qmp.timeoutMs, qmpCommands);
+      } catch (error) {
+        if (qmpCommands.length > 0) {
+          await tryResume(qmp, this.#config.qmp.timeoutMs);
+        }
+        throw error;
+      }
     } finally {
       qmp.close();
     }
