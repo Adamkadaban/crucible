@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -184,6 +184,7 @@ describe("crucible MCP tools", () => {
 
   it("reports pcap info when capture path is configured", async () => {
     const pcapPath = `artifacts/downloads/mcp-pcap-${Date.now()}.pcap`;
+    await mkdir(path.dirname(pcapPath), { recursive: true });
     await writeFile(pcapPath, Buffer.from("pcap"));
     const client = await harness({
       config: parseCrucibleConfig({
