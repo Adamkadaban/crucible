@@ -7,7 +7,6 @@ import {
   buildAnalysisVmPolicyReadiness,
   buildQemuCommandPlan,
   createEmptyArtifactManifest,
-  CRUCIBLE_VERSION,
   CrucibleError,
   DEFAULT_MEDIA_SOURCES,
   DEFAULT_QMP_TIMEOUT_MS,
@@ -25,10 +24,6 @@ import {
 } from "./index.js";
 
 describe("core bootstrap exports", () => {
-  it("exposes a version", () => {
-    expect(CRUCIBLE_VERSION).toBe("0.1.0-beta.2");
-  });
-
   it("includes manual download guidance for default media", () => {
     const instructions = getManualDownloadInstructions("/tmp/crucible-media");
 

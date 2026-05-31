@@ -52,12 +52,13 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsc -b packages/core packages/mcp-server packages/cli",
+    "build": "pnpm generate:version && tsc -b packages/core packages/mcp-server packages/cli",
     "build:bundle": "node scripts/build-npm-bundle.mjs",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "crucible": "tsx --conditions=development packages/cli/src/index.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "generate:version": "node scripts/generate-version.mjs",
     "lint": "eslint .",
     "prepack": "pnpm build:bundle && node scripts/assert-npm-vendor.mjs",
     "test": "vitest run",
