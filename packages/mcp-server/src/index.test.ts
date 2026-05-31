@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -245,6 +245,46 @@ describe("crucible MCP tools", () => {
     } finally {
       process.env.PATH = originalPath;
       await rm(pcapPath, { force: true });
+    }
+  });
+
+  it("passes TLS key log files to tshark summaries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-tshark-"));
+    const pcapPath = path.join(root, "capture.pcap");
+    const tlsKeyLogPath = path.join(root, "capture.sslkeylog");
+    const binDir = path.join(root, "bin");
+    const argsPath = path.join(root, "tshark-args.txt");
+    const fakeTshark = path.join(binDir, "tshark");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(pcapPath, Buffer.from("pcap"));
+    await writeFile(tlsKeyLogPath, "CLIENT_RANDOM secret\n");
+    await writeFile(
+      fakeTshark,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(argsPath)}\n`,
+      "utf8",
+    );
+    await chmod(fakeTshark, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    const client = await harness({});
+
+    try {
+      const result = (await client.callTool({
+        name: "tshark_summary",
+        arguments: { pcapPath, tlsKeyLogPath },
+      })) as ToolCallText;
+      const payload = parseFirstTextPayload<{
+        ok: boolean;
+        result: { tlsKeyLogPath?: string; tlsKeyLogExists?: boolean };
+      }>(result);
+      const argsLog = await readFile(argsPath, "utf8");
+
+      expect(payload.ok).toBe(true);
+      expect(payload.result).toMatchObject({ tlsKeyLogPath, tlsKeyLogExists: true });
+      expect(argsLog).toContain(`tls.keylog_file:${tlsKeyLogPath}`);
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(root, { recursive: true, force: true });
     }
   });
 

@@ -33,6 +33,8 @@ symbols/
 *.dump
 *.pcap
 *.pcapng
+*.sslkeylog
+*.keylog
 *.pid
 *.sock
 
