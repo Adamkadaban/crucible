@@ -129,6 +129,14 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
       "Capture a user-mode process dump without attaching CDB, using ProcDump when available.",
   },
   {
+    name: "process_monitor_start",
+    description: "Start optional ProcMon-backed process/file/registry/network monitoring.",
+  },
+  {
+    name: "process_monitor_stop",
+    description: "Stop a ProcMon-backed monitor and summarize captured CSV output.",
+  },
+  {
     name: "debug_close",
     description: "Close an open debugger session and discard its transcript.",
   },
@@ -261,6 +269,20 @@ const DumpProcessInput = z
   .strict();
 type DumpProcessInputType = z.infer<typeof DumpProcessInput>;
 
+const ProcessMonitorStartInput = z
+  .object({
+    targetPid: z.number().int().positive().optional(),
+  })
+  .strict();
+type ProcessMonitorStartInputType = z.infer<typeof ProcessMonitorStartInput>;
+
+const ProcessMonitorStopInput = z
+  .object({
+    monitorId: z.string().min(1),
+  })
+  .strict();
+type ProcessMonitorStopInputType = z.infer<typeof ProcessMonitorStopInput>;
+
 const DebugCloseInput = z
   .object({
     sessionId: z.string().min(1),
@@ -363,6 +385,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   registerSnapshotTools(server, snapshotAdapter, auditLogPath);
   registerDebuggerTools(server, options.debuggerManager, guestClientFactory, auditLogPath);
   registerDumpTools(server, guestClientFactory, auditLogPath);
+  registerMonitorTools(server, guestClientFactory, auditLogPath);
 
   server.registerTool(
     "guest_health",
@@ -1132,6 +1155,96 @@ function buildProcDumpScript(pid: number, outputGuestPath: string, full: boolean
   const escapedOutput = outputGuestPath.replaceAll("'", "''");
   const dumpFlag = full ? "-ma" : "-mm";
   return `$ErrorActionPreference='Stop'; $tools=@('C:\\Tools\\Sysinternals\\procdump64.exe','C:\\Tools\\Sysinternals\\procdump.exe','procdump64.exe','procdump.exe'); $tool=$tools | Where-Object { if([System.IO.Path]::IsPathRooted($_)){ Test-Path -LiteralPath $_ } else { [bool](Get-Command $_ -ErrorAction SilentlyContinue) } } | Select-Object -First 1; if(-not $tool){ throw 'ProcDump is not installed or not on PATH' }; $out='${escapedOutput}'; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $out) | Out-Null; $stdout=[IO.Path]::GetTempFileName(); $stderr=[IO.Path]::GetTempFileName(); try { $args=@('-accepteula','${dumpFlag}',${pid},$out); $p=Start-Process -FilePath $tool -ArgumentList $args -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr; if($p.ExitCode -ne 0){ $errText=((Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue),(Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) -join ' ').Trim(); throw "ProcDump exited $($p.ExitCode): $errText" }; $item=Get-Item -LiteralPath $out; $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $out).Hash.ToLowerInvariant(); [ordered]@{pid=${pid}; outputGuestPath=$out; full=$${full}; sizeBytes=$item.Length; sha256=$hash; tool=$tool} | ConvertTo-Json -Compress } finally { Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue }`;
+}
+
+function registerMonitorTools(
+  server: McpServer,
+  guestClientFactory: (() => Promise<GuestAgentClient>) | undefined,
+  auditLogPath: string | undefined,
+): void {
+  server.registerTool(
+    "process_monitor_start",
+    {
+      title: "Start process monitor",
+      description: "Start ProcMon capture when ProcMon/Procmon64 is installed in the guest.",
+      inputSchema: ProcessMonitorStartInput.shape,
+    },
+    async (input: ProcessMonitorStartInputType) => {
+      try {
+        const client = await requireGuestClient(guestClientFactory);
+        const monitorId = `mon-${Date.now().toString(36)}`;
+        const script = buildProcMonStartScript(monitorId, input.targetPid);
+        const result = await client.exec({
+          executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          arguments: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+          as: "admin",
+          timeoutMs: 60_000,
+        });
+        const stdout = Buffer.from(result.stdoutBase64 ?? "", "base64")
+          .toString("utf8")
+          .trim();
+        if (result.exitCode !== 0) {
+          const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+            .toString("utf8")
+            .trim();
+          throw new Error(stderr || stdout || `ProcMon start failed with exit ${result.exitCode}`);
+        }
+        return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "process_monitor_stop",
+    {
+      title: "Stop process monitor",
+      description: "Stop ProcMon capture and convert the PML artifact to CSV for summary.",
+      inputSchema: ProcessMonitorStopInput.shape,
+    },
+    async (input: ProcessMonitorStopInputType) => {
+      try {
+        const client = await requireGuestClient(guestClientFactory);
+        const script = buildProcMonStopScript(input.monitorId);
+        const result = await client.exec({
+          executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          arguments: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+          as: "admin",
+          timeoutMs: 120_000,
+        });
+        const stdout = Buffer.from(result.stdoutBase64 ?? "", "base64")
+          .toString("utf8")
+          .trim();
+        if (result.exitCode !== 0) {
+          const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
+            .toString("utf8")
+            .trim();
+          throw new Error(stderr || stdout || `ProcMon stop failed with exit ${result.exitCode}`);
+        }
+        return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+}
+
+function buildProcMonStartScript(monitorId: string, targetPid?: number): string {
+  const escapedMonitorId = monitorId.replaceAll("'", "''");
+  const targetPidValue = targetPid === undefined ? "$null" : String(targetPid);
+  return `$ErrorActionPreference='Stop'; $tools=@('C:\\Tools\\Sysinternals\\Procmon64.exe','C:\\Tools\\Sysinternals\\Procmon.exe','Procmon64.exe','Procmon.exe'); $tool=$tools | Where-Object { if([System.IO.Path]::IsPathRooted($_)){ Test-Path -LiteralPath $_ } else { [bool](Get-Command $_ -ErrorAction SilentlyContinue) } } | Select-Object -First 1; if(-not $tool){ throw 'ProcMon is not installed or not on PATH' }; if(Get-Process -Name Procmon,Procmon64 -ErrorAction SilentlyContinue){ throw 'ProcMon is already running; stop the active capture before starting another' }; $root='C:\\ProgramData\\Crucible\\staging\\monitor'; New-Item -ItemType Directory -Force -Path $root | Out-Null; $out=Join-Path $root '${escapedMonitorId}.pml'; $args=@('/AcceptEula','/Quiet','/BackingFile',$out); Start-Process -FilePath $tool -ArgumentList $args -WindowStyle Hidden; Start-Sleep -Seconds 2; [ordered]@{monitorId='${escapedMonitorId}'; outputGuestPath=$out; tool=$tool; targetPid=${targetPidValue}; note='ProcMon capture is global; targetPid is used during stop-time summary filtering only'} | ConvertTo-Json -Compress`;
+}
+
+function buildProcMonStopScript(monitorId: string): string {
+  const escapedMonitorId = monitorId.replaceAll("'", "''");
+  return `$ErrorActionPreference='Stop'; $tools=@('C:\\Tools\\Sysinternals\\Procmon64.exe','C:\\Tools\\Sysinternals\\Procmon.exe','Procmon64.exe','Procmon.exe'); $tool=$tools | Where-Object { if([System.IO.Path]::IsPathRooted($_)){ Test-Path -LiteralPath $_ } else { [bool](Get-Command $_ -ErrorAction SilentlyContinue) } } | Select-Object -First 1; if(-not $tool){ throw 'ProcMon is not installed or not on PATH' }; & $tool /Terminate | Out-Null; Start-Sleep -Seconds 2; $root='C:\\ProgramData\\Crucible\\staging\\monitor'; $pml=Get-ChildItem -LiteralPath $root -Filter '${escapedMonitorId}.pml' -ErrorAction SilentlyContinue | Select-Object -First 1; if(-not $pml){ throw 'ProcMon backing file not found for monitor ${escapedMonitorId}' }; $csv=[IO.Path]::ChangeExtension($pml.FullName,'.csv'); & $tool /OpenLog $pml.FullName /SaveAs $csv | Out-Null; $events=0; $summary=[ordered]@{processCreates=0; fileWrites=0; registrySets=0; networkConnects=0}; if(Test-Path -LiteralPath $csv){ $rows=Import-Csv -LiteralPath $csv; $events=@($rows).Count; foreach($r in $rows){ $op=[string]$r.Operation; if($op -match 'Process Create'){ $summary.processCreates++ } elseif($op -match '^WriteFile$|SetRenameInformationFile|SetDispositionInformationFile'){ $summary.fileWrites++ } elseif($op -match 'RegSetValue'){ $summary.registrySets++ } elseif($op -match 'TCP|UDP'){ $summary.networkConnects++ } } }; [ordered]@{monitorId='${escapedMonitorId}'; events=$events; outputGuestPath=$pml.FullName; csvGuestPath=$csv; summary=$summary; note='ProcMon capture is global; concurrent monitor sessions are intentionally rejected at start'} | ConvertTo-Json -Compress -Depth 4`;
 }
 
 const DEFAULT_CDB_EXECUTABLE = "C:\\Program Files\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe";

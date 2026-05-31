@@ -58,6 +58,8 @@ describe("crucible MCP tools", () => {
       "debug_command",
       "debug_dump",
       "dump_process",
+      "process_monitor_start",
+      "process_monitor_stop",
       "debug_close",
     ]);
   });
@@ -481,6 +483,66 @@ describe("crucible MCP tools", () => {
     });
 
     expect(execRequests[0]?.arguments?.join(" ")).toContain("'-mm'");
+  });
+
+  it("starts and stops a ProcMon-backed process monitor", async () => {
+    const execRequests: Array<{ arguments?: readonly string[] }> = [];
+    let call = 0;
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: (req: { arguments?: readonly string[] }) => {
+        execRequests.push(req);
+        call += 1;
+        const payload =
+          call === 1
+            ? { monitorId: "mon-test", outputGuestPath: "C:\\mon.pml", tool: "Procmon64.exe" }
+            : {
+                monitorId: "mon-test",
+                events: 2,
+                outputGuestPath: "C:\\mon.pml",
+                csvGuestPath: "C:\\mon.csv",
+                summary: { processCreates: 1, fileWrites: 1, registrySets: 0, networkConnects: 0 },
+              };
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(JSON.stringify(payload)).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const start = (await client.callTool({
+      name: "process_monitor_start",
+      arguments: { targetPid: 1234 },
+    })) as ToolCallText;
+    const startPayload = parseFirstTextPayload<{ ok: boolean; result: { monitorId: string } }>(
+      start,
+    );
+    const stop = (await client.callTool({
+      name: "process_monitor_stop",
+      arguments: { monitorId: startPayload.result.monitorId },
+    })) as ToolCallText;
+    const stopPayload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { summary: { processCreates: number } };
+    }>(stop);
+
+    expect(startPayload.result.monitorId).toBe("mon-test");
+    expect(stopPayload.result.summary.processCreates).toBe(1);
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("Procmon64.exe");
+    expect(execRequests[0]?.arguments?.join(" ")).toContain("already running");
+    expect(execRequests[1]?.arguments?.join(" ")).toContain("/Terminate");
+    expect(execRequests[1]?.arguments?.join(" ")).toContain("^WriteFile$");
   });
 
   it("returns isError when guest_exec input fails Zod validation", async () => {
