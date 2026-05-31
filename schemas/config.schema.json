@@ -63,6 +63,11 @@
       "additionalProperties": false,
       "properties": {
         "mode": { "type": "string", "enum": ["isolated", "nat", "capture"], "default": "isolated" },
+        "pcapPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional pcap output path honored only in capture mode."
+        },
         "tlsKeyLogPath": {
           "type": "string",
           "minLength": 1,
