@@ -720,6 +720,84 @@ describe("QmpClient", () => {
     client.close();
     await server.close();
   });
+
+  it("rejects when connect times out waiting for socket", async () => {
+    const socketPath = path.join(await createTempDir(), "nonexistent-dir", "qmp.sock");
+    const client = new QmpClient({ socketPath, timeoutMs: 50 });
+
+    await expect(client.connect()).rejects.toMatchObject({
+      code: "QMP_CONNECTION_FAILED",
+    });
+
+    client.close();
+  });
+
+  it("handles socket error after connect during command execution", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", (request) => {
+        connection.send({ return: { status: "running" }, id: request.id });
+      });
+      connection.onCommand("query-block", () => {
+        connection.destroyWithError();
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    await expect(client.execute("query-status")).resolves.toMatchObject({
+      returnValue: { status: "running" },
+    });
+
+    await expect(client.execute("query-block")).rejects.toMatchObject({
+      code: "QMP_DISCONNECTED",
+    });
+
+    client.close();
+    await server.close();
+  });
+
+  it("runs multiple sequential commands successfully", async () => {
+    const server = await createFakeQmpServer((connection) => {
+      connection.send(capturedGreeting);
+      connection.onCommand("qmp_capabilities", (request) =>
+        connection.send({ return: {}, id: request.id }),
+      );
+      connection.onCommand("query-status", (request) => {
+        connection.send({ return: { status: "running" }, id: request.id });
+      });
+      connection.onCommand("query-block", (request) => {
+        connection.send({ return: [], id: request.id });
+      });
+      connection.onCommand("query-cpus-fast", (request) => {
+        connection.send({ return: [{ cpu: 0 }], id: request.id });
+      });
+    });
+
+    const client = new QmpClient({ socketPath: server.socketPath, timeoutMs: 200 });
+    await client.connect();
+
+    const r1 = await client.execute("query-status");
+    const r2 = await client.execute("query-block");
+    const r3 = await client.execute("query-cpus-fast");
+
+    expect(r1.returnValue).toEqual({ status: "running" });
+    expect(r2.returnValue).toEqual([]);
+    expect(r3.returnValue).toEqual([{ cpu: 0 }]);
+    expect(server.requests.map((r) => r.execute)).toEqual([
+      "qmp_capabilities",
+      "query-status",
+      "query-block",
+      "query-cpus-fast",
+    ]);
+
+    client.close();
+    await server.close();
+  });
 });
 
 describe("parseQmpMessage", () => {
@@ -732,6 +810,26 @@ describe("parseQmpMessage", () => {
 
   it("rejects invalid JSON", () => {
     expect(() => parseQmpMessage("{")).toThrow(CrucibleError);
+  });
+
+  it("rejects non-object JSON (array)", () => {
+    expect(() => parseQmpMessage("[1,2,3]")).toThrow(/must be a JSON object/);
+  });
+
+  it("rejects non-object JSON (string)", () => {
+    expect(() => parseQmpMessage('"hello"')).toThrow(/must be a JSON object/);
+  });
+
+  it("rejects error with malformed error field", () => {
+    expect(() => parseQmpMessage(JSON.stringify({ error: "not-an-object", id: "x" }))).toThrow(
+      CrucibleError,
+    );
+  });
+
+  it("rejects return response with invalid request id type", () => {
+    expect(() => parseQmpMessage(JSON.stringify({ return: {}, id: true }))).toThrow(
+      /request id must be a string or number/,
+    );
   });
 
   it("rejects unknown greeting fields", () => {

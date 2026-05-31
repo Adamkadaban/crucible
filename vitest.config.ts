@@ -16,6 +16,12 @@ export default defineConfig({
       reportsDirectory: "coverage",
       include: ["packages/{cli,core,mcp-server}/src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/*.live.test.ts"],
+      thresholds: {
+        lines: 85,
+        statements: 85,
+        functions: 85,
+        branches: 75,
+      },
     },
   },
 });

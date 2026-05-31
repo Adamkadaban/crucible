@@ -756,3 +756,262 @@ function accountStage(): ProvisioningStageContract {
     },
   };
 }
+
+describe("QGA additional coverage", () => {
+  it("runStage returns succeeded for media-ready without script", async () => {
+    const server = await startFakeQga(() => ({ return: {} }));
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        timeoutMs: 1000,
+      });
+      const result = await executor.runStage({
+        id: "media-ready",
+        title: "Media ready",
+        dependsOn: [],
+        readinessChecks: [],
+        producesSecrets: [],
+        producesSnapshot: false,
+      });
+      expect(result.status).toBe("succeeded");
+      expect(result.detail).toContain("host-side stage");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("runStage returns succeeded for vm-booted without script", async () => {
+    const server = await startFakeQga(() => ({ return: {} }));
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        timeoutMs: 1000,
+      });
+      const result = await executor.runStage({
+        id: "vm-booted",
+        title: "VM booted",
+        dependsOn: [],
+        readinessChecks: [],
+        producesSecrets: [],
+        producesSnapshot: false,
+      });
+      expect(result.status).toBe("succeeded");
+      expect(result.detail).toContain("host-side stage");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("runStage returns succeeded for scriptless non-qga stage", async () => {
+    const server = await startFakeQga(() => ({ return: {} }));
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        timeoutMs: 1000,
+      });
+      const result = await executor.runStage({
+        id: "snapshot-prepared",
+        title: "Snapshot prepared",
+        dependsOn: ["qga-ready"],
+        readinessChecks: [],
+        producesSecrets: [],
+        producesSnapshot: false,
+      });
+      expect(result.status).toBe("succeeded");
+      expect(result.detail).toBe("readiness contract has no script");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("runStage reports blocked when guest-exec times out", async () => {
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-exec") {
+        return { return: { pid: 42 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { return: { exited: false } };
+      }
+      return { return: {} };
+    });
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        timeoutMs: 100,
+      });
+      const stage = scriptStage();
+      // Override the script timeoutMs to something very short
+      const shortStage: ProvisioningStageContract = {
+        ...stage,
+        script: { ...stage.script!, timeoutMs: 100 },
+      };
+      const result = await executor.runStage(shortStage);
+      expect(result.status).toBe("blocked");
+      expect(result.detail).toBe("QGA guest-exec timed out");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("runStage reports blocked with stderr when exit code is non-zero non-75", async () => {
+    const stderrMsg = "Something went wrong";
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-exec") {
+        return { return: { pid: 42 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return {
+          return: {
+            exited: true,
+            exitcode: 2,
+            "err-data": Buffer.from(stderrMsg).toString("base64"),
+          },
+        };
+      }
+      return { return: {} };
+    });
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        timeoutMs: 1000,
+      });
+      const result = await executor.runStage(scriptStage());
+      expect(result.status).toBe("blocked");
+      expect(result.detail).toContain(stderrMsg);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("runStage treats exit code 75 as succeeded (skipped)", async () => {
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-exec") {
+        return { return: { pid: 42 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { return: { exited: true, exitcode: 75 } };
+      }
+      return { return: {} };
+    });
+    try {
+      const executor = new QgaProvisioningExecutor({
+        client: new QgaClient({ socketPath: server.socketPath }),
+        vmName: "analysis-one",
+        secretsDirectory: "secrets",
+        timeoutMs: 1000,
+      });
+      const result = await executor.runStage(scriptStage());
+      expect(result.status).toBe("succeeded");
+      expect(result.detail).toContain("(skipped)");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("exec with env variables passes them to guest-exec", async () => {
+    let capturedEnv: unknown;
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-exec") {
+        capturedEnv = request.arguments?.env;
+        return { return: { pid: 42 } };
+      }
+      if (request.execute === "guest-exec-status") {
+        return { return: { exited: true, exitcode: 0 } };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({ socketPath: server.socketPath, timeoutMs: 1000 });
+      await client.exec("cmd.exe", ["/c", "echo"], { env: { FOO: "bar" } });
+      expect(capturedEnv).toEqual(["FOO=bar"]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("writeFile chunks large payloads into 32KB segments", async () => {
+    let writeCount = 0;
+    const server = await startFakeQga((request) => {
+      if (request.execute === "guest-file-open") {
+        return { return: { handle: 1 } };
+      }
+      if (request.execute === "guest-file-write") {
+        writeCount += 1;
+        return { return: {} };
+      }
+      if (request.execute === "guest-file-close") {
+        return { return: {} };
+      }
+      return { return: {} };
+    });
+    try {
+      const client = new QgaClient({
+        socketPath: server.socketPath,
+        timeoutMs: 1000,
+        retryPolicy: { budgetMs: 5000, initialBackoffMs: 1, maxBackoffMs: 5 },
+        sleep: () => Promise.resolve(),
+      });
+      // 70KB payload → ceil(70*1024 / 32*1024) = 3 chunks
+      const payload = Buffer.alloc(70 * 1024, 0x41);
+      await client.writeFile("C:\\Test\\big.bin", payload);
+      expect(writeCount).toBeGreaterThanOrEqual(3);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("describeAbortReason handles string and null reasons", async () => {
+    // String reason
+    {
+      const server = await startFakeQga((_request, socket) => {
+        socket.destroy();
+        return undefined;
+      });
+      try {
+        const controller = new AbortController();
+        controller.abort("custom reason string");
+        const client = new QgaClient({
+          socketPath: server.socketPath,
+          timeoutMs: 1000,
+          retryPolicy: { budgetMs: 60_000, initialBackoffMs: 50, maxBackoffMs: 100 },
+          signal: controller.signal,
+        });
+        await expect(client.writeFile("C:\\Test\\file.bin", "x")).rejects.toThrow(
+          /custom reason string/,
+        );
+      } finally {
+        await server.close();
+      }
+    }
+    // Null/undefined reason
+    {
+      const server = await startFakeQga((_request, socket) => {
+        socket.destroy();
+        return undefined;
+      });
+      try {
+        const controller = new AbortController();
+        controller.abort(null);
+        const client = new QgaClient({
+          socketPath: server.socketPath,
+          timeoutMs: 1000,
+          retryPolicy: { budgetMs: 60_000, initialBackoffMs: 50, maxBackoffMs: 100 },
+          signal: controller.signal,
+        });
+        await expect(client.writeFile("C:\\Test\\file.bin", "x")).rejects.toThrow(/signal aborted/);
+      } finally {
+        await server.close();
+      }
+    }
+  });
+});
