@@ -91,9 +91,9 @@ pnpm crucible snapshot:list
 ```
 
 The CLI generates a per-VM mTLS PKI under `artifacts/secrets/<vm>/mtls/` on first run (CA + server
-cert SAN'd to the host-only control address + host client cert), stages the cert material and the
-`crucible-agent.exe` binary into the guest via `qemu-ga guest-file-*`, and then runs
-`install-agent.ps1`.
+cert SAN'd to the host-only control address + host client cert), bakes the cert material, guest
+agent binary, and provisioning scripts into `artifacts/boot/crucible-payload.iso`, and mounts that
+payload as read-only guest media for `install-agent.ps1` and the other provisioning stages.
 
 The first run takes ~12-18 minutes for Windows install, auto-login, tool setup, policy lockdown, and
 guest-agent install. On success, Crucible creates `clean-base`; restore it before each new analysis

@@ -14,7 +14,7 @@ DISK="${ART}/disks/crucible-win11.qcow2"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 OVMF_VARS="${ART}/boot/test.OVMF_VARS.fd"
-mkdir -p "${ART}/boot" "${ART}/logs" "${ART}/disks"
+mkdir -p "${ART}/boot" "${ART}/logs" "${ART}/disks" "${ART}/media"
 # Fresh vars + disk every run so behavior is deterministic
 cp "$OVMF_VARS_SRC" "$OVMF_VARS"
 [ -f "$DISK" ] && rm -f "$DISK"

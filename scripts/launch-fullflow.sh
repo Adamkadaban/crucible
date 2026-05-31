@@ -9,7 +9,7 @@ DISK="${ART}/disks/crucible-win11.qcow2"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 OVMF_VARS="${ART}/boot/test.OVMF_VARS.fd"
-mkdir -p "${ART}/boot" "${ART}/logs" "${ART}/disks"
+mkdir -p "${ART}/boot" "${ART}/logs" "${ART}/disks" "${ART}/media"
 cp "$OVMF_VARS_SRC" "$OVMF_VARS"
 rm -f "$DISK"; qemu-img create -f qcow2 "$DISK" 64G >/dev/null
 rm -f "$ART/qmp.sock" "$ART/qga.sock"
