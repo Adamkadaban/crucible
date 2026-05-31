@@ -665,6 +665,46 @@ describe("crucible MCP tools", () => {
     expect(execRequests[1]?.arguments?.join(" ")).toContain("^WriteFile$");
   });
 
+  it("reports ProcMon stop empty stdout with stderr context", async () => {
+    let call = 0;
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () => {
+        call += 1;
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64:
+            call === 1
+              ? Buffer.from(
+                  JSON.stringify({ monitorId: "mon-test", outputGuestPath: "C:\\mon.pml" }),
+                ).toString("base64")
+              : "",
+          stderrBase64: call === 2 ? Buffer.from("conversion failed").toString("base64") : "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    await client.callTool({ name: "process_monitor_start", arguments: {} });
+    const stop = (await client.callTool({
+      name: "process_monitor_stop",
+      arguments: { monitorId: "mon-test" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(stop);
+
+    expect(payload.ok).toBe(false);
+    expect(payload.error.message).toContain("conversion failed");
+  });
+
   it("runs memory scan and region dump scripts as admin", async () => {
     const execRequests: Array<{ arguments?: readonly string[]; as?: string }> = [];
     let call = 0;
