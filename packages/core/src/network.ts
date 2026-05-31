@@ -22,6 +22,11 @@ export const networkConfigSchema = z
      * Ignored unless mode === "capture".
      */
     pcapPath: z.string().min(1).optional(),
+    /**
+     * Optional host-side TLS key log path associated with a capture run.
+     * This file contains session secrets and must stay in ignored artifacts.
+     */
+    tlsKeyLogPath: z.string().min(1).optional(),
   })
   .strict();
 
@@ -97,6 +102,7 @@ export type QemuNetworkPlan = {
   readonly portForwards: readonly QemuNetworkPortForward[];
   readonly owner: NetworkOwnerTag;
   readonly pcapPath?: string;
+  readonly tlsKeyLogPath?: string;
 };
 
 export type NetworkTeardownPlan = {
@@ -200,6 +206,7 @@ export function buildNetworkPlan(options: NetworkPlanOptions): NetworkPlan {
     networkDevice: options.networkDevice ?? "virtio-net-pci",
     owner,
     pcapPath: options.config.pcapPath,
+    tlsKeyLogPath: options.config.tlsKeyLogPath,
   });
   const firewall = buildFirewallPlan(mode, owner, options.firewallBackend ?? "nftables");
 
@@ -437,6 +444,7 @@ function buildQemuNetworkPlan(options: {
    * netdev to disk for later analysis. Ignored for `isolated` / `nat`.
    */
   readonly pcapPath?: string;
+  readonly tlsKeyLogPath?: string;
 }): QemuNetworkPlan {
   const portForwards = buildQemuPortForwards(options.controlAddress);
 
@@ -468,6 +476,10 @@ function buildQemuNetworkPlan(options: {
     portForwards,
     owner: options.owner,
     pcapPath,
+    tlsKeyLogPath:
+      options.mode === "capture" && options.tlsKeyLogPath !== ""
+        ? options.tlsKeyLogPath
+        : undefined,
   };
 }
 

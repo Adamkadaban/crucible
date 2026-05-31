@@ -119,23 +119,34 @@ resources outside the plan's teardown contract, and broad interface names such a
 ## Capture mode pcap
 
 Capture mode uses a tap netdev so the host can sniff the guest's traffic. Set `network.pcapPath` in
-`crucible.config.json` to have QEMU write every frame to disk via `-object filter-dump`:
+`crucible.config.json` to have QEMU write every frame to disk via `-object filter-dump`. Set
+`network.tlsKeyLogPath` when you also want Crucible metadata and tshark summaries to use a TLS key
+log file for decrypting supported TLS traffic:
 
 ```json
 {
   "network": {
     "mode": "capture",
-    "pcapPath": "artifacts/captures/run-1.pcap"
+    "pcapPath": "artifacts/captures/run-1.pcap",
+    "tlsKeyLogPath": "artifacts/captures/run-1.sslkeylog"
   }
 }
 ```
 
 The path is honoured only when `mode === "capture"`; supplying it in isolated or NAT mode is a
 documented no-op (`plan.qemu.pcapPath` is `undefined` and no `-object filter-dump` is emitted). The
-pcap file lives where the operator configured it — Crucible does not delete it on teardown, since
-post-run analysis usually outlives the VM.
+pcap and TLS key log files live where the operator configured them — Crucible does not delete them
+on teardown, since post-run analysis usually outlives the VM. TLS key logs contain session secrets
+for captured traffic and must stay in ignored artifact directories.
 
 MCP clients can use `network_active_status` to compare the configured mode with the active QEMU
 launch arguments after a restart, `network_pcap_info` to locate the active/configured pcap and
-report size/mtime, and `tshark_summary` to extract host-side conversation, DNS, HTTP host, and TLS
-SNI summaries when `tshark` is installed on the Linux host.
+associated TLS key log file and report size/mtime, and `tshark_summary` to extract host-side
+conversation, DNS, HTTP host, and TLS SNI summaries when `tshark` is installed on the Linux host. If
+a TLS key log path is configured or passed to `tshark_summary`, Crucible invokes tshark with
+`-o tls.keylog_file:<path>`.
+
+For guest processes that support NSS-style key logging, pass `sslKeyLogFile` to `guest_exec` or
+`guest_exec_admin`; Crucible injects it as the process `SSLKEYLOGFILE` environment variable. Not all
+TLS stacks honor this variable, so `network_pcap_info` reports whether the configured key log file
+is present.

@@ -187,14 +187,16 @@ describe("crucible MCP tools", () => {
     expect(change.result).toMatchObject({ requestedMode: "nat", restartRequired: true });
   });
 
-  it("reports pcap info when capture path is configured", async () => {
+  it("reports pcap and TLS key log info when capture paths are configured", async () => {
     const pcapPath = `artifacts/downloads/mcp-pcap-${Date.now()}.pcap`;
+    const tlsKeyLogPath = `artifacts/downloads/mcp-pcap-${Date.now()}.sslkeylog`;
     await mkdir(path.dirname(pcapPath), { recursive: true });
     await writeFile(pcapPath, Buffer.from("pcap"));
+    await writeFile(tlsKeyLogPath, "CLIENT_RANDOM secret\n");
     const client = await harness({
       config: parseCrucibleConfig({
         vm: { name: "capture-vm" },
-        network: { mode: "capture", pcapPath },
+        network: { mode: "capture", pcapPath, tlsKeyLogPath },
       }),
     });
 
@@ -204,11 +206,24 @@ describe("crucible MCP tools", () => {
     })) as ToolCallText;
     const payload = parseFirstTextPayload<{
       ok: boolean;
-      result: { pcapPath?: string; exists: boolean; sizeBytes?: number };
+      result: {
+        pcapPath?: string;
+        exists: boolean;
+        sizeBytes?: number;
+        tlsKeyLogPath?: string;
+        tlsKeyLogExists?: boolean;
+      };
     }>(result);
 
-    expect(payload.result).toMatchObject({ pcapPath, exists: true, sizeBytes: 4 });
+    expect(payload.result).toMatchObject({
+      pcapPath,
+      exists: true,
+      sizeBytes: 4,
+      tlsKeyLogPath,
+      tlsKeyLogExists: true,
+    });
     await rm(pcapPath, { force: true });
+    await rm(tlsKeyLogPath, { force: true });
   });
 
   it("reports missing tshark as a structured error", async () => {
@@ -249,7 +264,11 @@ describe("crucible MCP tools", () => {
   });
 
   it("round-trips guest_exec and guest_exec_admin through a cached guest client", async () => {
-    const execRequests: Array<{ executable: string; as?: string }> = [];
+    const execRequests: Array<{
+      executable: string;
+      as?: string;
+      environment?: Record<string, string>;
+    }> = [];
     const fakeClient = {
       health: () => Promise.resolve({ status: "ok" }),
       exec: (req: { executable: string; arguments?: string[]; as?: string }) => {
@@ -278,7 +297,10 @@ describe("crucible MCP tools", () => {
     for (let i = 0; i < 3; i += 1) {
       await client.callTool({
         name: "guest_exec",
-        arguments: { executable: "whoami.exe" },
+        arguments:
+          i === 0
+            ? { executable: "whoami.exe", sslKeyLogFile: "C:\\stage\\tls.keys" }
+            : { executable: "whoami.exe" },
       });
     }
     await client.callTool({
@@ -287,6 +309,7 @@ describe("crucible MCP tools", () => {
     });
     expect(factoryCalls).toBe(1);
     expect(execRequests.map((req) => req.as)).toEqual(["service", "service", "service", "admin"]);
+    expect(execRequests[0]?.environment).toMatchObject({ SSLKEYLOGFILE: "C:\\stage\\tls.keys" });
   });
 
   it("runs persistent debugger commands through the installed CDB path", async () => {
