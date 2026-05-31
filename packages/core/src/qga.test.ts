@@ -1,12 +1,18 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { QgaClient, QgaProvisioningExecutor } from "./qga.js";
 import type { ProvisioningStageContract } from "./provisioning.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
+});
 
 describe("QGA client and provisioning executor", () => {
   it("pings QGA", async () => {
@@ -76,7 +82,7 @@ describe("QGA client and provisioning executor", () => {
   });
 
   it("injects account secrets as guest-exec environment variables", async () => {
-    const root = await mkdtemp(join(tmpdir(), "crucible-qga-secrets-"));
+    const root = await createTempDir("crucible-qga-secrets-");
     await mkdir(join(root, "analysis-one", "windows"), { recursive: true });
     await writeFile(
       join(root, "analysis-one", "windows", "standard-user.json"),
@@ -565,7 +571,7 @@ async function startFakeQga(
     socket: Socket,
   ) => Promise<Record<string, unknown> | undefined> | Record<string, unknown> | undefined,
 ): Promise<{ readonly socketPath: string; readonly close: () => Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "crucible-qga-"));
+  const root = await createTempDir("crucible-qga-");
   const socketPath = join(root, "qga.sock");
   const server = createServer((socket) => handleSocket(socket, handler));
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
@@ -574,6 +580,12 @@ async function startFakeQga(
     socketPath,
     close: () => closeServer(server),
   };
+}
+
+async function createTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
 }
 
 function handleSocket(

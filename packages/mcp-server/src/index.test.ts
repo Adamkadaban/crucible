@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { parseCrucibleConfig, type GuestAgentClient } from "@crucible/core";
 
 import {
@@ -17,6 +17,17 @@ import {
 } from "./index.js";
 
 type ToolCallText = { content: ReadonlyArray<{ type: string; text: string }> };
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
+});
+
+async function createTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function parseFirstTextPayload<T>(result: ToolCallText): T {
   const text = result.content[0]?.text;
@@ -249,7 +260,7 @@ describe("crucible MCP tools", () => {
   });
 
   it("passes TLS key log files to tshark summaries", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "crucible-tshark-"));
+    const root = await createTempDir("crucible-tshark-");
     const pcapPath = path.join(root, "capture.pcap");
     const tlsKeyLogPath = path.join(root, "capture.sslkeylog");
     const binDir = path.join(root, "bin");
@@ -284,7 +295,6 @@ describe("crucible MCP tools", () => {
       expect(argsLog).toContain(`tls.keylog_file:${tlsKeyLogPath}`);
     } finally {
       process.env.PATH = originalPath;
-      await rm(root, { recursive: true, force: true });
     }
   });
 
@@ -865,7 +875,7 @@ describe("crucible MCP tools", () => {
   });
 
   it("uploads an existing host file through guest_upload_file", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-upload-"));
+    const dir = await createTempDir("crucible-mcp-upload-");
     const hostPath = path.join(dir, "sample.bin");
     await writeFile(hostPath, Buffer.from("sample"));
     const uploads: Array<{ hostPath: string; guestPath: string }> = [];

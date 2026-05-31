@@ -1,8 +1,8 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { parseCrucibleConfig } from "./config.js";
 import { buildLifecyclePaths, type VmStatus } from "./lifecycle.js";
@@ -21,6 +21,12 @@ import {
   writeWindowsAccountSecrets,
 } from "./provisioning.js";
 import type { ProcessCommand, ProcessRunner } from "./process.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
+});
 
 describe("provisioning contracts", () => {
   it("defines the Phase 3 provisioning stages in execution order", () => {
@@ -458,7 +464,7 @@ describe("provisioning contracts", () => {
   });
 
   it("prepares first-boot host artifacts and commands", async () => {
-    const root = await mkdtemp(join(tmpdir(), "crucible-first-boot-"));
+    const root = await mkdtempPath("crucible-first-boot-");
     const windowsIso = join(root, "windows.iso");
     const virtioIso = join(root, "virtio.iso");
     const ovmfCode = join(root, "OVMF_CODE.fd");
@@ -608,7 +614,7 @@ describe("provisioning contracts", () => {
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "crucible-first-boot-existing-"));
+    const root = await mkdtempPath("crucible-first-boot-existing-");
     const windowsIso = join(root, "windows.iso");
     const virtioIso = join(root, "virtio.iso");
     const ovmfCode = join(root, "OVMF_CODE.fd");
@@ -675,7 +681,7 @@ describe("provisioning contracts", () => {
   });
 
   it("recreates read-only extracted virtio driver directories", async () => {
-    const root = await mkdtemp(join(tmpdir(), "crucible-readonly-drivers-"));
+    const root = await mkdtempPath("crucible-readonly-drivers-");
     const windowsIso = join(root, "windows.iso");
     const virtioIso = join(root, "virtio.iso");
     const ovmfCode = join(root, "OVMF_CODE.fd");
@@ -791,8 +797,10 @@ describe("provisioning contracts", () => {
   });
 });
 
-async function mkdtempPath(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "crucible-provisioning-"));
+async function mkdtempPath(prefix = "crucible-provisioning-"): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
 }
 
 function fakeVmStatus(
