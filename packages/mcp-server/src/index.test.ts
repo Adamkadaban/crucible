@@ -556,6 +556,55 @@ describe("crucible MCP tools", () => {
     expect(execRequests[0]?.arguments?.join(" ")).toContain("'-mm'");
   });
 
+  it("supports comsvcs dump method and suspend option", async () => {
+    const execRequests: Array<{ arguments?: readonly string[] }> = [];
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: (req: { arguments?: readonly string[] }) => {
+        execRequests.push(req);
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(
+            JSON.stringify({
+              pid: 1234,
+              outputGuestPath: "C:\\Dumps\\p.dmp",
+              method: "comsvcs",
+              sizeBytes: 42,
+              sha256: "deadbeef",
+              tool: "comsvcs.dll",
+              suspended: true,
+            }),
+          ).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    await client.callTool({
+      name: "dump_process",
+      arguments: {
+        pid: 1234,
+        outputGuestPath: "C:\\Dumps\\p.dmp",
+        method: "comsvcs",
+        suspend: true,
+      },
+    });
+
+    const command = execRequests[0]?.arguments?.join(" ") ?? "";
+    expect(command).toContain("comsvcs.dll");
+    expect(command).toContain("Suspend-Process");
+  });
+
   it("starts and stops a ProcMon-backed process monitor", async () => {
     const execRequests: Array<{ arguments?: readonly string[] }> = [];
     let call = 0;

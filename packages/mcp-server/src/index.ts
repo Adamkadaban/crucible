@@ -294,6 +294,9 @@ const DumpProcessInput = z
     pid: z.number().int().positive(),
     outputGuestPath: z.string().min(1).optional(),
     full: z.boolean().optional(),
+    dumpType: z.enum(["mini", "full"]).optional(),
+    method: z.enum(["auto", "procdump", "comsvcs", "minidumpwritedump"]).optional(),
+    suspend: z.boolean().optional(),
   })
   .strict();
 type DumpProcessInputType = z.infer<typeof DumpProcessInput>;
@@ -1256,7 +1259,16 @@ function registerDumpTools(
         const outputGuestPath =
           input.outputGuestPath ??
           `C:\\ProgramData\\Crucible\\staging\\dumps\\process-${input.pid}-${Date.now()}.dmp`;
-        const script = buildProcDumpScript(input.pid, outputGuestPath, input.full ?? true);
+        const full =
+          input.dumpType === undefined ? (input.full ?? true) : input.dumpType === "full";
+        const method = input.method ?? "auto";
+        const script = buildProcessDumpScript(
+          input.pid,
+          outputGuestPath,
+          full,
+          method,
+          input.suspend ?? false,
+        );
         const result = await client.exec({
           executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
           arguments: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
@@ -1270,7 +1282,7 @@ function registerDumpTools(
           const stderr = Buffer.from(result.stderrBase64 ?? "", "base64")
             .toString("utf8")
             .trim();
-          throw new Error(`procdump failed: ${stderr || stdout || `exit ${result.exitCode}`}`);
+          throw new Error(`process dump failed: ${stderr || stdout || `exit ${result.exitCode}`}`);
         }
         return toJsonContent({
           ok: true,
@@ -1287,10 +1299,17 @@ function registerDumpTools(
   );
 }
 
-function buildProcDumpScript(pid: number, outputGuestPath: string, full: boolean): string {
+function buildProcessDumpScript(
+  pid: number,
+  outputGuestPath: string,
+  full: boolean,
+  method: "auto" | "procdump" | "comsvcs" | "minidumpwritedump",
+  suspend: boolean,
+): string {
   const escapedOutput = outputGuestPath.replaceAll("'", "''");
   const dumpFlag = full ? "-ma" : "-mm";
-  return `$ErrorActionPreference='Stop'; $tools=@('C:\\Tools\\Sysinternals\\procdump64.exe','C:\\Tools\\Sysinternals\\procdump.exe','procdump64.exe','procdump.exe'); $tool=$tools | Where-Object { if([System.IO.Path]::IsPathRooted($_)){ Test-Path -LiteralPath $_ } else { [bool](Get-Command $_ -ErrorAction SilentlyContinue) } } | Select-Object -First 1; if(-not $tool){ throw 'ProcDump is not installed or not on PATH' }; $out='${escapedOutput}'; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $out) | Out-Null; $stdout=[IO.Path]::GetTempFileName(); $stderr=[IO.Path]::GetTempFileName(); try { $args=@('-accepteula','${dumpFlag}',${pid},$out); $p=Start-Process -FilePath $tool -ArgumentList $args -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr; if($p.ExitCode -ne 0){ $errText=((Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue),(Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) -join ' ').Trim(); throw "ProcDump exited $($p.ExitCode): $errText" }; $item=Get-Item -LiteralPath $out; $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $out).Hash.ToLowerInvariant(); [ordered]@{pid=${pid}; outputGuestPath=$out; full=$${full}; sizeBytes=$item.Length; sha256=$hash; tool=$tool} | ConvertTo-Json -Compress } finally { Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue }`;
+  const methodLiteral = method.replaceAll("'", "''");
+  return `$ErrorActionPreference='Stop'; $method='${methodLiteral}'; if($method -eq 'minidumpwritedump'){ throw 'minidumpwritedump requires a native guest helper and is not implemented yet' }; $out='${escapedOutput}'; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $out) | Out-Null; $suspended=$false; if($${suspend}){ try{ Suspend-Process -Id ${pid} -ErrorAction Stop; $suspended=$true }catch{ throw 'failed to suspend target process: '+$_.Exception.Message } }; try { $tool=$null; if($method -eq 'auto' -or $method -eq 'procdump'){ $tools=@('C:\\Tools\\Sysinternals\\procdump64.exe','C:\\Tools\\Sysinternals\\procdump.exe','procdump64.exe','procdump.exe'); $tool=$tools | Where-Object { if([System.IO.Path]::IsPathRooted($_)){ Test-Path -LiteralPath $_ } else { [bool](Get-Command $_ -ErrorAction SilentlyContinue) } } | Select-Object -First 1 }; if($tool){ $stdout=[IO.Path]::GetTempFileName(); $stderr=[IO.Path]::GetTempFileName(); try { $args=@('-accepteula','${dumpFlag}',${pid},$out); $p=Start-Process -FilePath $tool -ArgumentList $args -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr; if($p.ExitCode -ne 0){ $errText=((Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue),(Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) -join ' ').Trim(); throw "ProcDump exited $($p.ExitCode): $errText" } } finally { Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue } } elseif($method -eq 'auto' -or $method -eq 'comsvcs') { if(-not $${full}){ throw 'comsvcs dump method only supports full dumps; use procdump for mini dumps' }; $dll=Join-Path $env:windir 'System32\\comsvcs.dll'; $entry="$dll,MiniDump"; & rundll32.exe $entry ${pid} $out full; $tool='comsvcs.dll'; if(-not (Test-Path -LiteralPath $out)){ throw 'comsvcs MiniDump did not create output file' }; if((Get-Item -LiteralPath $out).Length -le 0){ throw 'comsvcs MiniDump created an empty output file' } } else { throw 'ProcDump is not installed or not on PATH' }; $item=Get-Item -LiteralPath $out; $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $out).Hash.ToLowerInvariant(); [ordered]@{pid=${pid}; outputGuestPath=$out; full=$${full}; method=$method; sizeBytes=$item.Length; sha256=$hash; tool=$tool; suspended=$suspended} | ConvertTo-Json -Compress } finally { if($suspended){ Resume-Process -Id ${pid} -ErrorAction SilentlyContinue } }`;
 }
 
 function registerMonitorTools(
