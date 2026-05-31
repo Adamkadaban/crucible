@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -25,8 +28,12 @@ import {
 } from "./index.js";
 
 describe("core bootstrap exports", () => {
-  it("exposes a version", () => {
-    expect(CRUCIBLE_VERSION).toBe("0.1.0-beta.0");
+  it("keeps generated runtime version in sync with package.json", () => {
+    const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as {
+      version: string;
+    };
+
+    expect(CRUCIBLE_VERSION).toBe(packageJson.version);
   });
 
   it("includes manual download guidance for default media", () => {

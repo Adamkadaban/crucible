@@ -242,4 +242,4 @@ export type {
   SnapshotRestoreResult,
 } from "./snapshot.js";
 
-export const CRUCIBLE_VERSION = "0.1.0-beta.0";
+export { CRUCIBLE_VERSION } from "./version.js";
