@@ -21,9 +21,10 @@ one-shot command builder.
    send a multi-line script, mirror output to a guest log path, and close the session.
 5. `debug_close` — terminate the debugger process and close the session.
 
-For samples that detect debugger attachment, use `dump_process` instead. It runs ProcDump/ProcDump64
-from the guest when installed, writes the dump to a guest path, and returns size/hash metadata
-without opening CDB.
+For samples that detect debugger attachment, use `dump_process` instead. It supports
+`method: "auto" | "procdump" | "comsvcs"` (with a clear not-implemented error for
+`minidumpwritedump`), `dumpType: "mini" | "full"`, and optional suspend/resume around capture. The
+helper writes the dump to a guest path and returns size/hash metadata without opening CDB.
 
 The first three tools return a uniform `DebuggerCommandResult` envelope:
 
