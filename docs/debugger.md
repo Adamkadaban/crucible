@@ -17,7 +17,9 @@ one-shot command builder.
    automatically terminated with `q`; use `debug_close` when done.
 3. `debug_dump` — sends `.dump /ma <path>` (or `.dump <path>` for `minidump: true`) to the live
    session.
-4. `debug_close` — terminate the debugger process and close the session.
+4. `debug_run_script` — open a temporary persistent CDB session, optionally run `initialCommands`,
+   send a multi-line script, mirror output to a guest log path, and close the session.
+5. `debug_close` — terminate the debugger process and close the session.
 
 For samples that detect debugger attachment, use `dump_process` instead. It runs ProcDump/ProcDump64
 from the guest when installed, writes the dump to a guest path, and returns size/hash metadata

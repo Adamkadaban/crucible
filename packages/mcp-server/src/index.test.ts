@@ -57,6 +57,7 @@ describe("crucible MCP tools", () => {
       "debug_open",
       "debug_command",
       "debug_dump",
+      "debug_run_script",
       "dump_process",
       "process_monitor_start",
       "process_monitor_stop",
@@ -391,6 +392,74 @@ describe("crucible MCP tools", () => {
     expect(opens[0]?.executable).toBe(
       "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x86\\cdb.exe",
     );
+  });
+
+  it("runs a debugger script in a temporary persistent session", async () => {
+    const opens: Array<{ executable: string; arguments?: readonly string[]; logPath?: string }> =
+      [];
+    const commands: Array<{ id: string; input: string; waitMs?: number }> = [];
+    const closes: string[] = [];
+    const fakeClient = {
+      health: () =>
+        Promise.resolve({
+          status: "ok",
+          cdbPath: "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
+        }),
+      debugOpen: (req: { executable: string; arguments?: readonly string[]; logPath?: string }) => {
+        opens.push(req);
+        return Promise.resolve({
+          id: "guest-dbg-script",
+          pid: 4321,
+          logPath: req.logPath ?? "C:\\ProgramData\\Crucible\\Exec\\guest-dbg-script.log",
+          startedAt: "2026-01-01T00:00:00Z",
+        });
+      },
+      debugCommand: (id: string, input: string, waitMs?: number) => {
+        commands.push({ id, input, waitMs });
+        return Promise.resolve({
+          id,
+          outputBase64: Buffer.from("script-output").toString("base64"),
+          truncated: false,
+          logPath: "C:\\logs\\run.log",
+          exited: false,
+        });
+      },
+      debugClose: (id: string) => {
+        closes.push(id);
+        return Promise.resolve({ id, closed: true });
+      },
+      exec: () => Promise.reject(new Error("unused")),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const result = (await client.callTool({
+      name: "debug_run_script",
+      arguments: {
+        target: { mode: "attach", pid: 1234, debuggerArch: "auto", initialCommands: ["sxd wob"] },
+        script: "lm\nr",
+        timeoutMs: 5_000,
+        logPath: "C:\\logs\\run.log",
+      },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { stdoutBase64: string; logPath: string };
+    }>(result);
+
+    expect(payload.ok).toBe(true);
+    expect(opens[0]).toMatchObject({ arguments: ["-p", "1234"], logPath: "C:\\logs\\run.log" });
+    expect(commands).toEqual([
+      { id: "guest-dbg-script", input: "sxd wob", waitMs: 1_000 },
+      { id: "guest-dbg-script", input: "lm\nr", waitMs: 5_000 },
+    ]);
+    expect(Buffer.from(payload.result.stdoutBase64, "base64").toString()).toBe("script-output");
+    expect(closes).toEqual(["guest-dbg-script"]);
   });
 
   it("runs dump_process through ProcDump as admin", async () => {
