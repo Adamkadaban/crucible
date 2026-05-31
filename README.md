@@ -31,7 +31,7 @@ sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
 ## Install
 
 ```sh
-npm install -g crucible
+npm install -g @adamkadaban/crucible
 crucible --help
 crucible doctor
 crucible setup host --print

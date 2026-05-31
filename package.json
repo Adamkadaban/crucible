@@ -1,5 +1,5 @@
 {
-  "name": "crucible",
+  "name": "@adamkadaban/crucible",
   "version": "0.1.0-beta.0",
   "description": "Source-install beta for controlling isolated Windows analysis VMs from Linux MCP agents.",
   "author": "Adam Hassan",
