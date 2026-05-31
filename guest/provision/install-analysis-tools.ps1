@@ -92,7 +92,6 @@ function Install-ProcDump {
 function Install-ProcMon {
     $target = Join-Path $ToolsRoot "Sysinternals"
     if ($null -ne (Find-ToolExecutable -FileNames @("Procmon64.exe", "Procmon.exe", "procmon64.exe", "procmon.exe"))) { return $false }
-    New-Item -ItemType Directory -Force -Path $target | Out-Null
     $payloadZip = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' |
         Where-Object { $_.VolumeName -eq 'CRUCIBLE' } |
         ForEach-Object { Join-Path "$($_.DeviceID)\" "tools\ProcessMonitor.zip" } |
@@ -102,6 +101,7 @@ function Install-ProcMon {
         Write-Status "dry-run: install standalone Process Monitor into $target"
         return $true
     }
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
     if ($payloadZip) {
         Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
         return $true
