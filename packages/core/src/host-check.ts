@@ -10,7 +10,7 @@ export type HostCheckProbeResult = {
   readonly arch: string;
 };
 
-const REQUIRED_BINARIES = ["qemu-system-x86_64", "qemu-img", "xorriso"] as const;
+const REQUIRED_BINARIES = ["qemu-system-x86_64", "qemu-img", "xorriso", "swtpm", "socat"] as const;
 
 const KVM_PATH = "/dev/kvm";
 const OVMF_CODE_CANDIDATES = [

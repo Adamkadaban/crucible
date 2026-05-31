@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
-import { dirname, resolve as resolvePath } from "node:path";
+import { homedir } from "node:os";
+import { mkdir, readFile, rename, stat as fsStat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -32,6 +33,7 @@ import {
   renderQemuCreateDryRun,
   renderQemuStartDryRun,
   runProvisioningCommand,
+  runHostCheck,
   SnapshotManager,
   type CrucibleConfig,
   type FirewallBackend,
@@ -167,6 +169,20 @@ type GuestExecArgs = {
   readonly as: "service" | "standard" | "admin";
 };
 
+type SetupTarget = "host" | "opencode" | "claude" | "codex" | "copilot" | "all";
+
+type SetupArgs = {
+  readonly target: SetupTarget;
+  readonly printOnly: boolean;
+  readonly yes: boolean;
+};
+
+type SetupArgsResult =
+  | { readonly ok: true; readonly args: SetupArgs }
+  | { readonly ok: false; readonly message: string };
+
+type JsonObject = { [key: string]: unknown };
+
 export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
@@ -185,6 +201,10 @@ export async function runCrucibleCli(
       return fetchToolsCommand(rest, runtime);
     case "config:init":
       return initConfigCommand(rest);
+    case "doctor":
+      return doctorCommand(rest);
+    case "setup":
+      return setupCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
     case "net:status":
@@ -1582,6 +1602,213 @@ async function initConfigCommand(args: readonly string[]): Promise<CommandResult
   };
 }
 
+async function doctorCommand(args: readonly string[]): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown doctor option: ${args[0]}` };
+  }
+  const result = await runHostCheck();
+  return {
+    exitCode: result.healthy ? 0 : 1,
+    stdout: [
+      `Host: ${result.platform}/${result.arch}`,
+      `Status: ${result.healthy ? "healthy" : "missing prerequisites"}`,
+      result.missing.length > 0 ? `Missing: ${result.missing.join(", ")}` : "Missing: none",
+      `Notes: ${result.notes ?? "none"}`,
+      ...(!result.healthy ? ["", "Manual install (Debian/Ubuntu):", getAptInstallCommand()] : []),
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
+async function setupCommand(args: readonly string[], runtime: CliRuntime): Promise<CommandResult> {
+  const parsed = parseSetupArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  if (parsed.args.target === "all") {
+    const targets: SetupTarget[] = ["host", "opencode", "claude", "codex", "copilot"];
+    const results: string[] = [];
+    let exitCode = 0;
+    for (const target of targets) {
+      const result = await setupCommand([target, ...setupFlags(parsed.args)], runtime);
+      if (result.exitCode !== 0) exitCode = result.exitCode;
+      results.push(`## ${target}`, result.stdout || result.stderr);
+    }
+    return { exitCode, stdout: results.join("\n\n"), stderr: "" };
+  }
+
+  switch (parsed.args.target) {
+    case "host":
+      return setupHostCommand(parsed.args);
+    case "opencode":
+      return setupJsonMcpCommand({
+        targetName: "opencode",
+        configPath: join(homedir(), ".config", "opencode", "opencode.json"),
+        mcpKey: "mcp",
+        printOnly: parsed.args.printOnly,
+      });
+    case "claude":
+      return setupClaudeCommand(parsed.args.printOnly);
+    case "codex":
+      return renderSetupInstruction(
+        "codex",
+        'Codex MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` to your Codex config.',
+      );
+    case "copilot":
+      return renderSetupInstruction(
+        "copilot",
+        'Copilot CLI MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` if your Copilot CLI build supports MCP.',
+      );
+  }
+}
+
+function setupFlags(args: SetupArgs): string[] {
+  return [args.printOnly ? "--print" : undefined, args.yes ? "--yes" : undefined].filter(
+    (value): value is string => value !== undefined,
+  );
+}
+
+async function setupHostCommand(args: SetupArgs): Promise<CommandResult> {
+  const result = await runHostCheck();
+  if (result.healthy) {
+    return { exitCode: 0, stdout: "Host prerequisites are already satisfied.", stderr: "" };
+  }
+  const command = getAptInstallCommand();
+  if (args.printOnly || !args.yes) {
+    return {
+      exitCode: args.printOnly ? 0 : 1,
+      stdout: [
+        `Missing: ${result.missing.join(", ")}`,
+        `Install command: ${command}`,
+        args.yes ? "" : "Re-run with --yes to execute this command, or install manually.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      stderr: "",
+    };
+  }
+  const install = await runHostCommand("sudo", ["apt", "install", "-y", ...APT_PACKAGES]);
+  return {
+    exitCode: install.exitCode,
+    stdout: [`Ran: ${command}`, install.stdout].filter(Boolean).join("\n"),
+    stderr: install.stderr,
+  };
+}
+
+const APT_PACKAGES = ["qemu-system-x86", "qemu-utils", "ovmf", "swtpm", "socat", "xorriso"];
+
+function getAptInstallCommand(): string {
+  return `sudo apt install ${APT_PACKAGES.join(" ")}`;
+}
+
+function runHostCommand(command: string, args: readonly string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.once("error", (error) => resolve({ exitCode: 1, stdout, stderr: error.message }));
+    child.once("close", (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
+  });
+}
+
+async function setupClaudeCommand(printOnly: boolean): Promise<CommandResult> {
+  const json = JSON.stringify(getMcpServerEntry(), null, 2);
+  if (printOnly) {
+    return {
+      exitCode: 0,
+      stdout: `claude mcp add --transport stdio --scope user crucible -- crucible mcp --stdio\n\nJSON:\n${json}`,
+      stderr: "",
+    };
+  }
+  const result = await runHostCommand("claude", [
+    "mcp",
+    "add",
+    "--transport",
+    "stdio",
+    "--scope",
+    "user",
+    "crucible",
+    "--",
+    "crucible",
+    "mcp",
+    "--stdio",
+  ]);
+  return {
+    exitCode: result.exitCode,
+    stdout: [`Updated Claude Code MCP config via claude CLI.`, result.stdout].join("\n"),
+    stderr: result.stderr,
+  };
+}
+
+async function setupJsonMcpCommand(options: {
+  readonly targetName: string;
+  readonly configPath: string;
+  readonly mcpKey: string;
+  readonly printOnly: boolean;
+}): Promise<CommandResult> {
+  const entry = getMcpServerEntry();
+  if (options.printOnly) {
+    return {
+      exitCode: 0,
+      stdout: `${options.configPath}\n${JSON.stringify({ [options.mcpKey]: { crucible: entry } }, null, 2)}`,
+      stderr: "",
+    };
+  }
+
+  const config = await readJsonObjectIfExists(options.configPath);
+  const currentMcp = config[options.mcpKey];
+  const existing: JsonObject = isJsonObject(currentMcp) ? currentMcp : {};
+  config[options.mcpKey] = { ...existing, crucible: entry };
+  const backupPath = await writeJsonConfigWithBackup(options.configPath, config);
+  return {
+    exitCode: 0,
+    stdout: [
+      `Updated ${options.targetName} config: ${options.configPath}`,
+      `Backup: ${backupPath}`,
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
+function getMcpServerEntry(): JsonObject {
+  return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"] };
+}
+
+function renderSetupInstruction(target: string, message: string): CommandResult {
+  return { exitCode: 0, stdout: `${target}: ${message}`, stderr: "" };
+}
+
+async function readJsonObjectIfExists(filePath: string): Promise<JsonObject> {
+  try {
+    const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+    return isJsonObject(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeJsonConfigWithBackup(filePath: string, config: JsonObject): Promise<string> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const backupPath = `${filePath}.bak`;
+  if (await fileExists(filePath)) {
+    await rename(filePath, backupPath);
+  }
+  await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  return backupPath;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function renderNetPlanCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   const config = getRuntimeConfig(runtime);
   const parsed = parseNetPlanArgs(args, config.network.mode);
@@ -2236,6 +2463,43 @@ function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
   return { ok: true, args: { outputPath, force } };
 }
 
+function parseSetupArgs(args: readonly string[]): SetupArgsResult {
+  const target = args[0];
+  if (!isSetupTarget(target)) {
+    return {
+      ok: false,
+      message: "setup requires one target: host, opencode, claude, codex, copilot, or all",
+    };
+  }
+
+  let printOnly = false;
+  let yes = false;
+  for (const arg of args.slice(1)) {
+    if (arg === "--print") {
+      printOnly = true;
+      continue;
+    }
+    if (arg === "--yes") {
+      yes = true;
+      continue;
+    }
+    return { ok: false, message: `Unknown setup option: ${arg}` };
+  }
+
+  return { ok: true, args: { target, printOnly, yes } };
+}
+
+function isSetupTarget(value: string | undefined): value is SetupTarget {
+  return (
+    value === "host" ||
+    value === "opencode" ||
+    value === "claude" ||
+    value === "codex" ||
+    value === "copilot" ||
+    value === "all"
+  );
+}
+
 function isMediaProfileName(value: string): value is MediaProfileName {
   return value === "windows11-enterprise-eval" || value === "windows-server-2025-eval";
 }
@@ -2310,6 +2574,8 @@ function getHelpText(): string {
     "",
     "Usage:",
     "  crucible config:init [--output crucible.config.json] [--force]",
+    "  crucible doctor",
+    "  crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]",
     "  crucible provision   Provision a Windows analysis VM",
     "  crucible snapshot:create clean-base",
     "  crucible snapshot:restore clean-base",

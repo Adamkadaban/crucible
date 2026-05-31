@@ -301,6 +301,49 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Unknown config:init option: --bad");
   });
 
+  it("prints host setup install command without --yes", async () => {
+    const result = await runCrucibleCli(["setup", "host"], defaultRuntime);
+
+    expect(result.exitCode).toBeGreaterThanOrEqual(0);
+    if (result.exitCode !== 0) {
+      expect(result.stdout).toContain("sudo apt install");
+    }
+  });
+
+  it("prints opencode setup config without writing", async () => {
+    const result = await runCrucibleCli(["setup", "opencode", "--print"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("opencode.json");
+    expect(result.stdout).toContain('"command": "crucible"');
+    expect(result.stdout).toContain('"mcp"');
+  });
+
+  it("prints claude setup command without writing", async () => {
+    const result = await runCrucibleCli(["setup", "claude", "--print"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("claude mcp add");
+    expect(result.stdout).toContain("crucible mcp --stdio");
+  });
+
+  it("prints setup guidance for codex and copilot", async () => {
+    const codex = await runCrucibleCli(["setup", "codex", "--print"], defaultRuntime);
+    const copilot = await runCrucibleCli(["setup", "copilot", "--print"], defaultRuntime);
+
+    expect(codex.exitCode).toBe(0);
+    expect(codex.stdout).toContain("Codex MCP configuration is version-dependent");
+    expect(copilot.exitCode).toBe(0);
+    expect(copilot.stdout).toContain("Copilot CLI MCP configuration is version-dependent");
+  });
+
+  it("rejects unknown setup targets", async () => {
+    const result = await runCrucibleCli(["setup", "unknown"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("setup requires one target");
+  });
+
   it("runs provision through fake lifecycle, stage, snapshot, and health contracts", async () => {
     const config = parseCrucibleConfig({
       vm: { name: "test-win" },

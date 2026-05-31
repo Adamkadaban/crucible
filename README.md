@@ -33,6 +33,8 @@ sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
 ```sh
 npm install -g crucible
 crucible --help
+crucible doctor
+crucible setup host --print
 ```
 
 The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
@@ -95,6 +97,16 @@ Run the MCP server over stdio:
 
 ```sh
 crucible mcp --stdio
+```
+
+To configure MCP clients, use one of the setup helpers. They are idempotent for supported config
+files and print the file they update:
+
+```sh
+crucible setup opencode
+crucible setup claude
+crucible setup codex --print
+crucible setup copilot --print
 ```
 
 Example client config:
