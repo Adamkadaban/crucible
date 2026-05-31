@@ -41,7 +41,7 @@ paths, or configure explicit overrides in `crucible.config.json`.
 overrides may be `.iso`, `.exe`, `.zip`, or `.msi` files, also case-insensitively. Each override may
 include a `sha256` field for later verification.
 
-Dry-run the full host-side Phase 1 plan before provisioning:
+Dry-run the full host-side plan before provisioning:
 
 ```sh
 pnpm crucible media:plan --manual
@@ -79,7 +79,7 @@ OpenSSH is reserved for bootstrap fallback only. Do not treat SSH as the steady-
 normal post-bootstrap execution must go through the mTLS guest service. See
 [`provisioning.md`](./provisioning.md) for the stage and script contract details.
 
-The real Phase 3 smoke command is:
+The real provisioning smoke command is:
 
 ```sh
 pnpm crucible provision && \
@@ -89,5 +89,4 @@ pnpm crucible provision && \
 ```
 
 Do not run this in CI. It needs a configured Linux/KVM host, Windows guest, QGA bootstrap path, and
-guest-service adapter. If those prerequisites are unavailable, document the blocker and keep Phase 3
-open.
+guest-service adapter.

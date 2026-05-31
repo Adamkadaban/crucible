@@ -19,8 +19,7 @@ All notable changes to Crucible. The project follows
 
 ### Changed
 
-- PLAN.md tracks per-phase deliverable closure, with remaining future convenience work limited to
-  explicitly documented core-API-only rotation/export CLI wrappers and capture-mode pcap exercise.
+- Public beta docs replace bootstrap planning notes with stable operator and contributor guidance.
 
 ### Verified
 
