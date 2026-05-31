@@ -139,6 +139,15 @@ type FetchToolsArgs = {
   readonly force: boolean;
 };
 
+type ConfigInitArgs = {
+  readonly outputPath: string;
+  readonly force: boolean;
+};
+
+type ConfigInitArgsResult =
+  | { readonly ok: true; readonly args: ConfigInitArgs }
+  | { readonly ok: false; readonly message: string };
+
 type NetPlanArgs = {
   readonly mode: NetworkMode;
   readonly firewallBackend: FirewallBackend;
@@ -173,6 +182,8 @@ export async function runCrucibleCli(
       return renderMediaPlanCommand(rest, runtime);
     case "media:fetch-tools":
       return fetchToolsCommand(rest, runtime);
+    case "config:init":
+      return initConfigCommand(rest);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
     case "net:status":
@@ -837,6 +848,49 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+function getExampleConfigJson(): string {
+  return JSON.stringify(
+    {
+      $schema: "./schemas/config.schema.json",
+      vm: {
+        name: "crucible-win11",
+        cpus: 4,
+        memoryMiB: 8192,
+        diskGiB: 128,
+        display: { mode: "none", vncSocketPath: "artifacts/vnc.sock" },
+      },
+      media: {
+        cacheDir: "media/cache",
+        profile: "windows11-enterprise-eval",
+        windowsIso: { path: "/path/to/windows.iso" },
+        virtioIso: { path: "/path/to/virtio-win.iso" },
+        driverBundle: { path: "/path/to/virtio-win-guest-tools.exe" },
+      },
+      network: {
+        mode: "isolated",
+        controlPort: 8443,
+      },
+      qmp: {
+        socketPath: "artifacts/qmp.sock",
+        timeoutMs: 5000,
+      },
+      qga: {
+        socketPath: "artifacts/qga.sock",
+        timeoutMs: 10000,
+      },
+      artifacts: {
+        directory: "artifacts",
+        manifestPath: "artifacts/manifest.json",
+        logsDirectory: "artifacts/logs",
+        snapshotsDirectory: "snapshots",
+        secretsDirectory: "artifacts/secrets",
+      },
+    },
+    null,
+    2,
+  );
+}
+
 async function getProvisioningLifecyclePreparation(
   config: CrucibleConfig,
   runtime: CliRuntime,
@@ -1494,6 +1548,33 @@ async function fetchToolsCommand(
   return { exitCode: 0, stdout: renderFetchToolsResult(results), stderr: "" };
 }
 
+async function initConfigCommand(args: readonly string[]): Promise<CommandResult> {
+  const parsed = parseConfigInitArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const outputPath = resolvePath(parsed.args.outputPath);
+  if (!parsed.args.force && (await fileExists(outputPath))) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `${parsed.args.outputPath} already exists; pass --force to overwrite`,
+    };
+  }
+
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${getExampleConfigJson()}\n`, { encoding: "utf8", mode: 0o600 });
+  return {
+    exitCode: 0,
+    stdout: [
+      `Wrote ${parsed.args.outputPath}`,
+      "Edit media.windowsIso.path and media.virtioIso.path before provisioning.",
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
 function renderNetPlanCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   const config = getRuntimeConfig(runtime);
   const parsed = parseNetPlanArgs(args, config.network.mode);
@@ -2123,6 +2204,31 @@ function parseFetchToolsArgs(args: readonly string[]): FetchToolsArgsResult {
   return { ok: true, args: { force } };
 }
 
+function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
+  let outputPath = "crucible.config.json";
+  let force = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--force") {
+      force = true;
+      continue;
+    }
+    if (arg === "--output") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --output" };
+      }
+      outputPath = value;
+      index += 1;
+      continue;
+    }
+    return { ok: false, message: `Unknown config:init option: ${arg}` };
+  }
+
+  return { ok: true, args: { outputPath, force } };
+}
+
 function isMediaProfileName(value: string): value is MediaProfileName {
   return value === "windows11-enterprise-eval" || value === "windows-server-2025-eval";
 }
@@ -2196,6 +2302,7 @@ function getHelpText(): string {
     "crucible",
     "",
     "Usage:",
+    "  crucible config:init [--output crucible.config.json] [--force]",
     "  crucible provision   Provision a Windows analysis VM",
     "  crucible snapshot:create clean-base",
     "  crucible snapshot:restore clean-base",

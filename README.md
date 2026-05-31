@@ -39,10 +39,11 @@ crucible --help
 The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
 binary. You still need a Linux/KVM host and local Windows + virtio media.
 
-Create `crucible.config.json` in the directory where you will run Crucible, then provision with the
-global CLI:
+Create `crucible.config.json` in the directory where you will run Crucible, edit the media paths,
+then provision with the global CLI:
 
 ```sh
+crucible config:init
 crucible provision
 crucible guest:health
 crucible snapshot:list
@@ -65,15 +66,8 @@ CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-
 
 Create `crucible.config.json` with your local media paths:
 
-```json
-{
-  "$schema": "./schemas/config.schema.json",
-  "media": {
-    "windowsIso": { "path": "/path/to/windows.iso" },
-    "virtioIso": { "path": "/path/to/virtio-win.iso" },
-    "driverBundle": { "path": "/path/to/virtio-win-guest-tools.exe" }
-  }
-}
+```sh
+pnpm crucible config:init
 ```
 
 `crucible.config.json`, VM disks, generated credentials, snapshots, dumps, pcaps, symbols, and

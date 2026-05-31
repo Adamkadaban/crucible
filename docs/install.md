@@ -8,6 +8,7 @@ Windows x64 guest-agent binary.
 
 ```sh
 npm install -g crucible
+crucible config:init
 crucible --help
 ```
 
@@ -37,10 +38,10 @@ downloads them on the operator's behalf.
 1. Download a Windows 11 ISO. Enterprise Evaluation is a good default.
 2. Download the latest stable virtio-win ISO and the virtio-win guest tools installer from
    https://github.com/virtio-win/virtio-win-pkg-scripts.
-3. Copy `crucible.config.example.json` to `crucible.config.json` and replace the media paths:
+3. Generate `crucible.config.json` and replace the media paths:
 
 ```sh
-cp crucible.config.example.json crucible.config.json
+crucible config:init
 ```
 
 ```json

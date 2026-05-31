@@ -251,6 +251,36 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Unknown media profile: windows-10");
   });
 
+  it("initializes crucible.config.json idempotently", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const outputPath = path.join(root, "crucible.config.json");
+
+    const created = await runCrucibleCli(["config:init", "--output", outputPath], defaultRuntime);
+    const refused = await runCrucibleCli(["config:init", "--output", outputPath], defaultRuntime);
+    const forced = await runCrucibleCli(
+      ["config:init", "--output", outputPath, "--force"],
+      defaultRuntime,
+    );
+
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain(`Wrote ${outputPath}`);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("already exists");
+    expect(forced.exitCode).toBe(0);
+    const config = JSON.parse(await readFile(outputPath, "utf8")) as {
+      media: { windowsIso: { path: string }; virtioIso: { path: string } };
+    };
+    expect(config.media.windowsIso.path).toBe("/path/to/windows.iso");
+    expect(config.media.virtioIso.path).toBe("/path/to/virtio-win.iso");
+  });
+
+  it("rejects unknown config:init options", async () => {
+    const result = await runCrucibleCli(["config:init", "--bad"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown config:init option: --bad");
+  });
+
   it("runs provision through fake lifecycle, stage, snapshot, and health contracts", async () => {
     const config = parseCrucibleConfig({
       vm: { name: "test-win" },
