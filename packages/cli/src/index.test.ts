@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -27,6 +28,21 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
+  });
+
+  it("runs when invoked through an npm-style bin symlink", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-bin-"));
+    const binPath = path.join(root, "crucible");
+    await symlink(path.resolve("packages/cli/src/index.ts"), binPath);
+
+    const result = spawnSync(process.execPath, [binPath, "--help"], {
+      cwd: path.resolve("."),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "--import tsx --conditions=development" },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("crucible provision");
   });
 
   it("prints media plan without manual links by default", async () => {

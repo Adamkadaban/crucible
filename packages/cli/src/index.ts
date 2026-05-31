@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   buildNetworkPlan,
@@ -2335,7 +2336,7 @@ function getHelpText(): string {
   ].join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint()) {
   const result = await runCrucibleCli(process.argv.slice(2)).catch((error: unknown) => ({
     exitCode: 1,
     stdout: "",
@@ -2351,4 +2352,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   process.exitCode = result.exitCode;
+}
+
+function isCliEntrypoint(): boolean {
+  if (process.argv[1] === undefined) {
+    return false;
+  }
+  return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
 }
