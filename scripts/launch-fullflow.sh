@@ -2,9 +2,9 @@
 # Full unattended boot: Windows ISO + autounattend ISO + virtio ISO on ich9-ahci ports 0/1/2
 set -euo pipefail
 ART=artifacts
-WIN_ISO="/home/adam/Downloads/Win11_25H2_English_x64_v2.iso"
+WIN_ISO="${WIN_ISO:-${ART}/media/windows.iso}"
 AUTO_ISO="${ART}/boot/autounattend.iso"
-VIRTIO_ISO="/home/adam/Downloads/virtio-win-0.1.285.iso"
+VIRTIO_ISO="${VIRTIO_ISO:-${ART}/media/virtio.iso}"
 DISK="${ART}/disks/crucible-win11.qcow2"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"

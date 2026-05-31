@@ -1,9 +1,9 @@
 # Network Isolation
 
-Crucible's malware-analysis default is no guest Internet egress. The network model currently defines
-the QEMU and firewall contracts that later Phase 2 work applies to the host. `crucible net:plan`
-renders concrete QEMU and firewall command plans without executing host changes, so use its dry-run
-output to verify that the selected mode matches the analysis risk.
+Crucible's malware-analysis default is no guest Internet egress. The network model defines the QEMU
+and firewall contracts used by the CLI and MCP tools. `crucible net:plan` renders concrete QEMU and
+firewall command plans without executing host changes, so use its dry-run output to verify that the
+selected mode matches the analysis risk.
 
 ## Network Modes
 
@@ -41,7 +41,7 @@ through one TCP forward bound to host loopback. The default control mapping is:
 127.0.0.1:8443 -> 192.0.2.2:8443
 ```
 
-The port comes from `network.controlPort`. QEMU user networking is assigned `192.0.2.0/30` with
+The port comes from `network.controlPort`. QEMU user networking is assigned `192.0.2.0/29` with
 `192.0.2.1` as the QEMU-side gateway and `192.0.2.2` as the guest DHCP start address; the host
 listener remains `127.0.0.1` so no unconfigured host interface address is required. `nat` uses the
 same address allocation and port mapping with `restrict=off`, making guest egress explicit in the
@@ -56,7 +56,7 @@ models after the dry-run commands.
 
 `crucible net:teardown --dry-run` renders the project-owned teardown model directly. Use
 `--backend iptables` to match an iptables deployment, and use `--apply` only after reviewing the dry
-run. The Phase 2 CLI prints the apply model but does not execute privileged host changes.
+run. The CLI prints the apply model but does not execute privileged host changes.
 
 All planned firewall commands are scoped to chains or comments derived from the VM's Crucible owner
 tag. The planner does not emit broad deletion commands such as nftables table flushes or iptables

@@ -295,6 +295,14 @@ async function runVmStopCommand(
   let result: VmStopResult;
   let action = "stop";
 
+  if (![undefined, "--poweroff", "--kill"].includes(args[0])) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[0]}` };
+  }
+
+  if (args.length > 1) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[1]}` };
+  }
+
   switch (args[0]) {
     case undefined:
       result = await manager.stop();
@@ -309,10 +317,6 @@ async function runVmStopCommand(
       break;
     default:
       return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[0]}` };
-  }
-
-  if (args.length > 1) {
-    return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[1]}` };
   }
 
   return { exitCode: 0, stdout: renderVmStopResult(result, action), stderr: "" };

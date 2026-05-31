@@ -9,12 +9,12 @@ standard or elevated users, file upload/download, and debugger automation withou
 to already be open; a small Windows guest service provides encrypted in-guest control while QMP/QGA
 handle host-side VM lifecycle.
 
-Assumptions made at bootstrap: the repository is private, the Linux host is x86_64 with KVM support,
-the CLI binary is named `crucible`, the MVP defaults to a Windows 11 Enterprise Evaluation desktop
-ISO URL and the stable virtio-win ISO URL cached under a local media cache, Windows Server
-evaluation remains an alternate profile, operators can still supply their own Windows ISO and virtio
-media paths, TypeScript/Node is the MCP host runtime, Go is acceptable for the Windows guest
-service, and no external reference repositories are cloned into `references/` initially.
+Assumptions made at bootstrap: the Linux host is x86_64 with KVM support, the CLI binary is named
+`crucible`, the MVP defaults to a Windows 11 Enterprise Evaluation desktop ISO URL and the stable
+virtio-win ISO URL cached under a local media cache, Windows Server evaluation remains an alternate
+profile, operators can still supply their own Windows ISO and virtio media paths, TypeScript/Node is
+the MCP host runtime, Go is acceptable for the Windows guest service, and no external reference
+repositories are cloned into `references/` initially.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ service, and no external reference repositories are cloned into `references/` in
   snapshot metadata.
 - `packages/cli` is the `crucible` CLI for humans and integration tests. It exercises the same core
   APIs as the MCP tools and owns top-level commands such as `crucible provision` and `crucible mcp`.
-- `guest/agent` is a Go Windows service. It runs inside the VM, exposes a localhost-or-host-only
+- `guest-agent` is a Go Windows service. It runs inside the VM, exposes a localhost-or-host-only
   mTLS API, executes commands as standard or admin contexts, stages uploads/downloads, and wraps
   debugger commands.
 - `guest/provision` contains PowerShell provisioning scripts for OpenSSH/QGA prerequisites, WinDbg
@@ -281,7 +281,7 @@ code-integrity boot overrides, and test signing disabled.
 **Goal:** Build the Go Windows service that provides authenticated command execution, file transfer,
 health checks, and privilege-separated execution primitives.
 
-**Exit test:** `go test ./...` in `guest/agent` passes on Linux, and on a provisioned VM
+**Exit test:** `go test ./...` in `guest-agent` passes on Linux, and on a provisioned VM
 `pnpm crucible guest:exec whoami --as standard` and
 `pnpm crucible guest:exec "whoami /groups" --as admin` both return expected structured results.
 
