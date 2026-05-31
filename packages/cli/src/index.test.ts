@@ -346,6 +346,35 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Unknown provision option: --apply");
   });
 
+  it("reports a missing override guest agent binary before provisioning starts", async () => {
+    const previous = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    process.env.CRUCIBLE_GUEST_AGENT_BINARY = path.join(root, "missing-agent.exe");
+    const config = parseCrucibleConfig({
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+    });
+
+    try {
+      const result = await runCrucibleCli(["provision"], { config });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("Cannot find the Windows guest agent binary");
+      expect(result.stderr).toContain("missing-agent.exe");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CRUCIBLE_GUEST_AGENT_BINARY;
+      } else {
+        process.env.CRUCIBLE_GUEST_AGENT_BINARY = previous;
+      }
+    }
+  });
+
   it("prints snapshot create and restore results", async () => {
     const config = parseCrucibleConfig({ vm: { name: "test-win" } });
     const snapshotManager = fakeSnapshotManager(config);

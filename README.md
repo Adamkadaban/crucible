@@ -29,7 +29,17 @@ Debian / Ubuntu package baseline:
 sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
 ```
 
-## Quick Start
+## Install
+
+```sh
+npm install -g crucible
+crucible --help
+```
+
+The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
+binary. You still need a Linux/KVM host and local Windows + virtio media.
+
+## Source Checkout
 
 ```sh
 git clone https://github.com/Adamkadaban/crucible.git
@@ -40,6 +50,7 @@ nvm install
 corepack enable pnpm
 pnpm install --frozen-lockfile
 pnpm build
+CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
 ```
 
 Create `crucible.config.json` with your local media paths:
@@ -58,20 +69,19 @@ Create `crucible.config.json` with your local media paths:
 `crucible.config.json`, VM disks, generated credentials, snapshots, dumps, pcaps, symbols, and
 downloaded tool archives are ignored by Git.
 
-Build the release payload and provision the VM:
+Provision the VM:
 
 ```sh
-CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
-pnpm crucible provision
-pnpm crucible guest:health
-pnpm crucible snapshot:list
+crucible provision
+crucible guest:health
+crucible snapshot:list
 ```
 
 The first provision usually takes 12-18 minutes. On success Crucible creates a `clean-base`
 snapshot. Restore it before each new analysis session:
 
 ```sh
-pnpm crucible snapshot:restore clean-base
+crucible snapshot:restore clean-base
 ```
 
 ## MCP Server
@@ -79,7 +89,7 @@ pnpm crucible snapshot:restore clean-base
 Run the MCP server over stdio:
 
 ```sh
-pnpm crucible mcp --stdio
+crucible mcp --stdio
 ```
 
 Example client config:
@@ -88,9 +98,8 @@ Example client config:
 {
   "mcpServers": {
     "crucible": {
-      "command": "node",
-      "args": ["packages/cli/dist/index.js", "mcp", "--stdio"],
-      "cwd": "/path/to/crucible"
+      "command": "crucible",
+      "args": ["mcp", "--stdio"]
     }
   }
 }
@@ -111,6 +120,7 @@ an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucibl
 
 ```sh
 pnpm crucible --help
+crucible --help
 pnpm crucible media:plan --manual
 pnpm crucible vm:start --dry-run
 pnpm crucible vm:status

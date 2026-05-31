@@ -1,0 +1,52 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: guest-agent/go.mod
+          cache-dependency-path: guest-agent/go.sum
+
+      - name: Check
+        run: pnpm check
+
+      - name: Build release payload
+        run: CRUCIBLE_VERSION=${GITHUB_REF_NAME#v} scripts/package-release.sh
+
+      - name: Pack dry run
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/release/* --generate-notes

@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildNetworkPlan,
@@ -461,14 +462,15 @@ async function runProvisionCommand(
   // discovers the missing binary 15 minutes in, after the guest is
   // already provisioned, when install-agent fails to upload it.
   if (runtime.lifecycleManager === undefined && runtime.provisioningExecutor === undefined) {
-    const agentBinaryPath = resolveGuestAgentBinaryPath();
+    const agentBinaryPath = await resolveGuestAgentBinaryPath();
     if (!(await fileExists(agentBinaryPath))) {
       return {
         exitCode: 2,
         stdout: "",
         stderr: [
           `Cannot find the Windows guest agent binary at ${agentBinaryPath}.`,
-          "Build it via 'scripts/package-release.sh' or set CRUCIBLE_GUEST_AGENT_BINARY",
+          "Use the npm package with bundled vendor/crucible-guest-agent.exe,",
+          "build it via 'scripts/package-release.sh', or set CRUCIBLE_GUEST_AGENT_BINARY",
           "to a pre-built crucible-guest-agent.exe.",
         ].join("\n"),
       };
@@ -780,18 +782,50 @@ function buildDefaultProvisioningExecutor(
 /**
  * Resolve a path to the cross-compiled Windows guest agent binary that
  * `install-agent.ps1` expects in C:\Program Files\Crucible. Operators can
- * override via $CRUCIBLE_GUEST_AGENT_BINARY; otherwise we look at the
- * conventional dist/release output produced by scripts/package-release.sh.
- * Resolved against process.cwd() so the operator gets the expected
- * "missing binary" error if they invoke the CLI from a different
- * directory.
+ * override via $CRUCIBLE_GUEST_AGENT_BINARY; otherwise packaged npm
+ * installs use vendor/crucible-guest-agent.exe and source checkouts fall
+ * back to the conventional dist/release output produced by
+ * scripts/package-release.sh.
  */
-function resolveGuestAgentBinaryPath(): string {
+async function resolveGuestAgentBinaryPath(): Promise<string> {
   const override = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
   if (override !== undefined && override !== "") {
     return resolvePath(override);
   }
-  return resolvePath("dist/release/crucible-guest-agent.exe");
+  for (const candidate of defaultGuestAgentBinaryCandidates()) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return (
+    defaultGuestAgentBinaryCandidates()[0] ?? resolvePath("dist/release/crucible-guest-agent.exe")
+  );
+}
+
+function defaultGuestAgentBinaryCandidates(): readonly string[] {
+  const modulePath = fileURLToPath(import.meta.url);
+  const candidates = [
+    resolvePath(dirname(modulePath), "..", "vendor", "crucible-guest-agent.exe"),
+    resolvePath("dist/release/crucible-guest-agent.exe"),
+  ];
+  return candidates;
+}
+
+async function resolveProvisioningScriptsDirectory(): Promise<string> {
+  for (const candidate of defaultProvisioningScriptCandidates()) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return defaultProvisioningScriptCandidates()[0] ?? resolvePath("guest/provision");
+}
+
+function defaultProvisioningScriptCandidates(): readonly string[] {
+  const modulePath = fileURLToPath(import.meta.url);
+  return [
+    resolvePath(dirname(modulePath), "..", "guest", "provision"),
+    resolvePath("guest", "provision"),
+  ];
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -818,7 +852,8 @@ async function getProvisioningLifecyclePreparation(
   const firstBootPlan = await prepareRealFirstBootProvisioning({
     config,
     processRunner,
-    agentBinaryPath: resolveGuestAgentBinaryPath(),
+    agentBinaryPath: await resolveGuestAgentBinaryPath(),
+    provisioningScriptsDirectory: await resolveProvisioningScriptsDirectory(),
   });
   const qemuPlan = buildQemuCommandPlan({
     config: { ...config, network: { ...config.network, mode: "nat" } },

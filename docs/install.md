@@ -1,8 +1,17 @@
 # Install
 
 Crucible runs on a Linux host with KVM, packages a Windows analysis VM inside QEMU, and exposes its
-MCP server over stdio. The current public beta is installed from source; there is no npm package,
-binary installer, or stable release channel yet.
+MCP server over stdio. The npm package installs the CLI, MCP server, provisioning scripts, and a
+Windows x64 guest-agent binary.
+
+## npm install
+
+```sh
+npm install -g crucible
+crucible --help
+```
+
+Use a source checkout only when developing Crucible itself.
 
 ## Linux host prerequisites
 
@@ -48,6 +57,9 @@ cp crucible.config.example.json crucible.config.json
 
 ## Node + Go toolchains
 
+These are required for development from source. Normal npm users do not need Go to provision a VM;
+the package includes the Windows guest-agent binary.
+
 ```sh
 nvm install                # uses .nvmrc → Node 24
 corepack enable pnpm
@@ -65,7 +77,7 @@ See the `## MCP Server` section of `README.md` for an MCP client snippet. The ba
 is:
 
 ```sh
-pnpm crucible mcp --stdio
+crucible mcp --stdio
 ```
 
 To wire the `guest_*` tools to a live agent, export:
@@ -80,20 +92,16 @@ export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
 ## First provision
 
 ```sh
-# Build the guest agent binary once; the CLI looks it up at
-# dist/release/crucible-guest-agent.exe by default. Override via
-# $CRUCIBLE_GUEST_AGENT_BINARY for custom layouts.
-CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
-
-pnpm crucible provision
-pnpm crucible guest:health
-pnpm crucible snapshot:list
+crucible provision
+crucible guest:health
+crucible snapshot:list
 ```
 
 The CLI generates a per-VM mTLS PKI under `artifacts/secrets/<vm>/mtls/` on first run (CA + server
 cert SAN'd to the host-only control address + host client cert), bakes the cert material, guest
 agent binary, and provisioning scripts into `artifacts/boot/crucible-payload.iso`, and mounts that
-payload as read-only guest media for `install-agent.ps1` and the other provisioning stages.
+payload as read-only guest media for `install-agent.ps1` and the other provisioning stages. Override
+the bundled/source guest-agent binary with `CRUCIBLE_GUEST_AGENT_BINARY` if needed.
 
 The first run takes ~12-18 minutes for Windows install, auto-login, tool setup, policy lockdown, and
 guest-agent install. On success, Crucible creates `clean-base`; restore it before each new analysis

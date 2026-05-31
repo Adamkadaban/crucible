@@ -46,3 +46,4 @@ crucible.config.json
 # Research notes (not part of source)
 /research/
 dist/release/
+vendor/
