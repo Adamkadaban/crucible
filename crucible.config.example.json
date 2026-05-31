@@ -12,7 +12,7 @@
     "profile": "windows11-enterprise-eval",
     "windowsIso": { "path": "/path/to/windows.iso" },
     "virtioIso": { "path": "/path/to/virtio-win.iso" },
-    "driverBundle": { "path": "/CHANGE_ME/virtio-win-guest-tools.exe" }
+    "driverBundle": { "path": "/path/to/virtio-win-guest-tools.exe" }
   },
   "network": {
     "mode": "isolated",
