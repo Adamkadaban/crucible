@@ -61,7 +61,7 @@ downloaded tool archives are ignored by Git.
 Build the release payload and provision the VM:
 
 ```sh
-scripts/package-release.sh
+CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
 pnpm crucible provision
 pnpm crucible guest:health
 pnpm crucible snapshot:list

@@ -291,7 +291,6 @@ async function runVmStopCommand(
   args: readonly string[],
   runtime: CliRuntime,
 ): Promise<CommandResult> {
-  const manager = getLifecycleManager(runtime);
   let result: VmStopResult;
   let action = "stop";
 
@@ -302,6 +301,8 @@ async function runVmStopCommand(
   if (args.length > 1) {
     return { exitCode: 2, stdout: "", stderr: `Unknown vm:stop option: ${args[1]}` };
   }
+
+  const manager = getLifecycleManager(runtime);
 
   switch (args[0]) {
     case undefined:

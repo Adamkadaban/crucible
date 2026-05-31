@@ -75,11 +75,11 @@ NAT or capture gateway.
 │   │   └── src/
 │   └── mcp-server/
 │       └── src/
+├── guest-agent/
+│   ├── cmd/crucible-guest-agent/
+│   ├── internal/
+│   └── go.mod
 ├── guest/
-│   ├── agent/
-│   │   ├── cmd/crucible-agent/
-│   │   ├── internal/
-│   │   └── go.mod
 │   └── provision/
 │       ├── install-windbg.ps1
 │       ├── install-agent.ps1

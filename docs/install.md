@@ -83,7 +83,7 @@ export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
 # Build the guest agent binary once; the CLI looks it up at
 # dist/release/crucible-guest-agent.exe by default. Override via
 # $CRUCIBLE_GUEST_AGENT_BINARY for custom layouts.
-scripts/package-release.sh
+CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
 
 pnpm crucible provision
 pnpm crucible guest:health
