@@ -274,8 +274,8 @@ const DebugRunScriptInput = z
     script: z
       .string()
       .min(1)
-      .max(64 * 1024),
-    timeoutMs: z.number().int().positive().max(120_000).optional(),
+      .max(32 * 1024),
+    timeoutMs: z.number().int().positive().max(30_000).optional(),
     logPath: z.string().min(1).optional(),
   })
   .strict();
@@ -931,6 +931,8 @@ function registerDebuggerTools(
         pid: z.number().int().positive().optional().describe("Required when mode=attach"),
         symbolPath: z.string().optional(),
         arch: z.enum(["x86", "x64"]).optional(),
+        debuggerArch: z.enum(["auto", "x86", "x64"]).optional(),
+        initialCommands: z.array(z.string().min(1)).max(64).optional(),
       },
     },
     async (raw: unknown) => {
@@ -1123,7 +1125,16 @@ function registerDebuggerTools(
         });
         try {
           if (target.initialCommands !== undefined && target.initialCommands.length > 0) {
-            await client.debugCommand(opened.id, target.initialCommands.join("\r\n"), 1_000);
+            const initial = await client.debugCommand(
+              opened.id,
+              target.initialCommands.join("\r\n"),
+              1_000,
+            );
+            if (initial.exited) {
+              throw new Error(
+                initial.exitError ?? "debugger exited while running initial commands",
+              );
+            }
           }
           const result = await client.debugCommand(
             opened.id,
@@ -1133,9 +1144,13 @@ function registerDebuggerTools(
           return toJsonContent({
             ok: true,
             result: {
+              command: input.script,
               exitCode: result.exitCode,
               timedOut: !result.exited,
               stdoutBase64: result.outputBase64 ?? "",
+              stderrBase64: "",
+              truncated: result.truncated,
+              durationMs: input.timeoutMs ?? 30_000,
               logPath: result.logPath,
               exited: result.exited,
               exitError: result.exitError,
