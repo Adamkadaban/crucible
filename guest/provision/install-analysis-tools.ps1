@@ -48,10 +48,44 @@ function Get-ToolReport {
             tcpview = Find-ToolExecutable -FileNames @("Tcpview.exe", "Tcpview64.exe")
             tcpvcon = Find-ToolExecutable -FileNames @("tcpvcon64.exe", "tcpvcon.exe")
             procdump = Find-ToolExecutable -FileNames @("procdump64.exe", "procdump.exe")
+            procmon = Find-ToolExecutable -FileNames @("Procmon64.exe", "Procmon.exe", "procmon64.exe", "procmon.exe")
             listdlls = Find-ToolExecutable -FileNames @("Listdlls64.exe", "Listdlls.exe")
             autorunsc = Find-ToolExecutable -FileNames @("autorunsc64.exe", "autorunsc.exe")
             sigcheck = Find-ToolExecutable -FileNames @("sigcheck64.exe", "sigcheck.exe")
         }
+    }
+}
+
+function Install-ProcDump {
+    $target = Join-Path $ToolsRoot "Sysinternals"
+    if ($null -ne (Find-ToolExecutable -FileNames @("procdump64.exe", "procdump.exe"))) { return $false }
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    $payloadZip = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' |
+        Where-Object { $_.VolumeName -eq 'CRUCIBLE' } |
+        ForEach-Object { Join-Path "$($_.DeviceID)\" "tools\Procdump.zip" } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if ($DryRun) {
+        Write-Status "dry-run: install standalone ProcDump into $target"
+        return $true
+    }
+    if ($payloadZip) {
+        Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
+        return $true
+    }
+    try {
+        $tempDirectory = if ([string]::IsNullOrWhiteSpace($env:TEMP)) { "C:\ProgramData\Crucible\Temp" } else { $env:TEMP }
+        New-Item -ItemType Directory -Force -Path $tempDirectory | Out-Null
+        $zipPath = Join-Path $tempDirectory "Procdump.zip"
+        Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Procdump.zip" -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $target -Force
+        return $true
+    } catch {
+        if ($AllowSkipOnNetworkFailure) {
+            Write-Status "ProcDump install unavailable ($($_.Exception.Message)); reporting unavailable"
+            return $false
+        }
+        throw
     }
 }
 
@@ -61,6 +95,7 @@ function Test-SysinternalsPresent {
         ($null -ne $report.sysinternals.strings) -and
         ($null -ne $report.sysinternals.tcpvcon) -and
         ($null -ne $report.sysinternals.procdump) -and
+        ($null -ne $report.sysinternals.procmon) -and
         ($null -ne $report.sysinternals.listdlls) -and
         ($null -ne $report.sysinternals.autorunsc) -and
         ($null -ne $report.sysinternals.sigcheck)
@@ -98,9 +133,11 @@ function Install-Sysinternals {
 
 New-Item -ItemType Directory -Force -Path $ToolsRoot | Out-Null
 $sysinternalsAttempted = Install-Sysinternals
+$procdumpAttempted = Install-ProcDump
 
 $report = Get-ToolReport
 $report.installedOrAttempted = [ordered]@{
     sysinternals = [bool]$sysinternalsAttempted
+    procdump = [bool]$procdumpAttempted
 }
 $report | ConvertTo-Json -Depth 8 -Compress

@@ -120,6 +120,7 @@ $sysinternals = [ordered]@{
     tcpview = Find-ToolExecutable -FileNames @("Tcpview.exe", "Tcpview64.exe")
     tcpvcon = Find-ToolExecutable -FileNames @("tcpvcon64.exe", "tcpvcon.exe")
     procdump = Find-ToolExecutable -FileNames @("procdump64.exe", "procdump.exe")
+    procmon = Find-ToolExecutable -FileNames @("Procmon64.exe", "Procmon.exe", "procmon64.exe", "procmon.exe")
     listdlls = Find-ToolExecutable -FileNames @("Listdlls64.exe", "Listdlls.exe")
     autorunsc = Find-ToolExecutable -FileNames @("autorunsc64.exe", "autorunsc.exe")
     sigcheck = Find-ToolExecutable -FileNames @("sigcheck64.exe", "sigcheck.exe")
