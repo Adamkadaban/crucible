@@ -313,6 +313,13 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("rejects unknown doctor options", async () => {
+    const result = await runCrucibleCli(["doctor", "--bad"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown doctor option: --bad");
+  });
+
   it("prints opencode setup config without writing", async () => {
     const result = await runCrucibleCli(["setup", "opencode", "--print"], defaultRuntime);
 
@@ -398,6 +405,29 @@ describe("crucible CLI bootstrap", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("to contain a JSON object");
       await expect(readFile(configPath, "utf8")).resolves.toBe("[]");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("does not overwrite opencode config with non-object mcp key", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    process.env.HOME = root;
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, JSON.stringify({ mcp: [] }), "utf8");
+
+    try {
+      const result = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("opencode.json.mcp");
+      await expect(readFile(configPath, "utf8")).resolves.toBe(JSON.stringify({ mcp: [] }));
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

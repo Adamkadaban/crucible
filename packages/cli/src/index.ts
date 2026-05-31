@@ -1638,7 +1638,7 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
     let exitCode = 0;
     for (const target of targets) {
       const result = await setupCommand([target, ...setupFlags(parsed.args)], runtime);
-      if (result.exitCode !== 0) exitCode = result.exitCode;
+      if (exitCode === 0 && result.exitCode !== 0) exitCode = result.exitCode;
       results.push(`## ${target}`, [result.stdout, result.stderr].filter(Boolean).join("\n"));
     }
     return { exitCode, stdout: results.join("\n\n"), stderr: "" };
@@ -1822,7 +1822,14 @@ async function setupJsonMcpCommand(options: {
     };
   }
   const currentMcp = config[options.mcpKey];
-  const existing: JsonObject = isJsonObject(currentMcp) ? currentMcp : {};
+  if (currentMcp !== undefined && !isJsonObject(currentMcp)) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Expected ${options.configPath}.${options.mcpKey} to contain a JSON object`,
+    };
+  }
+  const existing: JsonObject = currentMcp ?? {};
   config[options.mcpKey] = { ...existing, crucible: entry };
   const backupPath = await writeJsonConfigWithBackup(options.configPath, config);
   const lines = [`Updated ${options.targetName} config: ${options.configPath}`];
