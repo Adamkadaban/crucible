@@ -468,7 +468,10 @@ describe("GuestAgentClient (unit)", () => {
 
   afterAll(async () => {
     await client?.close();
-    httpsServer?.close();
+    await new Promise<void>((resolve) => {
+      if (httpsServer) httpsServer.close(() => resolve());
+      else resolve();
+    });
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -559,7 +562,7 @@ describe("GuestAgentClient (unit)", () => {
     });
     await expect(tinyClient.download("any")).rejects.toThrow(/maxBodyBytes/);
     await tinyClient.close();
-    srv.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
   }, 30_000);
 
   it("downloadFile() writes to disk and returns metadata", async () => {
@@ -622,7 +625,7 @@ describe("GuestAgentClient (unit)", () => {
     });
     await expect(errClient.health()).rejects.toThrow(/500/);
     await errClient.close();
-    srv.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
   }, 30_000);
 
   it("fileSize() returns file size", async () => {

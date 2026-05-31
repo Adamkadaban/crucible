@@ -1562,8 +1562,19 @@ describe("additional CLI coverage", () => {
   });
 
   it("vm:logs renders log content", async () => {
-    const _root = await createTempDir("crucible-cli-logs-");
-    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const root = await createTempDir("crucible-cli-logs-");
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
     const paths = buildLifecyclePaths(config);
     await mkdir(path.dirname(paths.stdoutLog), { recursive: true });
     await writeFile(paths.stdoutLog, "hello-from-vm-stdout\n", "utf8");
@@ -1760,7 +1771,19 @@ describe("additional CLI coverage", () => {
   });
 
   it("vm:logs renders stdout and stderr logs", async () => {
-    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const root = await createTempDir("crucible-cli-logs2-");
+    const config = parseCrucibleConfig({
+      vm: { name: "test-win" },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock") },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
     const lifecycle = fakeLifecycleManager(config, { processAlive: true, qmpAvailable: true });
     await mkdir(path.dirname(lifecycle.paths.stdoutLog), { recursive: true });
     await writeFile(lifecycle.paths.stdoutLog, "vm-stdout-content\n", "utf8");
