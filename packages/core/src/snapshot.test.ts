@@ -139,6 +139,20 @@ describe("SnapshotManager", () => {
     expect(harness.processCommands).toEqual(result.qcow2Commands);
   });
 
+  it("restores offline-recorded snapshots through QMP when the VM is running", async () => {
+    const harness = await createSnapshotHarness({ qmpConnectError: new Error("no qmp") });
+    await harness.manager.create("clean-base");
+    harness.qmp.connectError = undefined;
+    harness.qmp.calls.length = 0;
+    harness.processCommands.length = 0;
+
+    const result = await harness.manager.restore("clean-base");
+
+    expect(result.qmpCommands).toEqual(["stop", "snapshot-load", "cont"]);
+    expect(result.qcow2Commands).toEqual([]);
+    expect(harness.processCommands).toEqual([]);
+  });
+
   it("rejects restore when manifest snapshot disk does not match the current VM disk", async () => {
     const harness = await createSnapshotHarness({ qmpConnectError: new Error("no qmp") });
     await writeManifest(harness.config.artifacts.manifestPath, {
@@ -251,7 +265,7 @@ class FakeQmpSession implements VmQmpSession {
     readonly args: Readonly<Record<string, unknown>> | undefined;
   }> = [];
 
-  constructor(readonly connectError?: Error) {}
+  constructor(public connectError?: Error) {}
 
   connect(): Promise<unknown> {
     if (this.connectError !== undefined) {

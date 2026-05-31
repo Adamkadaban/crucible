@@ -123,28 +123,18 @@ export class SnapshotManager {
     const snapshotName = normalizeSnapshotName(name);
     const snapshot = await this.#findSnapshot(snapshotName);
     this.#validateSnapshotDisk(snapshot);
+    const snapshotMode = snapshot.mode ?? "offline-qcow2";
     const qmpCommands: string[] = [];
     const qcow2Commands: ProcessCommand[] = [];
     const qmp = this.#qmpClientFactory(this.#paths.qmpSocket, this.#config.qmp.timeoutMs);
 
     try {
-      if (snapshot.mode === "online-qmp") {
+      try {
         await qmp.connect();
-        await executeQmp(qmp, "stop", undefined, this.#config.qmp.timeoutMs, qmpCommands);
-        await executeQmp(
-          qmp,
-          "snapshot-load",
-          {
-            "job-id": `crucible-snapshot-load-${jobIdSuffix()}`,
-            tag: snapshotName,
-            vmstate: "crucible-disk0",
-            devices: ["crucible-disk0"],
-          },
-          this.#config.qmp.timeoutMs,
-          qmpCommands,
-        );
-        await executeQmp(qmp, "cont", undefined, this.#config.qmp.timeoutMs, qmpCommands);
-      } else {
+      } catch (error) {
+        if (snapshotMode === "online-qmp") {
+          throw error;
+        }
         const command = this.#qemuImgCommand([
           "snapshot",
           "-a",
@@ -153,17 +143,38 @@ export class SnapshotManager {
         ]);
         qcow2Commands.push(command);
         await runChecked(this.#processRunner, command);
+        return await this.#recordRestore(snapshotName, snapshotMode, qmpCommands, qcow2Commands);
       }
+
+      await executeQmp(qmp, "stop", undefined, this.#config.qmp.timeoutMs, qmpCommands);
+      await executeQmp(
+        qmp,
+        "snapshot-load",
+        {
+          "job-id": `crucible-snapshot-load-${jobIdSuffix()}`,
+          tag: snapshotName,
+          vmstate: "crucible-disk0",
+          devices: ["crucible-disk0"],
+        },
+        this.#config.qmp.timeoutMs,
+        qmpCommands,
+      );
+      await executeQmp(qmp, "cont", undefined, this.#config.qmp.timeoutMs, qmpCommands);
     } finally {
       qmp.close();
     }
 
+    return await this.#recordRestore(snapshotName, snapshotMode, qmpCommands, qcow2Commands);
+  }
+
+  async #recordRestore(
+    snapshotName: string,
+    mode: SnapshotMode,
+    qmpCommands: readonly string[],
+    qcow2Commands: readonly ProcessCommand[],
+  ): Promise<SnapshotRestoreResult> {
     const restoredAt = this.#nowIso();
-    const restoredSnapshot = await this.#writeSnapshotRecord(
-      snapshotName,
-      snapshot.mode,
-      restoredAt,
-    );
+    const restoredSnapshot = await this.#writeSnapshotRecord(snapshotName, mode, restoredAt);
     return { snapshot: restoredSnapshot, restoredAt, qmpCommands, qcow2Commands };
   }
 
