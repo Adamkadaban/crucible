@@ -1017,10 +1017,11 @@ async function runDebugSmokeCommand(
   }
   const client = await guestClientFactory();
   try {
+    const cdbPath = (await client.health()).cdbPath ?? "cdb.exe";
     const manager = new DebuggerSessionManager({
       run: async (cdbArgs) => {
         const result = await client.exec({
-          executable: "cdb.exe",
+          executable: cdbPath,
           arguments: [...cdbArgs],
           as: "service",
           timeoutMs: 5 * 60 * 1000,

@@ -8,6 +8,7 @@ import {
   buildLifecyclePaths,
   defaultCrucibleConfig,
   parseCrucibleConfig,
+  type GuestAgentHealth,
   type VmStatus,
 } from "@crucible/core";
 
@@ -601,7 +602,7 @@ describe("crucible CLI bootstrap", () => {
         config: parseCrucibleConfig({ vm: { name: "test-win" } }),
         guestClientFactory: () =>
           Promise.resolve({
-            health: () => Promise.reject(new Error("unused")),
+            health: () => Promise.resolve(guestHealth({ cdbPath: "C:\\Debuggers\\cdb.exe" })),
             exec: (request: { executable: string; arguments?: readonly string[]; as?: string }) => {
               requests.push(request);
               return Promise.resolve({
@@ -620,8 +621,34 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("debug session:");
-    expect(requests[0]).toMatchObject({ executable: "cdb.exe", as: "service" });
+    expect(requests[0]).toMatchObject({ executable: "C:\\Debuggers\\cdb.exe", as: "service" });
     expect(requests[0]?.arguments).toContain("C:\\Windows\\System32\\notepad.exe");
+  });
+
+  it("falls back to cdb.exe for debug:smoke when health has no CDB path", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[]; as?: string }> = [];
+    const result = await runCrucibleCli(["debug:smoke", "--exe", "notepad.exe"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          health: () => Promise.resolve(guestHealth()),
+          exec: (request: { executable: string; arguments?: readonly string[]; as?: string }) => {
+            requests.push(request);
+            return Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: Buffer.from("0:000> lm").toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 12,
+              truncated: false,
+            });
+          },
+          close: () => Promise.resolve(),
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(requests[0]).toMatchObject({ executable: "cdb.exe", as: "service" });
   });
 
   it("treats cdb exit code 1 as a successful smoke run", async () => {
@@ -629,7 +656,7 @@ describe("crucible CLI bootstrap", () => {
       config: parseCrucibleConfig({ vm: { name: "test-win" } }),
       guestClientFactory: () =>
         Promise.resolve({
-          health: () => Promise.reject(new Error("unused")),
+          health: () => Promise.resolve(guestHealth()),
           exec: () =>
             Promise.resolve({
               exitCode: 1,
@@ -996,5 +1023,18 @@ function fakeSnapshotCreateResult(
     },
     qmpCommands: ["snapshot-save"],
     qcow2Commands: [],
+  };
+}
+
+function guestHealth(overrides: Partial<GuestAgentHealth> = {}): GuestAgentHealth {
+  return {
+    status: "ok",
+    version: "test-version",
+    hostName: "test-win",
+    startedAt: "2026-05-31T00:00:00.000Z",
+    uptimeSeconds: 1,
+    goVersion: "go1.test",
+    windbgInstalled: true,
+    ...overrides,
   };
 }
