@@ -20,7 +20,6 @@ treat it as a hard containment boundary against VM escapes or host-kernel bugs.
 
 - Linux host with KVM access.
 - QEMU, OVMF, `swtpm`, `socat`, and `xorriso`.
-- Node from `.nvmrc`, pnpm via Corepack, and Go for the Windows guest agent.
 - A Windows installer ISO and virtio-win ISO that you provide locally.
 
 Debian / Ubuntu package baseline:
@@ -38,6 +37,8 @@ crucible --help
 
 The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
 binary. You still need a Linux/KVM host and local Windows + virtio media.
+
+Source checkouts also need Node from `.nvmrc`, pnpm via Corepack, and Go for guest-agent builds.
 
 Create `crucible.config.json` in the directory where you will run Crucible, edit the media paths,
 then provision with the global CLI:

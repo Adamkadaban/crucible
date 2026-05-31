@@ -33,7 +33,7 @@ cp "${RELEASE_DIR}/crucible-guest-agent.exe" "${VENDOR_DIR}/crucible-guest-agent
 echo "[release] hash manifest" >&2
 python3 - "${RELEASE_DIR}" <<'PY'
 import hashlib, json, os, pathlib, sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 release_dir = pathlib.Path(sys.argv[1])
 entries = []
 for path in sorted(release_dir.iterdir()):
@@ -47,7 +47,7 @@ for path in sorted(release_dir.iterdir()):
     })
 manifest = {
     "version": os.environ.get("CRUCIBLE_VERSION", "dev"),
-    "createdAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "entries": entries,
 }
 (release_dir / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

@@ -14,6 +14,14 @@
         "cpus": { "type": "integer", "minimum": 1, "default": 4 },
         "memoryMiB": { "type": "integer", "minimum": 2048, "default": 8192 },
         "diskGiB": { "type": "integer", "minimum": 40, "default": 128 },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["none", "gtk", "vnc"], "default": "none" },
+            "vncSocketPath": { "type": "string", "minLength": 1, "default": "artifacts/vnc.sock" }
+          }
+        },
         "extraQemuArgs": { "type": "array", "items": { "type": "string" }, "default": [] }
       }
     },
