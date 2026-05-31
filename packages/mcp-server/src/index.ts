@@ -748,7 +748,8 @@ function registerNetworkTools(
     },
     async (input: TsharkSummaryInputType) => {
       try {
-        const pcapPath = input.pcapPath ?? config.network.pcapPath;
+        const pcapPath =
+          input.pcapPath ?? (await activePcapPath(config)) ?? config.network.pcapPath;
         if (pcapPath === undefined) {
           return validationError(
             "pcapPath is required when network.pcapPath is not configured",
@@ -1335,9 +1336,24 @@ async function statIfExists(filePath: string) {
   try {
     return await stat(filePath);
   } catch (error) {
-    if (isFsInputError(error)) return undefined;
+    if (isNotFoundError(error)) return undefined;
     throw error;
   }
+}
+
+async function activePcapPath(config: CrucibleConfig): Promise<string | undefined> {
+  try {
+    const statePath = path.join(config.artifacts.directory, "state", `${config.vm.name}.json`);
+    const raw = await readFile(statePath, "utf8");
+    const state = JSON.parse(raw) as { qemu?: { args?: string[] } };
+    return inferActivePcapPath(state.qemu?.args ?? []);
+  } catch {
+    return undefined;
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && String(error.code) === "ENOENT";
 }
 
 async function summarizePcapWithTshark(pcapPath: string): Promise<{

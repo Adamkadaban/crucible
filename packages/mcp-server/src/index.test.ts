@@ -207,15 +207,25 @@ describe("crucible MCP tools", () => {
   });
 
   it("reports missing tshark as a structured error", async () => {
+    const pcapPath = `artifacts/downloads/mcp-tshark-${Date.now()}.pcap`;
+    await mkdir(path.dirname(pcapPath), { recursive: true });
+    await writeFile(pcapPath, Buffer.from("pcap"));
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
     const client = await harness({});
-    const result = (await client.callTool({
-      name: "tshark_summary",
-      arguments: { pcapPath: "artifacts/downloads/missing.pcap" },
-    })) as ToolCallText;
-    const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(result);
+    try {
+      const result = (await client.callTool({
+        name: "tshark_summary",
+        arguments: { pcapPath },
+      })) as ToolCallText;
+      const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(result);
 
-    expect(payload.ok).toBe(false);
-    expect(payload.error.message).toMatch(/ENOENT|no such file|not installed|not on PATH/i);
+      expect(payload.ok).toBe(false);
+      expect(payload.error.message).toMatch(/not installed|not on PATH/i);
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(pcapPath, { force: true });
+    }
   });
 
   it("returns guest-failed when the guest client is missing", async () => {
