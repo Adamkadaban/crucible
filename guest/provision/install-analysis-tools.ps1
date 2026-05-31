@@ -65,6 +65,10 @@ function Install-ProcDump {
         ForEach-Object { Join-Path "$($_.DeviceID)\" "tools\Procdump.zip" } |
         Where-Object { Test-Path -LiteralPath $_ } |
         Select-Object -First 1
+    if ($DryRun) {
+        Write-Status "dry-run: install standalone ProcDump into $target"
+        return $true
+    }
     if ($payloadZip) {
         Expand-Archive -LiteralPath $payloadZip -DestinationPath $target -Force
         return $true
