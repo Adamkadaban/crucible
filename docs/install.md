@@ -7,7 +7,7 @@ Windows x64 guest-agent binary.
 ## npm install
 
 ```sh
-npm install -g crucible
+npm install -g @adamkadaban/crucible
 crucible --help
 crucible doctor
 ```
