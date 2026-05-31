@@ -480,6 +480,30 @@ describe("crucible CLI bootstrap", () => {
     expect(copilot.stdout).toContain("Copilot CLI MCP configuration is version-dependent");
   });
 
+  it("aggregates setup all output across targets", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    process.env.HOME = root;
+
+    try {
+      const result = await runCrucibleCli(["setup", "all", "--print"], defaultRuntime);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("## host");
+      expect(result.stdout).toContain("## opencode");
+      expect(result.stdout).toContain("## claude");
+      expect(result.stdout).toContain("## codex");
+      expect(result.stdout).toContain("## copilot");
+      expect(result.stdout).toContain("crucible mcp --stdio");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
   it("rejects unknown setup targets", async () => {
     const result = await runCrucibleCli(["setup", "unknown"], defaultRuntime);
 

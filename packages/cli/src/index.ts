@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { copyFile, mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, stat as fsStat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1855,15 +1855,11 @@ async function readJsonObjectIfExists(filePath: string): Promise<JsonObject> {
     }
     return value;
   } catch (error) {
-    if (isMissingFileError(error)) {
+    if (isMissingPathError(error)) {
       return {};
     }
     throw error;
   }
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 async function writeJsonConfigWithBackup(
@@ -1876,10 +1872,12 @@ async function writeJsonConfigWithBackup(
     backupPath = await nextBackupPath(filePath);
     await copyFile(filePath, backupPath);
   }
-  await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, {
+  const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+  await writeFile(tempPath, `${JSON.stringify(config, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });
+  await rename(tempPath, filePath);
   return backupPath;
 }
 
