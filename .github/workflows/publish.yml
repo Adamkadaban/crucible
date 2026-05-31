@@ -43,8 +43,18 @@ jobs:
       - name: Pack dry run
         run: npm pack --dry-run
 
+      - name: Select npm dist tag
+        id: dist-tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          if [[ "$VERSION" == *-* ]]; then
+            echo "tag=${VERSION#*-}" | sed 's/[.].*//' >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag "${{ steps.dist-tag.outputs.tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
