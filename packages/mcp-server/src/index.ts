@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -62,6 +63,18 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   {
     name: "network_set_mode",
     description: "Plan a network mode change and report whether a VM restart is required.",
+  },
+  {
+    name: "network_active_status",
+    description: "Compare configured network mode with the active persisted QEMU network args.",
+  },
+  {
+    name: "network_pcap_info",
+    description: "Report capture pcap artifact path, size, and availability.",
+  },
+  {
+    name: "tshark_summary",
+    description: "Summarize a pcap artifact with host-side tshark when installed.",
   },
   {
     name: "snapshot_list",
@@ -184,6 +197,14 @@ const VmStopInput = z.object({}).strict();
 const NetworkStatusInput = z.object({}).strict();
 const NetworkSetModeInput = z.object({ mode: z.enum(["isolated", "nat", "capture"]) }).strict();
 type NetworkSetModeInputType = z.infer<typeof NetworkSetModeInput>;
+const NetworkActiveStatusInput = z.object({}).strict();
+const NetworkPcapInfoInput = z.object({}).strict();
+const TsharkSummaryInput = z
+  .object({
+    pcapPath: z.string().min(1).optional(),
+  })
+  .strict();
+type TsharkSummaryInputType = z.infer<typeof TsharkSummaryInput>;
 const SnapshotListInput = z.object({}).strict();
 const SnapshotRestoreInput = z
   .object({
@@ -637,6 +658,111 @@ function registerNetworkTools(
         result: buildNetworkModeChangePlan({ current: current(), requested }),
         auditLogPath,
       });
+    },
+  );
+
+  server.registerTool(
+    "network_active_status",
+    {
+      title: "Active network status",
+      description: "Compare configured network mode with persisted QEMU launch args.",
+      inputSchema: NetworkActiveStatusInput.shape,
+    },
+    async () => {
+      try {
+        const statePath = path.join(config.artifacts.directory, "state", `${config.vm.name}.json`);
+        const raw = await readFile(statePath, "utf8");
+        const state = JSON.parse(raw) as { qemu?: { args?: string[] } };
+        const args = state.qemu?.args ?? [];
+        const active = inferActiveNetworkMode(args);
+        const pcapPath = inferActivePcapPath(args);
+        return toJsonContent({
+          ok: true,
+          result: {
+            configuredMode: mode,
+            activeMode: active.mode,
+            activeBackend: active.backend,
+            matchesConfiguredMode: active.mode === mode,
+            pcapPath,
+            statePath,
+          },
+          auditLogPath,
+        });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyFileTransferError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "network_pcap_info",
+    {
+      title: "Capture pcap info",
+      description: "Report configured or active capture pcap path and size.",
+      inputSchema: NetworkPcapInfoInput.shape,
+    },
+    async () => {
+      try {
+        const configuredPath = config.network.pcapPath;
+        const statePath = path.join(config.artifacts.directory, "state", `${config.vm.name}.json`);
+        let activePath: string | undefined;
+        try {
+          const raw = await readFile(statePath, "utf8");
+          const state = JSON.parse(raw) as { qemu?: { args?: string[] } };
+          activePath = inferActivePcapPath(state.qemu?.args ?? []);
+        } catch {
+          activePath = undefined;
+        }
+        const pcapPath = activePath ?? configuredPath;
+        const info = pcapPath === undefined ? undefined : await statIfExists(pcapPath);
+        return toJsonContent({
+          ok: true,
+          result: {
+            configuredPath,
+            activePath,
+            pcapPath,
+            exists: info !== undefined,
+            sizeBytes: info?.size,
+            modifiedAt: info?.mtime.toISOString(),
+          },
+          auditLogPath,
+        });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyFileTransferError(error), error, auditLogPath),
+        });
+      }
+    },
+  );
+
+  server.registerTool(
+    "tshark_summary",
+    {
+      title: "TShark pcap summary",
+      description: "Run host-side tshark summaries for a pcap artifact when tshark is installed.",
+      inputSchema: TsharkSummaryInput.shape,
+    },
+    async (input: TsharkSummaryInputType) => {
+      try {
+        const pcapPath = input.pcapPath ?? config.network.pcapPath;
+        if (pcapPath === undefined) {
+          return validationError(
+            "pcapPath is required when network.pcapPath is not configured",
+            auditLogPath,
+          );
+        }
+        const result = await summarizePcapWithTshark(pcapPath);
+        return toJsonContent({ ok: true, result, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
     },
   );
 }
@@ -1176,6 +1302,131 @@ function validationError(message: string, auditLogPath: string | undefined) {
     ok: false,
     error: { kind: "validation" as const, message, auditLogPath },
   });
+}
+
+function inferActiveNetworkMode(args: readonly string[]): {
+  readonly mode: NetworkMode;
+  readonly backend: "user" | "tap" | "none";
+} {
+  const netdevArgs = args.filter((arg) => arg.startsWith("user,") || arg.startsWith("tap,"));
+  if (netdevArgs.some((arg) => arg.startsWith("tap,"))) {
+    return { mode: "capture", backend: "tap" };
+  }
+  const user = netdevArgs.find((arg) => arg.startsWith("user,"));
+  if (user === undefined) {
+    return { mode: "isolated", backend: "none" };
+  }
+  return user.includes("restrict=off")
+    ? { mode: "nat", backend: "user" }
+    : { mode: "isolated", backend: "user" };
+}
+
+function inferActivePcapPath(args: readonly string[]): string | undefined {
+  const filter = args.find((arg) => arg.startsWith("filter-dump,"));
+  if (filter === undefined) return undefined;
+  const file = filter
+    .split(",")
+    .find((part) => part.startsWith("file="))
+    ?.slice("file=".length);
+  return file === "" ? undefined : file;
+}
+
+async function statIfExists(filePath: string) {
+  try {
+    return await stat(filePath);
+  } catch (error) {
+    if (isFsInputError(error)) return undefined;
+    throw error;
+  }
+}
+
+async function summarizePcapWithTshark(pcapPath: string): Promise<{
+  readonly pcapPath: string;
+  readonly tsharkAvailable: boolean;
+  readonly sizeBytes: number;
+  readonly conversations: string;
+  readonly dnsQueries: readonly string[];
+  readonly httpHosts: readonly string[];
+  readonly tlsSni: readonly string[];
+}> {
+  await access(pcapPath);
+  const info = await stat(pcapPath);
+  const conversations = await runTshark(["-r", pcapPath, "-q", "-z", "conv,tcp", "-z", "conv,udp"]);
+  const dnsQueries = uniqueNonEmptyLines(
+    await runTshark(["-r", pcapPath, "-Y", "dns.qry.name", "-T", "fields", "-e", "dns.qry.name"]),
+  );
+  const httpHosts = uniqueNonEmptyLines(
+    await runTshark(["-r", pcapPath, "-Y", "http.host", "-T", "fields", "-e", "http.host"]),
+  );
+  const tlsSni = uniqueNonEmptyLines(
+    await runTshark([
+      "-r",
+      pcapPath,
+      "-Y",
+      "tls.handshake.extensions_server_name",
+      "-T",
+      "fields",
+      "-e",
+      "tls.handshake.extensions_server_name",
+    ]),
+  );
+  return {
+    pcapPath,
+    tsharkAvailable: true,
+    sizeBytes: info.size,
+    conversations,
+    dnsQueries,
+    httpHosts,
+    tlsSni,
+  };
+}
+
+function runTshark(args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tshark", [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    const cap = 512 * 1024;
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (stdoutBytes >= cap) return;
+      const slice = chunk.subarray(0, cap - stdoutBytes);
+      stdout.push(slice);
+      stdoutBytes += slice.byteLength;
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderrBytes >= cap) return;
+      const slice = chunk.subarray(0, cap - stderrBytes);
+      stderr.push(slice);
+      stderrBytes += slice.byteLength;
+    });
+    child.once("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        reject(new Error("tshark is not installed or not on PATH"));
+        return;
+      }
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString("utf8"));
+        return;
+      }
+      reject(new Error(`tshark exited ${code}: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+  });
+}
+
+function uniqueNonEmptyLines(text: string): readonly string[] {
+  return Array.from(
+    new Set(
+      text
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  );
 }
 
 type GuestFileInlinePreview = GuestAgentFileInspection & {
