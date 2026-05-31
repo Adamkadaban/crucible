@@ -180,6 +180,7 @@ const GuestExecInput = z
     arguments: z.array(z.string()).max(64).optional(),
     workingDirectory: z.string().optional(),
     environment: z.record(z.string(), z.string()).optional(),
+    sslKeyLogFile: z.string().min(1).optional(),
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
     as: z.enum(["service", "standard", "admin"]).optional(),
   })
@@ -222,6 +223,7 @@ const NetworkPcapInfoInput = z.object({}).strict();
 const TsharkSummaryInput = z
   .object({
     pcapPath: z.string().min(1).optional(),
+    tlsKeyLogPath: z.string().min(1).optional(),
   })
   .strict();
 type TsharkSummaryInputType = z.infer<typeof TsharkSummaryInput>;
@@ -480,7 +482,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
           executable: input.executable,
           arguments: input.arguments,
           workingDirectory: input.workingDirectory,
-          environment: input.environment,
+          environment: withSslKeyLogFile(input.environment, input.sslKeyLogFile),
           timeoutMs: input.timeoutMs,
           as: input.as ?? "service",
         };
@@ -510,7 +512,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
           executable: input.executable,
           arguments: input.arguments,
           workingDirectory: input.workingDirectory,
-          environment: input.environment,
+          environment: withSslKeyLogFile(input.environment, input.sslKeyLogFile),
           timeoutMs: input.timeoutMs,
           as: "admin",
         };
@@ -787,6 +789,7 @@ function registerNetworkTools(
     async () => {
       try {
         const configuredPath = config.network.pcapPath;
+        const tlsKeyLogPath = config.network.tlsKeyLogPath;
         const statePath = path.join(config.artifacts.directory, "state", `${config.vm.name}.json`);
         let activePath: string | undefined;
         try {
@@ -807,6 +810,11 @@ function registerNetworkTools(
             exists: info !== undefined,
             sizeBytes: info?.size,
             modifiedAt: info?.mtime.toISOString(),
+            tlsKeyLogPath,
+            tlsKeyLogExists:
+              tlsKeyLogPath === undefined
+                ? undefined
+                : (await statIfExists(tlsKeyLogPath)) !== undefined,
           },
           auditLogPath,
         });
@@ -836,7 +844,10 @@ function registerNetworkTools(
             auditLogPath,
           );
         }
-        const result = await summarizePcapWithTshark(pcapPath);
+        const result = await summarizePcapWithTshark(
+          pcapPath,
+          input.tlsKeyLogPath ?? config.network.tlsKeyLogPath,
+        );
         return toJsonContent({ ok: true, result, auditLogPath });
       } catch (error) {
         return toJsonContent({
@@ -1753,6 +1764,16 @@ function inferActivePcapPath(args: readonly string[]): string | undefined {
   return file === "" ? undefined : file;
 }
 
+function withSslKeyLogFile(
+  environment: Readonly<Record<string, string>> | undefined,
+  sslKeyLogFile: string | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (sslKeyLogFile === undefined) {
+    return environment;
+  }
+  return { ...(environment ?? {}), SSLKEYLOGFILE: sslKeyLogFile };
+}
+
 async function statIfExists(filePath: string) {
   try {
     return await stat(filePath);
@@ -1777,8 +1798,13 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && String(error.code) === "ENOENT";
 }
 
-async function summarizePcapWithTshark(pcapPath: string): Promise<{
+async function summarizePcapWithTshark(
+  pcapPath: string,
+  tlsKeyLogPath?: string,
+): Promise<{
   readonly pcapPath: string;
+  readonly tlsKeyLogPath?: string;
+  readonly tlsKeyLogExists?: boolean;
   readonly tsharkAvailable: boolean;
   readonly sizeBytes: number;
   readonly conversations: string;
@@ -1788,17 +1814,48 @@ async function summarizePcapWithTshark(pcapPath: string): Promise<{
 }> {
   await access(pcapPath);
   const info = await stat(pcapPath);
-  const conversations = await runTshark(["-r", pcapPath, "-q", "-z", "conv,tcp", "-z", "conv,udp"]);
+  const tsharkPrefix = await tsharkKeyLogArgs(tlsKeyLogPath);
+  const conversations = await runTshark([
+    "-r",
+    pcapPath,
+    ...tsharkPrefix,
+    "-q",
+    "-z",
+    "conv,tcp",
+    "-z",
+    "conv,udp",
+  ]);
   const dnsQueries = uniqueNonEmptyLines(
-    await runTshark(["-r", pcapPath, "-Y", "dns.qry.name", "-T", "fields", "-e", "dns.qry.name"]),
+    await runTshark([
+      "-r",
+      pcapPath,
+      ...tsharkPrefix,
+      "-Y",
+      "dns.qry.name",
+      "-T",
+      "fields",
+      "-e",
+      "dns.qry.name",
+    ]),
   );
   const httpHosts = uniqueNonEmptyLines(
-    await runTshark(["-r", pcapPath, "-Y", "http.host", "-T", "fields", "-e", "http.host"]),
+    await runTshark([
+      "-r",
+      pcapPath,
+      ...tsharkPrefix,
+      "-Y",
+      "http.host",
+      "-T",
+      "fields",
+      "-e",
+      "http.host",
+    ]),
   );
   const tlsSni = uniqueNonEmptyLines(
     await runTshark([
       "-r",
       pcapPath,
+      ...tsharkPrefix,
       "-Y",
       "tls.handshake.extensions_server_name",
       "-T",
@@ -1809,6 +1866,8 @@ async function summarizePcapWithTshark(pcapPath: string): Promise<{
   );
   return {
     pcapPath,
+    tlsKeyLogPath,
+    tlsKeyLogExists: tlsKeyLogPath === undefined ? undefined : tsharkPrefix.length > 0,
     tsharkAvailable: true,
     sizeBytes: info.size,
     conversations,
@@ -1816,6 +1875,13 @@ async function summarizePcapWithTshark(pcapPath: string): Promise<{
     httpHosts,
     tlsSni,
   };
+}
+
+async function tsharkKeyLogArgs(tlsKeyLogPath: string | undefined): Promise<readonly string[]> {
+  if (tlsKeyLogPath === undefined || (await statIfExists(tlsKeyLogPath)) === undefined) {
+    return [];
+  }
+  return ["-o", `tls.keylog_file:${tlsKeyLogPath}`];
 }
 
 function runTshark(args: readonly string[]): Promise<string> {

@@ -29,6 +29,7 @@ Treat these as local secrets or sensitive artifacts:
 - `snapshots/`
 - `artifacts/downloads/`
 - memory dumps, crash dumps, pcaps, samples, and symbol caches
+- TLS key log files associated with packet captures
 
 These paths are ignored by Git by default. Do not paste their raw contents into public issues or
 pull requests.
