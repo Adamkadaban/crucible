@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -27,6 +28,21 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
+  });
+
+  it("runs when invoked through an npm-style bin symlink", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-bin-"));
+    const binPath = path.join(root, "crucible");
+    await symlink(path.resolve("packages/cli/src/index.ts"), binPath);
+
+    const result = spawnSync(process.execPath, [binPath, "--help"], {
+      cwd: path.resolve("."),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "--import tsx --conditions=development" },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("crucible provision");
   });
 
   it("prints media plan without manual links by default", async () => {
@@ -251,6 +267,40 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Unknown media profile: windows-10");
   });
 
+  it("initializes crucible.config.json idempotently", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    const outputPath = path.join(root, "crucible.config.json");
+
+    const created = await runCrucibleCli(["config:init", "--output", outputPath], defaultRuntime);
+    const refused = await runCrucibleCli(["config:init", "--output", outputPath], defaultRuntime);
+    const forced = await runCrucibleCli(
+      ["config:init", "--output", outputPath, "--force"],
+      defaultRuntime,
+    );
+
+    expect(created.exitCode).toBe(0);
+    expect(created.stdout).toContain(`Wrote ${outputPath}`);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("already exists");
+    expect(forced.exitCode).toBe(0);
+    const config = JSON.parse(await readFile(outputPath, "utf8")) as {
+      $schema: string;
+      media: { windowsIso: { path: string }; virtioIso: { path: string } };
+    };
+    expect(config.$schema).toBe(
+      "https://raw.githubusercontent.com/Adamkadaban/crucible/main/schemas/config.schema.json",
+    );
+    expect(config.media.windowsIso.path).toBe("/path/to/windows.iso");
+    expect(config.media.virtioIso.path).toBe("/path/to/virtio-win.iso");
+  });
+
+  it("rejects unknown config:init options", async () => {
+    const result = await runCrucibleCli(["config:init", "--bad"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown config:init option: --bad");
+  });
+
   it("runs provision through fake lifecycle, stage, snapshot, and health contracts", async () => {
     const config = parseCrucibleConfig({
       vm: { name: "test-win" },
@@ -344,6 +394,35 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown provision option: --apply");
+  });
+
+  it("reports a missing override guest agent binary before provisioning starts", async () => {
+    const previous = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-cli-"));
+    process.env.CRUCIBLE_GUEST_AGENT_BINARY = path.join(root, "missing-agent.exe");
+    const config = parseCrucibleConfig({
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+    });
+
+    try {
+      const result = await runCrucibleCli(["provision"], { config });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("Cannot find the Windows guest agent binary");
+      expect(result.stderr).toContain("missing-agent.exe");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CRUCIBLE_GUEST_AGENT_BINARY;
+      } else {
+        process.env.CRUCIBLE_GUEST_AGENT_BINARY = previous;
+      }
+    }
   });
 
   it("prints snapshot create and restore results", async () => {

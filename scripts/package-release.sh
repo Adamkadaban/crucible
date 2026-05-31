@@ -5,38 +5,35 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="${ROOT}/dist/release"
+VENDOR_DIR="${ROOT}/vendor"
 
 mkdir -p "${RELEASE_DIR}"
+mkdir -p "${VENDOR_DIR}"
 rm -f "${RELEASE_DIR}"/*.tgz "${RELEASE_DIR}"/*.exe "${RELEASE_DIR}"/release-manifest.json
 
 # 1. TypeScript build
 echo "[release] pnpm build" >&2
 (cd "${ROOT}" && pnpm build >/dev/null)
 
-# 2. Pack workspace packages so each ships its dist/ + package.json
-node_pack() {
-  local pkg="$1"
-  local outdir="${RELEASE_DIR}"
-  echo "[release] pack ${pkg}" >&2
-  (cd "${ROOT}/packages/${pkg}" && pnpm pack --pack-destination "${outdir}" >/dev/null)
-}
-node_pack core
-node_pack mcp-server
-node_pack cli
+# 2. Build the single npm CLI bundle.
+echo "[release] bundle npm CLI" >&2
+(cd "${ROOT}" && pnpm build:bundle >/dev/null)
 
 # 3. Cross-compile the Go guest agent for Windows.
 echo "[release] cross-compile guest agent (windows/amd64)" >&2
 (cd "${ROOT}/guest-agent" \
   && GOOS=windows GOARCH=amd64 go build \
-       -trimpath \
-       -ldflags="-s -w -X main.version=${CRUCIBLE_VERSION:-dev}" \
-       -o "${RELEASE_DIR}/crucible-guest-agent.exe" \
-       ./cmd/crucible-guest-agent)
+        -trimpath \
+        -ldflags="-s -w -X main.version=${CRUCIBLE_VERSION:-dev}" \
+        -o "${RELEASE_DIR}/crucible-guest-agent.exe" \
+        ./cmd/crucible-guest-agent)
+cp "${RELEASE_DIR}/crucible-guest-agent.exe" "${VENDOR_DIR}/crucible-guest-agent.exe"
 
 # 4. SHA-256 manifest
 echo "[release] hash manifest" >&2
 python3 - "${RELEASE_DIR}" <<'PY'
 import hashlib, json, os, pathlib, sys
+from datetime import datetime, timezone
 release_dir = pathlib.Path(sys.argv[1])
 entries = []
 for path in sorted(release_dir.iterdir()):
@@ -50,7 +47,7 @@ for path in sorted(release_dir.iterdir()):
     })
 manifest = {
     "version": os.environ.get("CRUCIBLE_VERSION", "dev"),
-    "createdAt": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "entries": entries,
 }
 (release_dir / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

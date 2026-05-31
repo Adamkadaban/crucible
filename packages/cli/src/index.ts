@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   buildNetworkPlan,
@@ -138,6 +140,15 @@ type FetchToolsArgs = {
   readonly force: boolean;
 };
 
+type ConfigInitArgs = {
+  readonly outputPath: string;
+  readonly force: boolean;
+};
+
+type ConfigInitArgsResult =
+  | { readonly ok: true; readonly args: ConfigInitArgs }
+  | { readonly ok: false; readonly message: string };
+
 type NetPlanArgs = {
   readonly mode: NetworkMode;
   readonly firewallBackend: FirewallBackend;
@@ -172,6 +183,8 @@ export async function runCrucibleCli(
       return renderMediaPlanCommand(rest, runtime);
     case "media:fetch-tools":
       return fetchToolsCommand(rest, runtime);
+    case "config:init":
+      return initConfigCommand(rest);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
     case "net:status":
@@ -461,14 +474,15 @@ async function runProvisionCommand(
   // discovers the missing binary 15 minutes in, after the guest is
   // already provisioned, when install-agent fails to upload it.
   if (runtime.lifecycleManager === undefined && runtime.provisioningExecutor === undefined) {
-    const agentBinaryPath = resolveGuestAgentBinaryPath();
+    const agentBinaryPath = await resolveGuestAgentBinaryPath();
     if (!(await fileExists(agentBinaryPath))) {
       return {
         exitCode: 2,
         stdout: "",
         stderr: [
           `Cannot find the Windows guest agent binary at ${agentBinaryPath}.`,
-          "Build it via 'scripts/package-release.sh' or set CRUCIBLE_GUEST_AGENT_BINARY",
+          "Use the npm package with bundled vendor/crucible-guest-agent.exe,",
+          "build it via 'scripts/package-release.sh', or set CRUCIBLE_GUEST_AGENT_BINARY",
           "to a pre-built crucible-guest-agent.exe.",
         ].join("\n"),
       };
@@ -780,18 +794,55 @@ function buildDefaultProvisioningExecutor(
 /**
  * Resolve a path to the cross-compiled Windows guest agent binary that
  * `install-agent.ps1` expects in C:\Program Files\Crucible. Operators can
- * override via $CRUCIBLE_GUEST_AGENT_BINARY; otherwise we look at the
- * conventional dist/release output produced by scripts/package-release.sh.
- * Resolved against process.cwd() so the operator gets the expected
- * "missing binary" error if they invoke the CLI from a different
- * directory.
+ * override via $CRUCIBLE_GUEST_AGENT_BINARY; otherwise packaged npm
+ * installs use vendor/crucible-guest-agent.exe and source checkouts fall
+ * back to the conventional dist/release output produced by
+ * scripts/package-release.sh.
  */
-function resolveGuestAgentBinaryPath(): string {
+async function resolveGuestAgentBinaryPath(): Promise<string> {
   const override = process.env.CRUCIBLE_GUEST_AGENT_BINARY;
   if (override !== undefined && override !== "") {
     return resolvePath(override);
   }
-  return resolvePath("dist/release/crucible-guest-agent.exe");
+  for (const candidate of defaultGuestAgentBinaryCandidates()) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return (
+    defaultGuestAgentBinaryCandidates()[0] ?? resolvePath("dist/release/crucible-guest-agent.exe")
+  );
+}
+
+function defaultGuestAgentBinaryCandidates(): readonly string[] {
+  const modulePath = fileURLToPath(import.meta.url);
+  const sourceCheckoutCandidate = resolvePath("dist/release/crucible-guest-agent.exe");
+  const packagedCandidate = resolvePath(
+    dirname(modulePath),
+    "..",
+    "vendor",
+    "crucible-guest-agent.exe",
+  );
+  return modulePath.includes(`${resolvePath("packages", "cli", "src")}/`)
+    ? [sourceCheckoutCandidate, packagedCandidate]
+    : [packagedCandidate, sourceCheckoutCandidate];
+}
+
+async function resolveProvisioningScriptsDirectory(): Promise<string> {
+  for (const candidate of defaultProvisioningScriptCandidates()) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return defaultProvisioningScriptCandidates()[0] ?? resolvePath("guest/provision");
+}
+
+function defaultProvisioningScriptCandidates(): readonly string[] {
+  const modulePath = fileURLToPath(import.meta.url);
+  return [
+    resolvePath(dirname(modulePath), "..", "guest", "provision"),
+    resolvePath("guest", "provision"),
+  ];
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -801,6 +852,50 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function getExampleConfigJson(): string {
+  return JSON.stringify(
+    {
+      $schema:
+        "https://raw.githubusercontent.com/Adamkadaban/crucible/main/schemas/config.schema.json",
+      vm: {
+        name: "crucible-win11",
+        cpus: 4,
+        memoryMiB: 8192,
+        diskGiB: 128,
+        display: { mode: "none", vncSocketPath: "artifacts/vnc.sock" },
+      },
+      media: {
+        cacheDir: "media/cache",
+        profile: "windows11-enterprise-eval",
+        windowsIso: { path: "/path/to/windows.iso" },
+        virtioIso: { path: "/path/to/virtio-win.iso" },
+        driverBundle: { path: "/path/to/virtio-win-guest-tools.exe" },
+      },
+      network: {
+        mode: "isolated",
+        controlPort: 8443,
+      },
+      qmp: {
+        socketPath: "artifacts/qmp.sock",
+        timeoutMs: 5000,
+      },
+      qga: {
+        socketPath: "artifacts/qga.sock",
+        timeoutMs: 10000,
+      },
+      artifacts: {
+        directory: "artifacts",
+        manifestPath: "artifacts/manifest.json",
+        logsDirectory: "artifacts/logs",
+        snapshotsDirectory: "snapshots",
+        secretsDirectory: "artifacts/secrets",
+      },
+    },
+    null,
+    2,
+  );
 }
 
 async function getProvisioningLifecyclePreparation(
@@ -818,7 +913,8 @@ async function getProvisioningLifecyclePreparation(
   const firstBootPlan = await prepareRealFirstBootProvisioning({
     config,
     processRunner,
-    agentBinaryPath: resolveGuestAgentBinaryPath(),
+    agentBinaryPath: await resolveGuestAgentBinaryPath(),
+    provisioningScriptsDirectory: await resolveProvisioningScriptsDirectory(),
   });
   const qemuPlan = buildQemuCommandPlan({
     config: { ...config, network: { ...config.network, mode: "nat" } },
@@ -1459,6 +1555,33 @@ async function fetchToolsCommand(
   return { exitCode: 0, stdout: renderFetchToolsResult(results), stderr: "" };
 }
 
+async function initConfigCommand(args: readonly string[]): Promise<CommandResult> {
+  const parsed = parseConfigInitArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const outputPath = resolvePath(parsed.args.outputPath);
+  if (!parsed.args.force && (await fileExists(outputPath))) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `${parsed.args.outputPath} already exists; pass --force to overwrite`,
+    };
+  }
+
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${getExampleConfigJson()}\n`, { encoding: "utf8", mode: 0o600 });
+  return {
+    exitCode: 0,
+    stdout: [
+      `Wrote ${parsed.args.outputPath}`,
+      "Edit media.windowsIso.path and media.virtioIso.path before provisioning.",
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
 function renderNetPlanCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   const config = getRuntimeConfig(runtime);
   const parsed = parseNetPlanArgs(args, config.network.mode);
@@ -2088,6 +2211,31 @@ function parseFetchToolsArgs(args: readonly string[]): FetchToolsArgsResult {
   return { ok: true, args: { force } };
 }
 
+function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
+  let outputPath = "crucible.config.json";
+  let force = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--force") {
+      force = true;
+      continue;
+    }
+    if (arg === "--output") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --output" };
+      }
+      outputPath = value;
+      index += 1;
+      continue;
+    }
+    return { ok: false, message: `Unknown config:init option: ${arg}` };
+  }
+
+  return { ok: true, args: { outputPath, force } };
+}
+
 function isMediaProfileName(value: string): value is MediaProfileName {
   return value === "windows11-enterprise-eval" || value === "windows-server-2025-eval";
 }
@@ -2161,6 +2309,7 @@ function getHelpText(): string {
     "crucible",
     "",
     "Usage:",
+    "  crucible config:init [--output crucible.config.json] [--force]",
     "  crucible provision   Provision a Windows analysis VM",
     "  crucible snapshot:create clean-base",
     "  crucible snapshot:restore clean-base",
@@ -2187,7 +2336,7 @@ function getHelpText(): string {
   ].join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint()) {
   const result = await runCrucibleCli(process.argv.slice(2)).catch((error: unknown) => ({
     exitCode: 1,
     stdout: "",
@@ -2203,4 +2352,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   process.exitCode = result.exitCode;
+}
+
+function isCliEntrypoint(): boolean {
+  if (process.argv[1] === undefined) {
+    return false;
+  }
+  return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
 }

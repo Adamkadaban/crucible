@@ -20,7 +20,6 @@ treat it as a hard containment boundary against VM escapes or host-kernel bugs.
 
 - Linux host with KVM access.
 - QEMU, OVMF, `swtpm`, `socat`, and `xorriso`.
-- Node from `.nvmrc`, pnpm via Corepack, and Go for the Windows guest agent.
 - A Windows installer ISO and virtio-win ISO that you provide locally.
 
 Debian / Ubuntu package baseline:
@@ -29,7 +28,30 @@ Debian / Ubuntu package baseline:
 sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
 ```
 
-## Quick Start
+## Install
+
+```sh
+npm install -g crucible
+crucible --help
+```
+
+The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
+binary. You still need a Linux/KVM host and local Windows + virtio media.
+
+Source checkouts also need Node from `.nvmrc`, pnpm via Corepack, and Go for guest-agent builds.
+
+Create `crucible.config.json` in the directory where you will run Crucible, edit the media paths,
+then provision with the global CLI:
+
+```sh
+crucible config:init
+crucible provision
+crucible guest:health
+crucible snapshot:list
+crucible snapshot:restore clean-base
+```
+
+## Source Checkout
 
 ```sh
 git clone https://github.com/Adamkadaban/crucible.git
@@ -40,28 +62,21 @@ nvm install
 corepack enable pnpm
 pnpm install --frozen-lockfile
 pnpm build
+CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
 ```
 
 Create `crucible.config.json` with your local media paths:
 
-```json
-{
-  "$schema": "./schemas/config.schema.json",
-  "media": {
-    "windowsIso": { "path": "/path/to/windows.iso" },
-    "virtioIso": { "path": "/path/to/virtio-win.iso" },
-    "driverBundle": { "path": "/path/to/virtio-win-guest-tools.exe" }
-  }
-}
+```sh
+pnpm crucible config:init
 ```
 
 `crucible.config.json`, VM disks, generated credentials, snapshots, dumps, pcaps, symbols, and
 downloaded tool archives are ignored by Git.
 
-Build the release payload and provision the VM:
+From a source checkout, use the package script wrapper instead of the global binary:
 
 ```sh
-CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
 pnpm crucible provision
 pnpm crucible guest:health
 pnpm crucible snapshot:list
@@ -79,7 +94,7 @@ pnpm crucible snapshot:restore clean-base
 Run the MCP server over stdio:
 
 ```sh
-pnpm crucible mcp --stdio
+crucible mcp --stdio
 ```
 
 Example client config:
@@ -88,9 +103,8 @@ Example client config:
 {
   "mcpServers": {
     "crucible": {
-      "command": "node",
-      "args": ["packages/cli/dist/index.js", "mcp", "--stdio"],
-      "cwd": "/path/to/crucible"
+      "command": "crucible",
+      "args": ["mcp", "--stdio"]
     }
   }
 }
@@ -111,6 +125,7 @@ an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucibl
 
 ```sh
 pnpm crucible --help
+crucible --help
 pnpm crucible media:plan --manual
 pnpm crucible vm:start --dry-run
 pnpm crucible vm:status
