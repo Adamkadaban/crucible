@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,6 +10,7 @@ import {
   buildAnalysisVmPolicyReadiness,
   buildQemuCommandPlan,
   createEmptyArtifactManifest,
+  CRUCIBLE_VERSION,
   CrucibleError,
   DEFAULT_MEDIA_SOURCES,
   DEFAULT_QMP_TIMEOUT_MS,
@@ -24,6 +28,14 @@ import {
 } from "./index.js";
 
 describe("core bootstrap exports", () => {
+  it("keeps generated runtime version in sync with package.json", () => {
+    const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as {
+      version: string;
+    };
+
+    expect(CRUCIBLE_VERSION).toBe(packageJson.version);
+  });
+
   it("includes manual download guidance for default media", () => {
     const instructions = getManualDownloadInstructions("/tmp/crucible-media");
 
