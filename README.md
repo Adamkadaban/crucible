@@ -88,8 +88,8 @@ Example client config:
 {
   "mcpServers": {
     "crucible": {
-      "command": "pnpm",
-      "args": ["crucible", "mcp", "--stdio"],
+      "command": "node",
+      "args": ["packages/cli/dist/index.js", "mcp", "--stdio"],
       "cwd": "/path/to/crucible"
     }
   }
