@@ -815,11 +815,16 @@ async function resolveGuestAgentBinaryPath(): Promise<string> {
 
 function defaultGuestAgentBinaryCandidates(): readonly string[] {
   const modulePath = fileURLToPath(import.meta.url);
-  const candidates = [
-    resolvePath(dirname(modulePath), "..", "vendor", "crucible-guest-agent.exe"),
-    resolvePath("dist/release/crucible-guest-agent.exe"),
-  ];
-  return candidates;
+  const sourceCheckoutCandidate = resolvePath("dist/release/crucible-guest-agent.exe");
+  const packagedCandidate = resolvePath(
+    dirname(modulePath),
+    "..",
+    "vendor",
+    "crucible-guest-agent.exe",
+  );
+  return modulePath.includes(`${resolvePath("packages", "cli", "src")}/`)
+    ? [sourceCheckoutCandidate, packagedCandidate]
+    : [packagedCandidate, sourceCheckoutCandidate];
 }
 
 async function resolveProvisioningScriptsDirectory(): Promise<string> {
@@ -851,7 +856,8 @@ async function fileExists(filePath: string): Promise<boolean> {
 function getExampleConfigJson(): string {
   return JSON.stringify(
     {
-      $schema: "./schemas/config.schema.json",
+      $schema:
+        "https://raw.githubusercontent.com/Adamkadaban/crucible/main/schemas/config.schema.json",
       vm: {
         name: "crucible-win11",
         cpus: 4,

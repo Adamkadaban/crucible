@@ -268,8 +268,12 @@ describe("crucible CLI bootstrap", () => {
     expect(refused.stderr).toContain("already exists");
     expect(forced.exitCode).toBe(0);
     const config = JSON.parse(await readFile(outputPath, "utf8")) as {
+      $schema: string;
       media: { windowsIso: { path: string }; virtioIso: { path: string } };
     };
+    expect(config.$schema).toBe(
+      "https://raw.githubusercontent.com/Adamkadaban/crucible/main/schemas/config.schema.json",
+    );
     expect(config.media.windowsIso.path).toBe("/path/to/windows.iso");
     expect(config.media.virtioIso.path).toBe("/path/to/virtio-win.iso");
   });

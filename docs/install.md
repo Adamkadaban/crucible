@@ -8,7 +8,6 @@ Windows x64 guest-agent binary.
 
 ```sh
 npm install -g crucible
-crucible config:init
 crucible --help
 ```
 
