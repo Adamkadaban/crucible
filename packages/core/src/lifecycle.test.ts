@@ -346,6 +346,48 @@ describe("VmLifecycleManager", () => {
     );
   });
 
+  it("prefers explicit installer boot plan over stale stopped state", async () => {
+    const harness = await createLifecycleHarness({
+      plan: {
+        bootMedia: {
+          windowsIsoPath: "/isos/windows.iso",
+          autounattendIsoPath: "artifacts/boot/autounattend.iso",
+          payloadIsoPath: "artifacts/boot/crucible-payload.iso",
+          ovmfCodePath: "/usr/share/OVMF/OVMF_CODE_4M.fd",
+          ovmfVarsPath: "artifacts/boot/life-test.OVMF_VARS.fd",
+        },
+      },
+    });
+    await mkdirFor(harness.paths.stateManifest);
+    await writeFile(
+      harness.paths.stateManifest,
+      JSON.stringify({
+        version: 1,
+        vmName: "life-test",
+        state: "stopped",
+        paths: harness.paths,
+        qemu: {
+          executable: "qemu-system-x86_64",
+          args: [
+            "-drive",
+            "file=artifacts/boot/crucible-payload.iso,media=cdrom,if=none,readonly=on,id=crucible-payload",
+          ],
+        },
+        lastTransitionAt: "2026-05-28T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    await harness.manager.start();
+
+    expect(harness.spawnRequests[0]?.args).toContain(
+      "ide-cd,drive=crucible-windows-install,bus=crucible-sata0.0,bootindex=1",
+    );
+    expect(harness.spawnRequests[0]?.args).toContain(
+      "ide-cd,drive=crucible-autounattend,bus=crucible-sata0.1",
+    );
+  });
+
   it("preserves recorded qemu argv if restart spawn fails", async () => {
     const harness = await createLifecycleHarness({ spawnError: new Error("spawn failed") });
     const richArgs = ["-name", "life-test", "-cdrom", "payload.iso"];
@@ -375,6 +417,7 @@ describe("VmLifecycleManager", () => {
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
   readonly spawnError?: Error;
+  readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
 };
 
 async function createLifecycleHarness(options: HarnessOptions = {}) {
@@ -391,7 +434,7 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
     qmp: { socketPath: path.join(root, "artifacts", "qmp.sock"), timeoutMs: 100 },
     qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
   });
-  const plan = buildQemuCommandPlan({ config });
+  const plan = buildQemuCommandPlan({ config, ...options.plan });
   const paths = buildLifecyclePaths(config);
   const processes = new Set<number>();
   const spawnRequests: VmSpawnRequest[] = [];

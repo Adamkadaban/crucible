@@ -210,6 +210,9 @@ export class VmLifecycleManager {
   async #qemuPlanForStart(
     recorded?: VmLifecycleStateManifest["qemu"],
   ): Promise<VmLifecycleStateManifest["qemu"]> {
+    if (hasInstallerBootMedia(this.#plan.args)) {
+      return { executable: this.#plan.executable, args: this.#plan.args };
+    }
     if (recorded !== undefined && !looksLikeBareDefaultArgs(recorded.args)) {
       return recorded;
     }
@@ -591,6 +594,12 @@ async function allPathsExist(paths: readonly string[]): Promise<boolean> {
 
 function looksLikeBareDefaultArgs(args: readonly string[]): boolean {
   return !args.some((arg) => arg.includes("if=pflash") || arg.includes("media=cdrom"));
+}
+
+function hasInstallerBootMedia(args: readonly string[]): boolean {
+  return args.some(
+    (arg) => arg.includes("crucible-windows-install") || arg.includes("crucible-autounattend"),
+  );
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
