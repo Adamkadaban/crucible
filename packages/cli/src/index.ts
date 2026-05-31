@@ -2,8 +2,9 @@
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { mkdir, readFile, rename, stat as fsStat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat as fsStat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -1679,7 +1680,8 @@ async function setupHostCommand(args: SetupArgs): Promise<CommandResult> {
   if (result.healthy) {
     return { exitCode: 0, stdout: "Host prerequisites are already satisfied.", stderr: "" };
   }
-  const command = getAptInstallCommand();
+  const installCommand = getAptInstallCommand(false);
+  const executedCommand = getAptInstallCommand(true);
   if (result.platform !== "linux") {
     return {
       exitCode: 1,
@@ -1687,19 +1689,40 @@ async function setupHostCommand(args: SetupArgs): Promise<CommandResult> {
       stderr: "Automatic host dependency installation is supported only on Linux.",
     };
   }
-  if (args.printOnly || !args.yes) {
+  if (args.printOnly) {
     return {
-      exitCode: args.printOnly ? 0 : 1,
-      stdout: [
-        `Missing: ${result.missing.join(", ")}`,
-        `Install command: ${command}`,
-        args.yes ? "" : "Re-run with --yes to execute this command, or install manually.",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      exitCode: 0,
+      stdout: [`Missing: ${result.missing.join(", ")}`, `Install command: ${installCommand}`].join(
+        "\n",
+      ),
       stderr: "",
     };
   }
+
+  if (!args.yes) {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      const confirmed = await confirmYes(
+        `Missing: ${result.missing.join(", ")}\nRun ${executedCommand}? [Y/n] `,
+      );
+      if (confirmed) {
+        return runHostInstallCommand(executedCommand);
+      }
+    }
+    return {
+      exitCode: 1,
+      stdout: [
+        `Missing: ${result.missing.join(", ")}`,
+        `Install command: ${installCommand}`,
+        "Re-run with --yes to execute this command, or install manually.",
+      ].join("\n"),
+      stderr: "",
+    };
+  }
+
+  return runHostInstallCommand(executedCommand);
+}
+
+async function runHostInstallCommand(command: string): Promise<CommandResult> {
   const install = await runHostCommand("sudo", ["apt", "install", "-y", ...APT_PACKAGES]);
   return {
     exitCode: install.exitCode,
@@ -1708,10 +1731,20 @@ async function setupHostCommand(args: SetupArgs): Promise<CommandResult> {
   };
 }
 
+async function confirmYes(prompt: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(prompt)).trim().toLowerCase();
+    return answer === "" || answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
 const APT_PACKAGES = ["qemu-system-x86", "qemu-utils", "ovmf", "swtpm", "socat", "xorriso"];
 
-function getAptInstallCommand(): string {
-  return `sudo apt install ${APT_PACKAGES.join(" ")}`;
+function getAptInstallCommand(includeYes = false): string {
+  return `sudo apt install${includeYes ? " -y" : ""} ${APT_PACKAGES.join(" ")}`;
 }
 
 function runHostCommand(command: string, args: readonly string[]): Promise<CommandResult> {
@@ -1776,7 +1809,16 @@ async function setupJsonMcpCommand(options: {
     };
   }
 
-  const config = await readJsonObjectIfExists(options.configPath);
+  let config: JsonObject;
+  try {
+    config = await readJsonObjectIfExists(options.configPath);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Failed to read ${options.configPath}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   const currentMcp = config[options.mcpKey];
   const existing: JsonObject = isJsonObject(currentMcp) ? currentMcp : {};
   config[options.mcpKey] = { ...existing, crucible: entry };
@@ -1800,9 +1842,16 @@ async function readJsonObjectIfExists(filePath: string): Promise<JsonObject> {
   try {
     const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
     return isJsonObject(value) ? value : {};
-  } catch {
-    return {};
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {};
+    }
+    throw error;
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 async function writeJsonConfigWithBackup(
@@ -1812,14 +1861,25 @@ async function writeJsonConfigWithBackup(
   await mkdir(dirname(filePath), { recursive: true });
   let backupPath: string | undefined;
   if (await fileExists(filePath)) {
-    backupPath = `${filePath}.bak.${Date.now()}`;
-    await rename(filePath, backupPath);
+    backupPath = await nextBackupPath(filePath);
+    await copyFile(filePath, backupPath);
   }
   await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });
   return backupPath;
+}
+
+async function nextBackupPath(filePath: string): Promise<string> {
+  const stamp = Date.now();
+  for (let index = 0; index < 1000; index += 1) {
+    const candidate = `${filePath}.bak.${stamp}${index === 0 ? "" : `.${index}`}`;
+    if (!(await fileExists(candidate))) {
+      return candidate;
+    }
+  }
+  throw new Error(`Unable to allocate backup path for ${filePath}`);
 }
 
 function isJsonObject(value: unknown): value is JsonObject {

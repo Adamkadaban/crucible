@@ -358,6 +358,53 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("does not overwrite malformed opencode config", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    process.env.HOME = root;
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, "{not json", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Expected property name");
+      await expect(readFile(configPath, "utf8")).resolves.toBe("{not json");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("allocates unique opencode backup paths", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));
+    process.env.HOME = root;
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, JSON.stringify({ mcp: {} }), "utf8");
+    vi.spyOn(Date, "now").mockReturnValue(12345);
+    await writeFile(`${configPath}.bak.12345`, "placeholder", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(`Backup: ${configPath}.bak.12345.1`);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
   it("prints claude setup command without writing", async () => {
     const result = await runCrucibleCli(["setup", "claude", "--print"], defaultRuntime);
 
