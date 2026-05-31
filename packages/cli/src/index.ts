@@ -1597,7 +1597,16 @@ function renderMediaPlan(args: MediaPlanArgs, config: CrucibleConfig): string {
   ];
 
   if (args.includeManualInstructions) {
-    lines.push("", getManualDownloadInstructions(plan.cacheDirectory, plan.manualDownloads));
+    lines.push(
+      "",
+      getManualDownloadInstructions(plan.cacheDirectory, plan.manualDownloads),
+      "",
+      "Optional tool archives:",
+      ...TOOL_ARCHIVES.map(
+        (archive) =>
+          `- ${archive.name}: ${archive.url} -> ${resolvePath(plan.cacheDirectory, archive.fileName)}`,
+      ),
+    );
   } else {
     lines.push(
       "",

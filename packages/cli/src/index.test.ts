@@ -47,6 +47,9 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Windows 11 Enterprise Evaluation page");
     expect(result.stdout).toContain("stable virtio-win ISO");
+    expect(result.stdout).toContain("Optional tool archives:");
+    expect(result.stdout).toContain("Procdump.zip");
+    expect(result.stdout).toContain("ProcessMonitor.zip");
     expect(result.stdout).not.toContain("Windows Server 2025 Evaluation page");
     expect(result.stdout).not.toContain("latest virtio-win ISO");
   });
@@ -227,6 +230,17 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("ProcDump: cached");
     expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => new Response(Buffer.from(`forced:${url}`), { status: 200 })),
+    );
+    const forced = await runCrucibleCli(["media:fetch-tools", "--force"], { config });
+    expect(forced.exitCode).toBe(0);
+    expect(forced.stdout).toContain("ProcDump: downloaded");
+    await expect(readFile(path.join(cacheDir, "Procdump.zip"), "utf8")).resolves.toContain(
+      "forced:",
+    );
   });
 
   it("rejects unknown media profile", async () => {
