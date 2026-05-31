@@ -437,6 +437,28 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("reports opencode config filesystem failures as command results", async () => {
+    const previousHome = process.env.HOME;
+    const root = await mkdtemp(path.join(tmpdir(), "crucible-home-file-"));
+    const homeFile = path.join(root, "not-a-directory");
+    await writeFile(homeFile, "x", "utf8");
+    process.env.HOME = homeFile;
+
+    try {
+      const result = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Failed to");
+      expect(result.stderr).toContain("opencode.json");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
   it("allocates unique opencode backup paths", async () => {
     const previousHome = process.env.HOME;
     const root = await mkdtemp(path.join(tmpdir(), "crucible-home-"));

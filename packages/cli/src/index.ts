@@ -1831,7 +1831,16 @@ async function setupJsonMcpCommand(options: {
   }
   const existing: JsonObject = currentMcp ?? {};
   config[options.mcpKey] = { ...existing, crucible: entry };
-  const backupPath = await writeJsonConfigWithBackup(options.configPath, config);
+  let backupPath: string | undefined;
+  try {
+    backupPath = await writeJsonConfigWithBackup(options.configPath, config);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Failed to write ${options.configPath}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   const lines = [`Updated ${options.targetName} config: ${options.configPath}`];
   if (backupPath !== undefined) {
     lines.push(`Backup: ${backupPath}`);
