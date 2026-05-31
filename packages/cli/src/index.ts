@@ -44,6 +44,7 @@ import {
   type GuestHealthReport,
   type ProvisioningCommandResult,
   type ProvisioningExecutor,
+  PROVISIONING_STAGE_IDS,
   type ProvisioningStageContract,
   type SnapshotCreateResult,
   type SnapshotRecord,
@@ -118,7 +119,7 @@ type ProvisionProgressReporter = {
   readonly start: () => void;
   readonly stageStarted: (stage: ProvisioningStageContract) => void;
   readonly stageCompleted: (stage: ProvisioningStageContract) => void;
-  readonly finish: (status: "complete" | "failed") => void;
+  readonly finish: (status: "complete" | "blocked" | "failed") => void;
 };
 
 type CliLifecycleManager = Pick<
@@ -535,7 +536,7 @@ async function runProvisionCommand(
         }
       },
     });
-    progress.finish(result.status === "complete" ? "complete" : "failed");
+    progress.finish(result.status);
 
     return {
       exitCode: result.status === "complete" ? 0 : 1,
@@ -692,20 +693,22 @@ async function tryKillLifecycle(manager: CliLifecycleManager): Promise<void> {
 }
 
 function createProvisionProgressReporter(): ProvisionProgressReporter {
-  if (process.stderr.isTTY !== true) {
+  if (process.stderr.isTTY !== true || process.stdout.isTTY !== true) {
     return noopProvisionProgressReporter;
   }
   const startedAt = Date.now();
   let completed = 0;
-  const total = 10;
+  const total = PROVISIONING_STAGE_IDS.length;
   let current = "starting";
   const render = () => {
     const elapsed = formatDuration(Date.now() - startedAt);
     const width = 24;
     const filled = Math.round((completed / total) * width);
     const bar = `${"#".repeat(filled)}${"-".repeat(width - filled)}`;
+    process.stderr.clearLine(0);
+    process.stderr.cursorTo(0);
     process.stderr.write(
-      `\r[${bar}] ${completed}/${total} ${current} elapsed ${elapsed} ETA unknown`,
+      `[${bar}] ${completed}/${total} ${current} elapsed ${elapsed} ETA unknown`,
     );
   };
   return {
@@ -722,7 +725,7 @@ function createProvisionProgressReporter(): ProvisionProgressReporter {
       render();
     },
     finish(status) {
-      current = status === "complete" ? "complete" : "failed";
+      current = status;
       if (status === "complete") completed = total;
       render();
       process.stderr.write("\n");
