@@ -243,3 +243,4 @@ export type {
 } from "./snapshot.js";
 
 export { CRUCIBLE_VERSION } from "./version.js";
+export { buildKdStatusCommand, buildKdToggleCommand } from "./kernel-debug.js";

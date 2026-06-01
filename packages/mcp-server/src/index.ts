@@ -11,8 +11,6 @@ import {
   CRUCIBLE_VERSION,
   CrucibleError,
   DebuggerSessionManager,
-  buildKdStatusCommand,
-  buildKdToggleCommand,
   buildNetworkModeChangePlan,
   buildNetworkPlan,
   buildNetworkRuntimeStatus,
