@@ -72,6 +72,7 @@ describe("crucible MCP tools", () => {
       "dump_process",
       "process_monitor_start",
       "process_monitor_stop",
+      "process_monitor_status",
       "memory_scan",
       "memory_dump_region",
       "debug_close",
@@ -2495,6 +2496,42 @@ describe("crucible MCP tools", () => {
     expect(payload.error.message).toContain("ProcMon not found");
   });
 
+  it("process_monitor_start returns structured result", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () =>
+        Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(
+            JSON.stringify({
+              monitorId: "mon-abc",
+              outputGuestPath: "C:\\mon.pml",
+              tool: "Procmon64.exe",
+            }),
+          ).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+
+    const result = (await client.callTool({
+      name: "process_monitor_start",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; result: { monitorId: string } }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.monitorId).toBe("mon-abc");
+  });
+
   it("snapshot_list returns empty list", async () => {
     const client = await harness({
       snapshotAdapter: {
@@ -2509,5 +2546,105 @@ describe("crucible MCP tools", () => {
     const payload = parseFirstTextPayload<{ ok: boolean; result: unknown[] }>(result);
     expect(payload.ok).toBe(true);
     expect(payload.result).toEqual([]);
+  });
+
+  it("process_monitor_status reports not running", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () =>
+        Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(JSON.stringify({ running: false })).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+    const result = (await client.callTool({
+      name: "process_monitor_status",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { running: boolean };
+    }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.running).toBe(false);
+  });
+
+  it("process_monitor_status reports running with pid", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () =>
+        Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(
+            JSON.stringify({ running: true, processName: "Procmon64", pid: 1234 }),
+          ).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+    const result = (await client.callTool({
+      name: "process_monitor_status",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { running: boolean; processName: string; pid: number };
+    }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.running).toBe(true);
+    expect(payload.result.pid).toBe(1234);
+  });
+
+  it("process_monitor_stop passes targetPid to stop script", async () => {
+    let capturedArgs: string[] = [];
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: (opts: { arguments?: string[] }) => {
+        capturedArgs = opts.arguments ?? [];
+        return Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: Buffer.from(
+            JSON.stringify({ monitorId: "mon-test", events: 0, summary: {} }),
+          ).toString("base64"),
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        });
+      },
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+    await client.callTool({
+      name: "process_monitor_stop",
+      arguments: { monitorId: "mon-test", targetPid: 1234 },
+    });
+    const commandArg = capturedArgs.join(" ");
+    expect(commandArg).toContain("$targetPid=1234");
   });
 });
