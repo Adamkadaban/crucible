@@ -1,7 +1,7 @@
 {
   "name": "@adamkadaban/crucible",
-  "version": "0.1.0-beta.3",
-  "description": "Source-install beta for controlling isolated Windows analysis VMs from Linux MCP agents.",
+  "version": "1.0.0",
+  "description": "Build, snapshot, and control isolated Windows analysis VMs from Linux MCP agents.",
   "author": "Adam Hassan",
   "license": "MIT",
   "type": "module",
