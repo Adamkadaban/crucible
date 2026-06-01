@@ -8,6 +8,8 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  buildKdStatusCommand,
+  buildKdToggleCommand,
   buildNetworkPlan,
   buildNetworkModeChangePlan,
   buildNetworkRuntimeStatus,
@@ -236,6 +238,12 @@ export async function runCrucibleCli(
       return runGuestHealthCommand(rest, runtime);
     case "guest:exec":
       return runGuestExecCommand(rest, runtime);
+    case "kd:status":
+      return runKdStatusCommand(rest, runtime);
+    case "kd:enable":
+      return runKdEnableCommand(rest, runtime);
+    case "kd:disable":
+      return runKdDisableCommand(rest, runtime);
     case "debug:smoke":
       return runDebugSmokeCommand(rest, runtime);
     case "scenario:malware-dry-run":
@@ -1113,6 +1121,129 @@ async function runGuestExecCommand(
       stdout: renderGuestExecResult(result),
       stderr: "",
     };
+  } finally {
+    await client.close();
+  }
+}
+
+async function runKdStatusCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown kd:status option: ${args[0]}` };
+  }
+  const config = getRuntimeConfig(runtime);
+  const f = runtime.guestClientFactory ?? buildDefaultGuestClientFactory(config);
+  if (f === undefined) {
+    return { exitCode: 1, stdout: "", stderr: "guest client is not configured" };
+  }
+  const client = await f();
+  try {
+    const r = await client.exec({
+      executable: "powershell.exe",
+      arguments: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        buildKdStatusCommand(),
+      ],
+      as: "admin",
+    });
+    const out = Buffer.from(r.stdoutBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    const err = Buffer.from(r.stderrBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    if (r.exitCode !== 0 || r.timedOut) {
+      return { exitCode: 1, stdout: "", stderr: err || out || `kd:status failed` };
+    }
+    return { exitCode: 0, stdout: `Kernel debug status:\n${out}`, stderr: "" };
+  } finally {
+    await client.close();
+  }
+}
+
+async function runKdEnableCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown kd:enable option: ${args[0]}` };
+  }
+  const config = getRuntimeConfig(runtime);
+  const f = runtime.guestClientFactory ?? buildDefaultGuestClientFactory(config);
+  if (f === undefined) {
+    return { exitCode: 1, stdout: "", stderr: "guest client is not configured" };
+  }
+  const client = await f();
+  try {
+    const r = await client.exec({
+      executable: "powershell.exe",
+      arguments: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        buildKdToggleCommand(true),
+      ],
+      as: "admin",
+    });
+    const out = Buffer.from(r.stdoutBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    const err = Buffer.from(r.stderrBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    if (r.exitCode !== 0 || r.timedOut) {
+      return { exitCode: 1, stdout: "", stderr: err || out || `kd:enable failed` };
+    }
+    return { exitCode: 0, stdout: `Kernel debugging enabled:\n${out}`, stderr: "" };
+  } finally {
+    await client.close();
+  }
+}
+
+async function runKdDisableCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown kd:disable option: ${args[0]}` };
+  }
+  const config = getRuntimeConfig(runtime);
+  const f = runtime.guestClientFactory ?? buildDefaultGuestClientFactory(config);
+  if (f === undefined) {
+    return { exitCode: 1, stdout: "", stderr: "guest client is not configured" };
+  }
+  const client = await f();
+  try {
+    const r = await client.exec({
+      executable: "powershell.exe",
+      arguments: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        buildKdToggleCommand(false),
+      ],
+      as: "admin",
+    });
+    const out = Buffer.from(r.stdoutBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    const err = Buffer.from(r.stderrBase64 ?? "", "base64")
+      .toString("utf8")
+      .trim();
+    if (r.exitCode !== 0 || r.timedOut) {
+      return { exitCode: 1, stdout: "", stderr: err || out || `kd:disable failed` };
+    }
+    return { exitCode: 0, stdout: `Kernel debugging disabled:\n${out}`, stderr: "" };
   } finally {
     await client.close();
   }
@@ -2678,6 +2809,9 @@ function getHelpText(): string {
     "  crucible guest:health",
     "  crucible guest:exec [--as service|standard|admin] <executable> [args...]",
     "  crucible debug:smoke --exe <guest-executable>",
+    "  crucible kd:status         Check kernel debugging BCD settings",
+    "  crucible kd:enable         Enable kernel debugging (serial, COM1, 115200)",
+    "  crucible kd:disable        Disable kernel debugging",
     "  crucible scenario:malware-dry-run",
     "  crucible package",
     "  crucible mcp         Start the MCP server (scaffolded)",
