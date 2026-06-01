@@ -807,3 +807,32 @@ describe("core bootstrap exports", () => {
     expect(plan.qemu.args.some((arg) => arg.startsWith("filter-dump"))).toBe(false);
   });
 });
+
+describe("rotation", () => {
+  it("rotateGuestServiceCertificatesPlan returns expected paths", async () => {
+    const { rotateGuestServiceCertificatesPlan } = await import("./rotation.js");
+    const result = rotateGuestServiceCertificatesPlan("test-vm", "/secrets");
+    expect(result.caCertificatePath).toContain("mtls");
+    expect(result.guestServerCertificatePath).toContain("mtls");
+    expect(result.guestServerPrivateKeyPath).toContain("mtls");
+  });
+
+  it("rotateLocalAccountCredentials writes secrets", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { rotateLocalAccountCredentials } = await import("./rotation.js");
+    const dir = await mkdtemp(join(tmpdir(), "crucible-rot-"));
+    try {
+      const result = await rotateLocalAccountCredentials({
+        vmName: "test-vm",
+        secretsDirectory: dir,
+        randomBytes: () => Buffer.from("0123456789abcdef0123456789abcdef"),
+      });
+      expect(result.accounts.length).toBeGreaterThan(0);
+      expect(result.rootDirectory).toContain("test-vm");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

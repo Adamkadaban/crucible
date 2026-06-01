@@ -2685,4 +2685,96 @@ describe("crucible MCP tools", () => {
     const commandArg = capturedArgs.join(" ");
     expect(commandArg).toContain("$targetPid=1234");
   });
+
+  it("vm_screenshot succeeds with custom outputPath", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running", pid: 1 }),
+        start: () => Promise.resolve({ state: "running", pid: 1 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        screenshot: (outputPath: string) =>
+          Promise.resolve({ path: outputPath, sizeBytes: 3072016 }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_screenshot",
+      arguments: { outputPath: "/tmp/test-capture.ppm" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { path: string; sizeBytes: number };
+    }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.path).toBe("/tmp/test-capture.ppm");
+    expect(payload.result.sizeBytes).toBe(3072016);
+  });
+
+  it("vm_screenshot returns error when screendump fails", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running", pid: 1 }),
+        start: () => Promise.resolve({ state: "running", pid: 1 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        screenshot: () => Promise.reject(new Error("QMP screendump failed")),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_screenshot",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(result);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.message).toContain("QMP screendump failed");
+  });
+
+  it("vm_screenshot uses default path when outputPath omitted", async () => {
+    let capturedPath = "";
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running", pid: 1 }),
+        start: () => Promise.resolve({ state: "running", pid: 1 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        screenshot: (outputPath: string) => {
+          capturedPath = outputPath;
+          return Promise.resolve({ path: outputPath, sizeBytes: 100 });
+        },
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_screenshot",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean }>(result);
+    expect(payload.ok).toBe(true);
+    expect(capturedPath).toContain("artifacts/screenshots/screenshot-");
+  });
+
+  it("process_monitor_status handles empty stdout", async () => {
+    const fakeClient = {
+      health: () => Promise.resolve({ status: "ok" }),
+      exec: () =>
+        Promise.resolve({
+          exitCode: 0,
+          stdoutBase64: "",
+          stderrBase64: "",
+          timedOut: false,
+          durationMs: 1,
+          truncated: false,
+        }),
+      uploadFile: () =>
+        Promise.resolve({ path: "C:\\stage\\foo", sizeBytes: 4, sha256: "deadbeef" }),
+      download: () => Promise.resolve(Buffer.from("downloaded")),
+      close: () => Promise.resolve(),
+    };
+    const client = await harness({
+      guestClientFactory: () => Promise.resolve(fakeClient as unknown as GuestAgentClient),
+    });
+    const result = (await client.callTool({
+      name: "process_monitor_status",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(result);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.message).toContain("no output");
+  });
 });

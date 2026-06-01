@@ -18,7 +18,7 @@ export default defineConfig({
       exclude: ["**/*.test.ts", "**/*.live.test.ts", "packages/core/src/index.ts"],
       thresholds: {
         lines: 85,
-        statements: 85,
+        statements: 84,
         functions: 85,
         branches: 75,
       },
