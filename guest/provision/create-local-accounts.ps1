@@ -114,6 +114,13 @@ Ensure-LocalAccount -Username $StandardUsername -Password $standardPassword -Adm
 Ensure-LocalAccount -Username $AdminUsername -Password $adminPassword -Administrator $true
 Grant-BatchLogonRight -Usernames @($StandardUsername, $AdminUsername)
 
+# Persist autologon beyond the initial LogonCount from Autounattend.xml so the
+# VM always boots to an interactive desktop after provisioning reboots.
+$winlogonPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+Set-ItemProperty -Path $winlogonPath -Name "AutoAdminLogon" -Value "1" -Type String -Force
+Set-ItemProperty -Path $winlogonPath -Name "DefaultUserName" -Value $AdminUsername -Type String -Force
+Set-ItemProperty -Path $winlogonPath -Name "DefaultPassword" -Value $adminPassword -Type String -Force
+
 [PSCustomObject]@{
     standardAccount = $StandardUsername
     adminAccount = $AdminUsername

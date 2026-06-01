@@ -734,7 +734,7 @@ function registerVmTools(
         });
       }
       try {
-        const outputPath = input.outputPath ?? `artifacts/screenshots/screenshot-${Date.now()}.ppm`;
+        const outputPath = input.outputPath ?? `artifacts/screenshots/screenshot-${Date.now()}.png`;
         const result = await vm.screenshot(outputPath);
         return toJsonContent({ ok: true, result, auditLogPath });
       } catch (error) {

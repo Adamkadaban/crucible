@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { copyFile, mkdir, readFile, rename, stat as fsStat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, stat as fsStat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -426,19 +426,25 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     },
     screenshot: async (outputPath: string) => {
       await mkdir(dirname(outputPath), { recursive: true });
+      const isPng = outputPath.endsWith(".png");
+      const ppmPath = isPng ? `${outputPath}.tmp.ppm` : outputPath;
       const qmp = new QmpClient({
         socketPath: config.qmp.socketPath,
         timeoutMs: config.qmp.timeoutMs,
       });
       try {
         await qmp.connect();
-        await qmp.execute(
-          "screendump",
-          { filename: outputPath },
-          { timeoutMs: config.qmp.timeoutMs },
-        );
+        await qmp.execute("screendump", { filename: ppmPath }, { timeoutMs: config.qmp.timeoutMs });
       } finally {
         qmp.close();
+      }
+      if (isPng) {
+        const { execFileSync } = await import("node:child_process");
+        try {
+          execFileSync("convert", [ppmPath, outputPath], { timeout: 10_000 });
+        } finally {
+          await rm(ppmPath, { force: true });
+        }
       }
       const fileInfo = await fsStat(outputPath);
       return { path: outputPath, sizeBytes: fileInfo.size };
