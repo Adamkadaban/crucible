@@ -250,6 +250,7 @@ export async function runCrucibleCli(
         const guestClientFactory = buildEnvGuestClientFactory();
         await runStdioMcpServer({
           config,
+          configPath: runtime.configPath ?? "crucible.config.json",
           guestClientFactory,
           vmAdapter: buildMcpVmAdapter(config),
           snapshotAdapter: buildMcpSnapshotAdapter(config),

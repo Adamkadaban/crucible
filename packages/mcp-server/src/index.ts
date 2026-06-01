@@ -66,7 +66,8 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   },
   {
     name: "network_set_mode",
-    description: "Plan a network mode change and report whether a VM restart is required.",
+    description:
+      "Change the network mode. Persists to config and reports whether a VM restart is required to apply.",
   },
   {
     name: "network_active_status",
@@ -403,6 +404,7 @@ export type RegisterCrucibleToolsOptions = {
   readonly debuggerManager?: DebuggerSessionManager;
   readonly auditLogPath?: string;
   readonly config?: CrucibleConfig;
+  readonly configPath?: string;
   readonly networkMode?: NetworkMode;
   readonly policy?: CruciblePolicy;
 };
@@ -458,6 +460,7 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
     options.config ?? defaultCrucibleConfig,
     options.networkMode ?? options.config?.network.mode ?? defaultCrucibleConfig.network.mode,
     auditLogPath,
+    options.configPath,
   );
   registerSnapshotTools(server, snapshotAdapter, auditLogPath);
   registerDebuggerTools(server, options.debuggerManager, guestClientFactory, auditLogPath);
@@ -750,9 +753,11 @@ function registerVmTools(
 function registerNetworkTools(
   server: McpServer,
   config: CrucibleConfig,
-  mode: NetworkMode,
+  initialMode: NetworkMode,
   auditLogPath: string | undefined,
+  configPath: string | undefined,
 ): void {
+  let mode = initialMode;
   const current = () =>
     buildNetworkPlan({
       config: { ...config.network, mode },
@@ -774,20 +779,48 @@ function registerNetworkTools(
   server.registerTool(
     "network_set_mode",
     {
-      title: "Plan network mode change",
+      title: "Change network mode",
       description:
-        "Plan a network mode switch and report whether the current QEMU backend requires restart.",
+        "Change the network mode. Persists to config and reports whether a VM restart is required to apply.",
       inputSchema: NetworkSetModeInput.shape,
     },
-    (input: NetworkSetModeInputType) => {
+    async (input: NetworkSetModeInputType) => {
       const requested = buildNetworkPlan({
         config: { ...config.network, mode: input.mode },
         vmName: config.vm.name,
         networkDevice: config.virtio.networkDevice,
       });
+      const plan = buildNetworkModeChangePlan({ current: current(), requested });
+
+      // Persist the mode change
+      if (input.mode !== mode) {
+        mode = input.mode;
+        if (configPath !== undefined) {
+          try {
+            let raw: Record<string, unknown> = {};
+            try {
+              raw = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+            } catch {
+              // file missing or invalid — start fresh
+            }
+            const network = (
+              typeof raw.network === "object" && raw.network !== null ? raw.network : {}
+            ) as Record<string, unknown>;
+            network.mode = input.mode;
+            raw.network = network;
+            await writeFile(configPath, JSON.stringify(raw, null, 2) + "\n", "utf8");
+          } catch (error) {
+            return toJsonContent({
+              ok: false,
+              error: toToolError(classifyError(error), error, auditLogPath),
+            });
+          }
+        }
+      }
+
       return toJsonContent({
         ok: true,
-        result: buildNetworkModeChangePlan({ current: current(), requested }),
+        result: { ...plan, applied: true, configPath },
         auditLogPath,
       });
     },
@@ -1744,6 +1777,7 @@ export async function runStdioMcpServer(
     | "debuggerManager"
     | "auditLogPath"
     | "config"
+    | "configPath"
     | "networkMode"
     | "policy"
   >,
@@ -1763,6 +1797,7 @@ export function createCrucibleMcpServer(
     | "debuggerManager"
     | "auditLogPath"
     | "config"
+    | "configPath"
     | "networkMode"
     | "policy"
   >,
