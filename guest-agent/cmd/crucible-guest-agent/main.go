@@ -44,6 +44,7 @@ func newRunCommand() *cobra.Command {
 		Use:   "run",
 		Short: "Run the guest agent in the foreground",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg.Version = version
 			return server.Run(cmd.Context(), cfg)
 		},
 	}
