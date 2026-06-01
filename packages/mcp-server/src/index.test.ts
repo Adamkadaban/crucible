@@ -52,6 +52,7 @@ describe("crucible MCP tools", () => {
       "vm_status",
       "vm_start",
       "vm_stop",
+      "vm_screenshot",
       "network_status",
       "network_set_mode",
       "network_active_status",
@@ -1748,6 +1749,43 @@ describe("crucible MCP tools", () => {
     const payload = parseFirstTextPayload<{ ok: boolean; result: { state: string } }>(result);
     expect(payload.ok).toBe(true);
     expect(payload.result.state).toBe("stopped");
+  });
+
+  it("vm_screenshot returns error when adapter has no screenshot", async () => {
+    const fakeVm = {
+      status: () => Promise.resolve({ state: "running" }),
+      start: () => Promise.resolve({ state: "running", pid: 1234 }),
+      stop: () => Promise.resolve({ state: "stopped" }),
+    };
+    const client = await harness({ vmAdapter: fakeVm });
+    const result = (await client.callTool({
+      name: "vm_screenshot",
+      arguments: {},
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string } }>(result);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("vm-offline");
+  });
+
+  it("vm_screenshot captures screenshot", async () => {
+    const fakeVm = {
+      status: () => Promise.resolve({ state: "running" }),
+      start: () => Promise.resolve({ state: "running", pid: 1234 }),
+      stop: () => Promise.resolve({ state: "stopped" }),
+      screenshot: (outputPath: string) => Promise.resolve({ path: outputPath, sizeBytes: 1234 }),
+    };
+    const client = await harness({ vmAdapter: fakeVm });
+    const result = (await client.callTool({
+      name: "vm_screenshot",
+      arguments: { outputPath: "test.ppm" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { path: string; sizeBytes: number };
+    }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.path).toBe("test.ppm");
+    expect(payload.result.sizeBytes).toBe(1234);
   });
 
   it("debug_open launches a debug session via guest agent", async () => {

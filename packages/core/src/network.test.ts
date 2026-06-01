@@ -43,9 +43,9 @@ describe("capture network mode", () => {
     const plan = planFor("capture");
     const captureRule = plan.firewall.rules.find((r) => r.intent === "capture-guest-traffic");
     expect(captureRule).toBeDefined();
-    // The nftables expression for capture-guest-traffic includes "counter accept"
+    // Find the capture firewall command by ruleId rather than description
     const applyCommands = plan.firewall.apply;
-    const captureCmd = applyCommands.find((c) => c.description.includes("Route guest traffic"));
+    const captureCmd = applyCommands.find((c) => c.ruleId === captureRule!.id);
     expect(captureCmd).toBeDefined();
     // The argv should contain counter and accept for nftables backend
     expect(captureCmd!.argv.some((a) => a === "counter")).toBe(true);
@@ -81,7 +81,7 @@ describe("capture network mode", () => {
   it("capture teardown includes tap interface deletion", () => {
     const plan = planFor("capture");
     const teardown = buildNetworkTeardownOutputModel({ plan });
-    const tapCmd = teardown.commands.find((c) => c.description.includes("tap interface"));
+    const tapCmd = teardown.commands.find((c) => c.resource.kind === "interface");
     expect(tapCmd).toBeDefined();
     // dry-run wraps with printf, so check the joined argv string
     expect(tapCmd!.argv.join(" ")).toContain("delete");

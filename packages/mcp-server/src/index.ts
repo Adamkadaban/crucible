@@ -57,6 +57,10 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     description: "Stop the configured Crucible VM through the injected lifecycle manager.",
   },
   {
+    name: "vm_screenshot",
+    description: "Capture a screenshot of the VM display via QMP screendump.",
+  },
+  {
     name: "network_status",
     description: "Report configured VM network mode and live-switch capability.",
   },
@@ -219,6 +223,12 @@ const GuestHealthInput = z.object({}).strict();
 const VmStatusInput = z.object({}).strict();
 const VmStartInput = z.object({}).strict();
 const VmStopInput = z.object({}).strict();
+const VmScreenshotInput = z
+  .object({
+    outputPath: z.string().min(1).optional(),
+  })
+  .strict();
+type VmScreenshotInputType = z.infer<typeof VmScreenshotInput>;
 const NetworkStatusInput = z.object({}).strict();
 const NetworkSetModeInput = z.object({ mode: z.enum(["isolated", "nat", "capture"]) }).strict();
 type NetworkSetModeInputType = z.infer<typeof NetworkSetModeInput>;
@@ -376,6 +386,7 @@ export type CrucibleVmAdapter = {
   readonly status: () => Promise<VmLifecycleSnapshot>;
   readonly start: () => Promise<VmLifecycleSnapshot>;
   readonly stop: () => Promise<VmLifecycleSnapshot>;
+  readonly screenshot?: (outputPath: string) => Promise<{ path: string; sizeBytes: number }>;
 };
 
 export type CrucibleSnapshotAdapter = {
@@ -702,6 +713,37 @@ function registerVmTools(
       inputSchema: VmStopInput.shape,
     },
     () => wrap(() => vm!.stop()),
+  );
+  server.registerTool(
+    "vm_screenshot",
+    {
+      title: "Capture VM screenshot",
+      description:
+        "Capture a screenshot of the VM display via QMP screendump. Returns the path and size of the saved image.",
+      inputSchema: VmScreenshotInput.shape,
+    },
+    async (input: VmScreenshotInputType) => {
+      if (vm === undefined || vm.screenshot === undefined) {
+        return toJsonContent({
+          ok: false,
+          error: {
+            kind: "vm-offline" as const,
+            message: "VM adapter does not support screenshots",
+            auditLogPath,
+          },
+        });
+      }
+      try {
+        const outputPath = input.outputPath ?? `artifacts/screenshots/screenshot-${Date.now()}.ppm`;
+        const result = await vm.screenshot(outputPath);
+        return toJsonContent({ ok: true, result, auditLogPath });
+      } catch (error) {
+        return toJsonContent({
+          ok: false,
+          error: toToolError(classifyError(error), error, auditLogPath),
+        });
+      }
+    },
   );
 }
 
@@ -1442,6 +1484,9 @@ function registerMonitorTools(
           throw new Error(
             stderr || stdout || `ProcMon status check failed with exit ${result.exitCode}`,
           );
+        }
+        if (stdout === "") {
+          throw new Error("ProcMon status check produced no output");
         }
         return toJsonContent({ ok: true, result: JSON.parse(stdout) as unknown, auditLogPath });
       } catch (error) {
