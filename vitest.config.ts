@@ -15,7 +15,7 @@ export default defineConfig({
       reporter: ["text", "json-summary"],
       reportsDirectory: "coverage",
       include: ["packages/{cli,core,mcp-server}/src/**/*.ts"],
-      exclude: ["**/*.test.ts", "**/*.live.test.ts"],
+      exclude: ["**/*.test.ts", "**/*.live.test.ts", "packages/core/src/index.ts"],
       thresholds: {
         lines: 85,
         statements: 85,
