@@ -11,8 +11,8 @@
   <img alt="made with vibes" src="https://img.shields.io/badge/made_with-vibes-ff69b4">
 </p>
 
-Crucible is a source-install beta for running a Windows analysis VM on QEMU/KVM, installing debugger
-tooling and a small mTLS guest agent, and exposing VM control through both a CLI and MCP server.
+Crucible provisions a Windows analysis VM on QEMU/KVM, installs debugger tooling and a small mTLS
+guest agent, and exposes VM control through both a CLI and MCP server.
 
 Use it for local malware-analysis and Windows debugging workflows where you control the host. Do not
 treat it as a hard containment boundary against VM escapes or host-kernel bugs.

@@ -57,6 +57,7 @@ import {
   type VmStatus,
   type VmStopResult,
   VmLifecycleManager,
+  QmpClient,
 } from "@crucible/core";
 import { spawn } from "node:child_process";
 import {
@@ -422,6 +423,25 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     stop: async () => {
       await manager.stop();
       return render();
+    },
+    screenshot: async (outputPath: string) => {
+      await mkdir(dirname(outputPath), { recursive: true });
+      const qmp = new QmpClient({
+        socketPath: config.qmp.socketPath,
+        timeoutMs: config.qmp.timeoutMs,
+      });
+      try {
+        await qmp.connect();
+        await qmp.execute(
+          "screendump",
+          { filename: outputPath },
+          { timeoutMs: config.qmp.timeoutMs },
+        );
+      } finally {
+        qmp.close();
+      }
+      const fileInfo = await fsStat(outputPath);
+      return { path: outputPath, sizeBytes: fileInfo.size };
     },
   };
 }
