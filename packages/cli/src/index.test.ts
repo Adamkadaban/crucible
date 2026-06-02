@@ -1836,6 +1836,22 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("--viewer must be remote-viewer or vncviewer");
   });
 
+  it("reports missing vm view viewer executables", async () => {
+    const emptyPath = await createTempDir("crucible-empty-path-");
+    vi.stubEnv("PATH", emptyPath);
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ENOENT");
+  });
+
   it("rejects non-loopback vm view hosts", async () => {
     const result = await runCrucibleCli(["vm", "view", "--host", "0.0.0.0"], defaultRuntime);
 

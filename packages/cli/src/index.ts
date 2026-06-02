@@ -517,6 +517,21 @@ async function launchVmViewer(
 
   try {
     const child = spawn(executable, args, { detached: true, stdio: "ignore" });
+    const launched = await new Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>(
+      (resolve) => {
+        const timer = setTimeout(() => resolve({ ok: true }), 250);
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          resolve({ ok: false, error: error.message });
+        });
+        child.once("spawn", () => {
+          setTimeout(() => resolve({ ok: true }), 0);
+        });
+      },
+    );
+    if (!launched.ok) {
+      return launched;
+    }
     child.unref();
     return { ok: true };
   } catch (error) {
@@ -2707,7 +2722,7 @@ function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
         return { ok: false, message: "Missing value for --host" };
       }
       if (value !== "127.0.0.1" && value !== "localhost") {
-        return { ok: false, message: "vm view only supports loopback hosts by default" };
+        return { ok: false, message: "vm view only supports loopback hosts" };
       }
       host = value;
       index += 1;
