@@ -127,10 +127,11 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("suggests close command matches", async () => {
-    const result = await runCrucibleCli(["vm", "stats"], defaultRuntime);
+    const result = await runCrucibleCli(["vm", "stats", "--bad"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown command: vm stats");
+    expect(result.stderr).not.toContain("Unknown command: vm stats --bad");
     expect(result.stderr).toContain("Did you mean: crucible vm status?");
   });
 

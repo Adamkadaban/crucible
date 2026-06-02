@@ -3171,9 +3171,11 @@ function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
     if (command !== undefined) {
       return { kind: "command", command: command.canonical, rest: args.slice(2) };
     }
+
+    return { kind: "unknown", command: [args[0], args[1]].filter(Boolean).join(" ") };
   }
 
-  return { kind: "unknown", command: args.join(" ") };
+  return { kind: "unknown", command: args[0] ?? "" };
 }
 
 function getHelpForTokens(tokens: readonly string[]): string {
