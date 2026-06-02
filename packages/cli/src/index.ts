@@ -2910,7 +2910,9 @@ const COMMANDS: readonly CommandDefinition[] = [
 ];
 
 function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
-  const helpIndex = args.findIndex((arg) => arg === "--help" || arg === "-h");
+  const separatorIndex = args.indexOf("--");
+  const commandArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+  const helpIndex = commandArgs.findIndex((arg) => arg === "--help" || arg === "-h");
   if (args.length === 0 || helpIndex === 0) {
     return { kind: "help", text: getHelpText() };
   }
@@ -3049,9 +3051,9 @@ function levenshteinDistance(left: string, right: string): number {
     for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
       const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
       current[rightIndex] = Math.min(
-        current[rightIndex - 1] + 1,
-        previous[rightIndex] + 1,
-        previous[rightIndex - 1] + cost,
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + cost,
       );
     }
     previous.splice(0, previous.length, ...current);

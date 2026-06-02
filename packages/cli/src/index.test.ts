@@ -81,6 +81,33 @@ describe("crucible CLI bootstrap", () => {
     expect(guestExec.stdout).toContain("fake-output");
   });
 
+  it("passes guest command help flags after the argument separator", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[] }> = [];
+    const result = await runCrucibleCli(["guest", "exec", "--", "whoami.exe", "--help"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          ...fakeGuestClient(),
+          exec: (request: { executable: string; arguments?: readonly string[] }) => {
+            requests.push(request);
+            return Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: Buffer.from("guest-help").toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 5,
+              truncated: false,
+            });
+          },
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("guest-help");
+    expect(result.stdout).not.toContain("Command groups:");
+    expect(requests[0]).toMatchObject({ executable: "whoami.exe", arguments: ["--help"] });
+  });
+
   it("prints mcp banner without starting stdio transport", async () => {
     const result = await runCrucibleCli(["mcp"], defaultRuntime);
 
