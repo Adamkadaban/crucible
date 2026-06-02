@@ -393,6 +393,13 @@ describe("provisioning contracts", () => {
       config,
       lifecycleManager: {
         start: () => Promise.resolve({ pid: 1234, status: fakeVmStatus(config, true) }),
+        stop: () =>
+          Promise.resolve({
+            status: fakeVmStatus(config, false),
+            mode: "stop",
+            qmpCommandSent: false,
+            killedAfterTimeout: false,
+          }),
         status: () => Promise.resolve(fakeVmStatus(config, true)),
       },
       executor: {
@@ -445,6 +452,13 @@ describe("provisioning contracts", () => {
       config,
       lifecycleManager: {
         start: () => Promise.resolve({ pid: 1234, status: fakeVmStatus(config, false) }),
+        stop: () =>
+          Promise.resolve({
+            status: fakeVmStatus(config, false),
+            mode: "stop",
+            qmpCommandSent: false,
+            killedAfterTimeout: false,
+          }),
         status: () => Promise.resolve(fakeVmStatus(config, false)),
       },
       snapshotManager: {

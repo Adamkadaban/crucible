@@ -194,7 +194,7 @@ export type ProvisioningExecutor = {
 
 export type ProvisioningCommandRunnerOptions = {
   readonly config?: CrucibleConfig;
-  readonly lifecycleManager: Pick<VmLifecycleManager, "start" | "status">;
+  readonly lifecycleManager: Pick<VmLifecycleManager, "start" | "stop" | "status">;
   readonly executor?: ProvisioningExecutor;
   readonly snapshotManager: {
     readonly create: (snapshotName: string) => Promise<SnapshotCreateResult>;
@@ -381,7 +381,9 @@ export async function runProvisioningCommand(
     await options.afterStage?.(stage, step);
   }
 
+  await options.lifecycleManager.stop();
   const snapshot = await options.snapshotManager.create(snapshotName);
+  await options.lifecycleManager.start();
   steps.push({
     id: "snapshot-created",
     title: "Clean snapshot created",
