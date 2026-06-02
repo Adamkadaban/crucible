@@ -1923,6 +1923,13 @@ describe("crucible MCP tools", () => {
     })) as ToolCallText & { isError?: boolean };
     expect(separatorsOnly.isError).toBe(true);
     expect(separatorsOnly.content[0]?.text).toContain("Invalid");
+
+    const trailingSeparator = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "ctrl-" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(trailingSeparator.isError).toBe(true);
+    expect(trailingSeparator.content[0]?.text).toContain("Invalid");
   });
 
   it("reports unsupported VM display input tools", async () => {

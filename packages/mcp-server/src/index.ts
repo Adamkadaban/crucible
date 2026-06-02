@@ -263,7 +263,7 @@ const VmMouseDragInput = z
   })
   .strict();
 type VmMouseDragInputType = z.infer<typeof VmMouseDragInput>;
-const VmKeyPressInput = z.object({ key: z.string().regex(/^(?=.*[a-z0-9_])[a-z0-9_+-]+$/i).min(1).max(64) }).strict();
+const VmKeyPressInput = z.object({ key: z.string().regex(/^[a-z0-9_]+([+-][a-z0-9_]+)*$/i).min(1).max(64) }).strict();
 type VmKeyPressInputType = z.infer<typeof VmKeyPressInput>;
 const VmTypeTextInput = z
   .object({ text: z.string().min(1).max(4096), delayMs: z.number().int().min(0).max(5000).optional() })
@@ -949,7 +949,7 @@ function registerVmTools(
     "vm_type_text",
     {
       title: "Type VM text",
-      description: "Type literal text into the VM display with an optional per-character delay.",
+      description: "Type supported literal text into the VM display with an optional per-character delay.",
       inputSchema: VmTypeTextInput.shape,
     },
     (input: VmTypeTextInputType) => {
