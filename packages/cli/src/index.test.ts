@@ -1859,6 +1859,25 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("ENOENT");
   });
 
+  it("reports vm view injected viewer runner failures", async () => {
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+      processRunner: {
+        run() {
+          return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("spawn remote-viewer ENOENT");
+  });
+
   it("rejects non-loopback vm view hosts", async () => {
     const result = await runCrucibleCli(["vm", "view", "--host", "0.0.0.0"], defaultRuntime);
 
