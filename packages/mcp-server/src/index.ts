@@ -62,9 +62,9 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   },
   { name: "vm_display_info", description: "Report VM display/input automation availability." },
   { name: "vm_mouse_move", description: "Move the VM mouse pointer to normalized QMP coordinates (0..0x7fff)." },
-  { name: "vm_mouse_click", description: "Click a VM mouse button at optional normalized QMP coordinates." },
-  { name: "vm_mouse_double_click", description: "Double-click a VM mouse button at optional normalized QMP coordinates." },
-  { name: "vm_mouse_drag", description: "Drag the VM mouse pointer between normalized QMP coordinates." },
+  { name: "vm_mouse_click", description: "Click a VM mouse button at optional normalized QMP coordinates (0..0x7fff)." },
+  { name: "vm_mouse_double_click", description: "Double-click a VM mouse button at optional normalized QMP coordinates (0..0x7fff)." },
+  { name: "vm_mouse_drag", description: "Drag the VM mouse pointer between normalized QMP coordinates (0..0x7fff)." },
   { name: "vm_key_press", description: "Send a QEMU sendkey name or chord to the VM display." },
   { name: "vm_type_text", description: "Type supported literal text into the VM display." },
   {
