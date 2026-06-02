@@ -3126,7 +3126,9 @@ const COMMANDS: readonly CommandDefinition[] = [
 ];
 
 function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
-  const helpIndex = args.findIndex((arg) => arg === "--help" || arg === "-h");
+  const separatorIndex = args.indexOf("--");
+  const commandArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+  const helpIndex = commandArgs.findIndex((arg) => arg === "--help" || arg === "-h");
   if (args.length === 0 || helpIndex === 0) {
     return { kind: "help", text: getHelpText() };
   }
