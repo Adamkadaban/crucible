@@ -112,6 +112,36 @@
         }
       }
     },
+    "realism": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional seeded persona/camouflage profile for making provisioned guests look less like default sandboxes. Does not make QEMU/KVM undetectable.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "seed": { "type": "string", "minLength": 1 },
+        "profile": {
+          "type": "string",
+          "enum": ["minimal", "office-user", "developer", "student", "home-user"],
+          "default": "office-user"
+        },
+        "hostname": { "type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?$" },
+        "adminUsername": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,19}$" },
+        "userUsername": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,19}$" },
+        "fullName": { "type": "string", "minLength": 1 },
+        "locale": { "type": "string", "minLength": 1 },
+        "timezone": { "type": "string", "minLength": 1 },
+        "keyboardLayout": { "type": "string", "minLength": 1 },
+        "screenResolution": {
+          "type": "string",
+          "pattern": "^\\d{3,5}x\\d{3,5}$",
+          "description": "Persona metadata only; display settings are not applied in the guest yet."
+        },
+        "installCommonSoftware": { "type": "boolean", "default": false },
+        "populateUserFiles": { "type": "boolean", "default": true },
+        "simulateUserHistory": { "type": "boolean", "default": false },
+        "randomizeInstallTimes": { "type": "boolean", "default": true }
+      }
+    },
     "qmp": {
       "type": "object",
       "additionalProperties": false,
