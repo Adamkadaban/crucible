@@ -19,6 +19,8 @@ import {
   DebuggerSessionManager,
   describeCommand,
   FIREWALL_BACKENDS,
+  getCrucibleConfigPath,
+  getDefaultCrucibleConfigPath,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
   NETWORK_MODES,
@@ -250,7 +252,7 @@ export async function runCrucibleCli(
         const guestClientFactory = buildEnvGuestClientFactory();
         await runStdioMcpServer({
           config,
-          configPath: runtime.configPath ?? "crucible.config.json",
+          configPath: getCrucibleConfigPath(runtime.configPath),
           guestClientFactory,
           vmAdapter: buildMcpVmAdapter(config),
           snapshotAdapter: buildMcpSnapshotAdapter(config),
@@ -2562,7 +2564,7 @@ function parseFetchToolsArgs(args: readonly string[]): FetchToolsArgsResult {
 }
 
 function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
-  let outputPath = "crucible.config.json";
+  let outputPath = getDefaultCrucibleConfigPath();
   let force = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -2696,7 +2698,7 @@ function getHelpText(): string {
     "crucible",
     "",
     "Usage:",
-    "  crucible config:init [--output crucible.config.json] [--force]",
+    "  crucible config:init [--output ~/.config/crucible/config.json] [--force]",
     "  crucible doctor",
     "  crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]",
     "  crucible provision   Provision a Windows analysis VM",
