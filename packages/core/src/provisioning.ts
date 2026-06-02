@@ -865,8 +865,8 @@ async function writeRealismPersonaManifest(
         kind: "persona",
         name: "realism persona",
         path: personaPath,
-        createdAt: persona.decoyFiles[0]?.lastWriteTimeUtc ?? new Date(0).toISOString(),
-        metadata: persona,
+        createdAt: new Date().toISOString(),
+        metadata: redactRealismPersonaForManifest(persona),
       }),
       null,
       2,
@@ -881,6 +881,17 @@ async function writeRealismPersonaFile(filePath: string, persona: RealismPersona
     mode: 0o600,
   });
   await chmod(filePath, 0o600);
+}
+
+function redactRealismPersonaForManifest(persona: RealismPersona): Record<string, unknown> {
+  return {
+    ...persona,
+    decoyFiles: persona.decoyFiles.map((file) => ({
+      relativePath: file.relativePath,
+      lastWriteTimeUtc: file.lastWriteTimeUtc,
+      category: file.category,
+    })),
+  };
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
@@ -908,15 +919,19 @@ async function ensureWindowsAccountSecrets(options: {
   ]);
   let shouldWriteAccounts = !standardExists || !adminExists;
   if (!shouldWriteAccounts) {
-    const [standardRaw, adminRaw] = await Promise.all([
-      readFile(standardRef.path, "utf8"),
-      readFile(adminRef.path, "utf8"),
-    ]);
-    const standard = JSON.parse(standardRaw) as WindowsAccountSecret;
-    const admin = JSON.parse(adminRaw) as WindowsAccountSecret;
-    shouldWriteAccounts =
-      (options.standardUsername !== undefined && standard.username !== options.standardUsername) ||
-      (options.adminUsername !== undefined && admin.username !== options.adminUsername);
+    try {
+      const [standardRaw, adminRaw] = await Promise.all([
+        readFile(standardRef.path, "utf8"),
+        readFile(adminRef.path, "utf8"),
+      ]);
+      const standard = JSON.parse(standardRaw) as WindowsAccountSecret;
+      const admin = JSON.parse(adminRaw) as WindowsAccountSecret;
+      shouldWriteAccounts =
+        (options.standardUsername !== undefined && standard.username !== options.standardUsername) ||
+        (options.adminUsername !== undefined && admin.username !== options.adminUsername);
+    } catch {
+      shouldWriteAccounts = true;
+    }
   }
   if (shouldWriteAccounts) {
     await writeWindowsAccountSecrets({

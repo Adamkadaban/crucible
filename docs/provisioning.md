@@ -158,7 +158,9 @@ environment artifacts.
 When `realism.enabled` is true, Crucible generates or accepts explicit values for the hostname,
 standard/admin usernames, full name, locale, keyboard layout, timezone, screen resolution, and
 profile (`minimal`, `office-user`, `developer`, `student`, or `home-user`). The seed is recorded in
-the artifact manifest so analysts can reproduce the same persona later.
+the artifact manifest so analysts can reproduce the same persona later. `timezone` must be a Windows
+time zone ID such as `Pacific Standard Time` or `Eastern Standard Time`, not an IANA name such as
+`America/New_York`.
 
 Provisioning uses the persona in these places:
 

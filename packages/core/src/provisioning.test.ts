@@ -383,6 +383,61 @@ describe("provisioning contracts", () => {
     expect(mode).toBe(0o600);
   });
 
+  it("regenerates corrupted Windows account secret files during first-boot preparation", async () => {
+    const root = await mkdtempPath("crucible-corrupt-secrets-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const secretsDirectory = join(root, "secrets");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      mkdir(join(secretsDirectory, "secret-vm", "windows"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(secretsDirectory, "secret-vm", "windows", "standard-user.json"), "{", "utf8"),
+      writeFile(join(secretsDirectory, "secret-vm", "windows", "admin-user.json"), "{", "utf8"),
+    ]);
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "secret-vm", diskGiB: 64 },
+        media: { windowsIso: { path: windowsIso }, virtioIso: { path: virtioIso } },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory,
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    await expect(
+      readFile(join(secretsDirectory, "secret-vm", "windows", "standard-user.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toMatchObject({ username: "CrucibleUser" });
+  });
+
   it("builds a deterministic guest certificate staging plan from host secrets", () => {
     const plan = buildGuestAgentCertificateStagePlan({
       vmName: "analysis one",
@@ -775,7 +830,11 @@ describe("provisioning contracts", () => {
       `/realism/persona.json=${join(root, "artifacts", "boot", "realism-persona.json")}`,
     );
     const manifest = JSON.parse(await readFile(join(root, "artifacts", "manifest.json"), "utf8")) as {
-      artifacts: { kind: string; name: string; metadata?: { hostname?: string } }[];
+      artifacts: {
+        kind: string;
+        name: string;
+        metadata?: { hostname?: string; decoyFiles?: { content?: string }[] };
+      }[];
     };
     expect(manifest.artifacts).toContainEqual(
       expect.objectContaining({
@@ -784,6 +843,8 @@ describe("provisioning contracts", () => {
         metadata: expect.objectContaining({ hostname: "DESKTOP-LAB42" }),
       }),
     );
+    const personaRecord = manifest.artifacts.find((artifact) => artifact.kind === "persona");
+    expect(personaRecord?.metadata?.decoyFiles?.some((file) => "content" in file)).toBe(false);
     expect(plan.realismPersona?.userUsername).toBe("devuser");
   });
 

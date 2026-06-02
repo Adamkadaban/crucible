@@ -144,7 +144,12 @@ function Install-DecoyUserFiles {
     New-Item -ItemType Directory -Force -Path $profileRoot | Out-Null
     foreach ($file in @($persona.decoyFiles)) {
         $relativePath = [string]$file.relativePath
-        if ([string]::IsNullOrWhiteSpace($relativePath) -or $relativePath.Contains("..")) {
+        if (
+            [string]::IsNullOrWhiteSpace($relativePath) -or
+            $relativePath.Contains("..") -or
+            [System.IO.Path]::IsPathRooted($relativePath) -or
+            $relativePath.Contains(":")
+        ) {
             continue
         }
 
