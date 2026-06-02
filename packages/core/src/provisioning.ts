@@ -963,7 +963,7 @@ function buildAutounattendXml(
       {},
     );
   }
-  const computerName = (realismPersona?.hostname ?? config.vm.name).slice(0, 15);
+  const computerName = windowsComputerName(realismPersona?.hostname ?? config.vm.name);
   const locale = realismPersona?.locale ?? "en-US";
   const keyboardLayout = realismPersona?.keyboardLayout ?? locale;
   const timezone = realismPersona?.timezone ?? "UTC";
@@ -1154,6 +1154,17 @@ function buildWinPeInstallScript(config: CrucibleConfig): string {
     "wpeutil reboot",
     `rem virtio profile ${osFolder}`,
   ].join("\r\n");
+}
+
+function windowsComputerName(value: string): string {
+  const sanitized = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 15)
+    .replace(/-+$/, "");
+  return sanitized.length > 0 ? sanitized : "CRUCIBLE-VM";
 }
 
 function buildSetupCompleteScript(): string {

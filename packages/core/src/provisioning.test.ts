@@ -848,6 +848,52 @@ describe("provisioning contracts", () => {
     expect(plan.realismPersona?.userUsername).toBe("devuser");
   });
 
+  it("sanitizes VM names before writing Autounattend computer names", async () => {
+    const root = await mkdtempPath("crucible-computer-name-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+    ]);
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "analysis one-", diskGiB: 64 },
+        media: { windowsIso: { path: windowsIso }, virtioIso: { path: virtioIso } },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    const autounattend = await readFile(join(root, "artifacts", "boot", "Autounattend.xml"), "utf8");
+    expect(autounattend).toContain("<ComputerName>ANALYSIS-ONE</ComputerName>");
+  });
+
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
     const root = await mkdtempPath("crucible-first-boot-existing-");
     const windowsIso = join(root, "windows.iso");
