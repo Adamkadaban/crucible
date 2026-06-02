@@ -139,14 +139,16 @@ export function getDefaultCrucibleConfigPath(): string {
   return path.join(homedir(), ".config", "crucible", "config.json");
 }
 
+export function getCrucibleConfigPath(filePath?: string): string {
+  return path.resolve(filePath ?? process.env.CRUCIBLE_CONFIG ?? getDefaultCrucibleConfigPath());
+}
+
 export function parseCrucibleConfig(input: unknown): CrucibleConfig {
   return crucibleConfigSchema.parse(input);
 }
 
 export function loadCrucibleConfigFile(filePath?: string): CrucibleConfig {
-  const resolvedPath = path.resolve(
-    filePath ?? process.env.CRUCIBLE_CONFIG ?? getDefaultCrucibleConfigPath(),
-  );
+  const resolvedPath = getCrucibleConfigPath(filePath);
   const baseDirectory = path.dirname(resolvedPath);
   try {
     return resolveCrucibleConfigPaths(

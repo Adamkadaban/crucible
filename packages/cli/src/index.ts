@@ -19,6 +19,7 @@ import {
   DebuggerSessionManager,
   describeCommand,
   FIREWALL_BACKENDS,
+  getCrucibleConfigPath,
   getDefaultCrucibleConfigPath,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
@@ -251,7 +252,7 @@ export async function runCrucibleCli(
         const guestClientFactory = buildEnvGuestClientFactory();
         await runStdioMcpServer({
           config,
-          configPath: runtime.configPath ?? getDefaultCrucibleConfigPath(),
+          configPath: getCrucibleConfigPath(runtime.configPath),
           guestClientFactory,
           vmAdapter: buildMcpVmAdapter(config),
           snapshotAdapter: buildMcpSnapshotAdapter(config),

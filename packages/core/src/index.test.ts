@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +17,7 @@ import {
   DEFAULT_QMP_TIMEOUT_MS,
   defaultCrucibleConfig,
   describeCommand,
+  getCrucibleConfigPath,
   getManualDownloadInstructions,
   loadCrucibleConfigFile,
   MANUAL_DOWNLOADS,
@@ -545,6 +547,36 @@ describe("core bootstrap exports", () => {
     expect(config.vm.display.vncSocketPath).toBe(resolve("artifacts/vnc.sock"));
     expect(config.artifacts.manifestPath).toBe(resolve("artifacts/manifest.json"));
     expect(config.qmp.socketPath).toBe(resolve("artifacts/qmp.sock"));
+  });
+
+  it("uses CRUCIBLE_CONFIG when no explicit config path is passed", () => {
+    const previous = process.env.CRUCIBLE_CONFIG;
+    const root = mkdtempSync(join(tmpdir(), "crucible-config-env-"));
+    const configPath = join(root, "nested", "config.json");
+    try {
+      mkdirSync(join(root, "nested"), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          vm: { name: "env-vm" },
+          artifacts: { manifestPath: "relative/manifest.json" },
+          qmp: { socketPath: "run/qmp.sock" },
+        }),
+        "utf8",
+      );
+      process.env.CRUCIBLE_CONFIG = configPath;
+
+      const config = loadCrucibleConfigFile();
+
+      expect(getCrucibleConfigPath()).toBe(configPath);
+      expect(config.vm.name).toBe("env-vm");
+      expect(config.artifacts.manifestPath).toBe(join(root, "nested", "relative", "manifest.json"));
+      expect(config.qmp.socketPath).toBe(join(root, "nested", "run", "qmp.sock"));
+    } finally {
+      if (previous === undefined) delete process.env.CRUCIBLE_CONFIG;
+      else process.env.CRUCIBLE_CONFIG = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("wraps invalid config file failures", () => {
