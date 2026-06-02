@@ -240,6 +240,35 @@ type UpdateArgsResult =
   | { readonly ok: false; readonly message: string };
 
 type JsonObject = { [key: string]: unknown };
+type QmpMouseButton = "left" | "middle" | "right";
+
+const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
+  " ": "spc",
+  "\n": "ret",
+  "\r": "ret",
+  "\t": "tab",
+  ".": "dot",
+  ",": "comma",
+  "/": "slash",
+  "\\": "backslash",
+  "-": "minus",
+  "=": "equal",
+  ";": "semicolon",
+  "'": "apostrophe",
+  "[": "bracket_left",
+  "]": "bracket_right",
+  "`": "grave_accent",
+  "0": "0",
+  "1": "1",
+  "2": "2",
+  "3": "3",
+  "4": "4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9": "9",
+};
 
 export async function runCrucibleCli(
   args: readonly string[],
@@ -577,6 +606,55 @@ function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
 
 function buildMcpVmAdapter(config: CrucibleConfig) {
   const manager = new VmLifecycleManager({ config });
+  const withQmp = async <T>(operation: (qmp: QmpClient) => Promise<T>) => {
+    const qmp = new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
+    try {
+      await qmp.connect();
+      return await operation(qmp);
+    } finally {
+      qmp.close();
+    }
+  };
+  const sendInput = (events: readonly Record<string, unknown>[]) =>
+    withQmp((qmp) =>
+      qmp.execute("input-send-event", { events }, { timeoutMs: config.qmp.timeoutMs }).then(
+        () => undefined,
+      ),
+    );
+  const sendMonitorCommand = (command: string) =>
+    withQmp((qmp) =>
+      qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs }),
+    );
+  const buttonName = (button: QmpMouseButton) => {
+    switch (button) {
+      case "left":
+        return "left";
+      case "middle":
+        return "middle";
+      case "right":
+        return "right";
+    }
+  };
+  const mouseMoveEvent = (x: number, y: number) => ({
+    type: "abs" as const,
+    data: { axis: "x", value: x },
+    // QMP absolute pointer coordinates are normalized 0..0x7fff.
+  });
+  const mouseAbsEvents = (x: number, y: number) => [
+    mouseMoveEvent(x, y),
+    { type: "abs" as const, data: { axis: "y", value: y } },
+  ];
+  const mouseButtonEvents = (button: QmpMouseButton) => [
+    { type: "btn" as const, data: { button: buttonName(button), down: true } },
+    { type: "btn" as const, data: { button: buttonName(button), down: false } },
+  ];
+  const toQemuKey = (key: string) => {
+    const mapped = QEMU_TEXT_KEY_MAP[key];
+    if (mapped !== undefined) return mapped;
+    if (/^[a-z]$/.test(key)) return key;
+    if (/^[A-Z]$/.test(key)) return `shift-${key.toLowerCase()}`;
+    throw new CrucibleError("CONFIG_INVALID", `unsupported key for VM text input: ${JSON.stringify(key)}`);
+  };
   const render = async () => {
     const status = await manager.status();
     return {
@@ -619,6 +697,62 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       }
       const fileInfo = await fsStat(outputPath);
       return { path: outputPath, sizeBytes: fileInfo.size };
+    },
+    displayInfo: async () => ({
+      available: true,
+      backend: "qmp-input-send-event",
+      inputAvailable: true,
+      message: "QMP input-send-event is available when the VM QMP socket is reachable.",
+    }),
+    mouseMove: async (x: number, y: number) => {
+      await sendInput(mouseAbsEvents(x, y));
+      return { action: "mouse_move", backend: "qmp-input-send-event", x, y };
+    },
+    mouseClick: async (input: {
+      readonly x?: number;
+      readonly y?: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y ?? 0);
+      await sendInput([...events, ...mouseButtonEvents(input.button)]);
+      return { action: "mouse_click", backend: "qmp-input-send-event", ...input };
+    },
+    mouseDoubleClick: async (input: {
+      readonly x?: number;
+      readonly y?: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y ?? 0);
+      await sendInput([...events, ...mouseButtonEvents(input.button), ...mouseButtonEvents(input.button)]);
+      return { action: "mouse_double_click", backend: "qmp-input-send-event", ...input };
+    },
+    mouseDrag: async (input: {
+      readonly fromX: number;
+      readonly fromY: number;
+      readonly toX: number;
+      readonly toY: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      await sendInput([
+        ...mouseAbsEvents(input.fromX, input.fromY),
+        { type: "btn", data: { button: buttonName(input.button), down: true } },
+        ...mouseAbsEvents(input.toX, input.toY),
+        { type: "btn", data: { button: buttonName(input.button), down: false } },
+      ]);
+      return { action: "mouse_drag", backend: "qmp-input-send-event", x: input.toX, y: input.toY, button: input.button };
+    },
+    keyPress: async (key: string) => {
+      await sendMonitorCommand(`sendkey ${key}`);
+      return { action: "key_press", backend: "qmp-input-send-event", key };
+    },
+    typeText: async (text: string, delayMs?: number) => {
+      for (const key of text) {
+        await sendMonitorCommand(`sendkey ${toQemuKey(key)}`);
+        if (delayMs !== undefined && delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      return { action: "type_text", backend: "qmp-input-send-event", textLength: text.length };
     },
   };
 }
