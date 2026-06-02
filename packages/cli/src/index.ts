@@ -503,12 +503,17 @@ async function launchVmViewer(
   const executable = viewerCommand[0] ?? "remote-viewer";
   const args = viewerCommand.slice(1);
   if (runner !== undefined) {
-    const result = await runner.run({
-      executable,
-      args,
-      timeoutMs: 10_000,
-      maxOutputBytes: 256 * 1024,
-    });
+    let result: ProcessResult;
+    try {
+      result = await runner.run({
+        executable,
+        args,
+        timeoutMs: 10_000,
+        maxOutputBytes: 256 * 1024,
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
     if (result.exitCode !== 0 || result.timedOut) {
       return { ok: false, error: result.stderr || "viewer command failed" };
     }
