@@ -1866,6 +1866,14 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("loopback");
   });
 
+  it("canonicalizes vm view localhost host to loopback address", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--dry-run", "--host", "localhost"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
+    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+  });
+
   it("reports vm view QMP failures without launching viewer", async () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view"], {

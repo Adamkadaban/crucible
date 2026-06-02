@@ -2725,7 +2725,7 @@ function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
       if (value !== "127.0.0.1" && value !== "localhost") {
         return { ok: false, message: "vm view only supports loopback hosts" };
       }
-      host = value;
+      host = "127.0.0.1";
       index += 1;
       continue;
     }
