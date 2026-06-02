@@ -869,7 +869,7 @@ function registerVmTools(
     "vm_mouse_move",
     {
       title: "Move VM mouse",
-      description: "Move the VM mouse pointer to absolute display coordinates.",
+      description: "Move the VM mouse pointer to QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseMoveInput.shape,
     },
     (input: VmMouseMoveInputType) => {
@@ -883,7 +883,7 @@ function registerVmTools(
     "vm_mouse_click",
     {
       title: "Click VM mouse",
-      description: "Click a mouse button at the current pointer or supplied absolute coordinates.",
+      description: "Click a mouse button at the current pointer or supplied QMP absolute coordinates.",
       inputSchema: VmMouseClickInput.shape,
     },
     (input: VmMouseClickInputType) => {
@@ -900,7 +900,7 @@ function registerVmTools(
     "vm_mouse_double_click",
     {
       title: "Double-click VM mouse",
-      description: "Double-click a mouse button at the current pointer or supplied coordinates.",
+      description: "Double-click a mouse button at the current pointer or supplied QMP absolute coordinates.",
       inputSchema: VmMouseDoubleClickInput.shape,
     },
     (input: VmMouseDoubleClickInputType) => {
@@ -917,7 +917,7 @@ function registerVmTools(
     "vm_mouse_drag",
     {
       title: "Drag VM mouse",
-      description: "Drag a mouse button from one absolute coordinate to another.",
+      description: "Drag a mouse button between QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseDragInput.shape,
     },
     (input: VmMouseDragInputType) => {
