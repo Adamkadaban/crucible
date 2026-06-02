@@ -14,7 +14,7 @@ import {
   type VmStatus,
 } from "@crucible/core";
 
-import { qemuKeyForTextInput, runCrucibleCli } from "./index.js";
+import { normalizeVmTextInput, qemuKeyForTextInput, runCrucibleCli } from "./index.js";
 
 const defaultRuntime = { config: defaultCrucibleConfig };
 const tempDirs: string[] = [];
@@ -88,6 +88,10 @@ describe("crucible CLI bootstrap", () => {
     expect(qemuKeyForTextInput("+")).toBe("shift-equal");
     expect(qemuKeyForTextInput("?")).toBe("shift-slash");
     expect(qemuKeyForTextInput("@")).toBe("shift-2");
+  });
+
+  it("normalizes VM text input line endings before key expansion", () => {
+    expect(normalizeVmTextInput("one\r\ntwo\rthree\nfour")).toBe("one\ntwo\nthree\nfour");
   });
 
   it("passes guest command help flags after the argument separator", async () => {

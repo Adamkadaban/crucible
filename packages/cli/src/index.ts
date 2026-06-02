@@ -321,6 +321,10 @@ export function qemuKeyForTextInput(key: string): string {
   );
 }
 
+export function normalizeVmTextInput(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
 export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
@@ -862,7 +866,8 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       return { action: "key_press", backend: "qmp-human-monitor-command", key: normalized };
     },
     typeText: async (text: string, delayMs?: number) => {
-      const commands = [...text].map((key) => `sendkey ${qemuKeyForTextInput(key)}`);
+      const normalizedText = normalizeVmTextInput(text);
+      const commands = [...normalizedText].map((key) => `sendkey ${qemuKeyForTextInput(key)}`);
       await withQmp(async (qmp) => {
         for (const command of commands) {
           await qmp.execute(
@@ -875,7 +880,11 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
           }
         }
       });
-      return { action: "type_text", backend: "qmp-human-monitor-command", textLength: text.length };
+      return {
+        action: "type_text",
+        backend: "qmp-human-monitor-command",
+        textLength: normalizedText.length,
+      };
     },
   };
 }
