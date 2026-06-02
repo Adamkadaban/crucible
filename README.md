@@ -132,7 +132,8 @@ helpers. GUI-oriented MCP clients can combine `vm_screenshot` with `vm_mouse_mov
 Mouse coordinates are not screenshot pixels; they use QMP absolute pointer coordinates in the
 normalized `0..0x7fff` range per axis. Convert a screenshot pixel by scaling `x` by
 `32767 / (width - 1)` and `y` by `32767 / (height - 1)`, then rounding to an integer. Key input is
-sent through QEMU monitor `sendkey` names or chords such as `ctrl-l` and `alt-f4`.
+sent through QEMU monitor `sendkey` names or chords such as `ctrl-l`, `Ctrl+L`, and `alt-f4`;
+the CLI adapter normalizes case and `+` separators.
 
 User-mode CDB automation is supported. KD/KDNET tooling is installed and reported in health output,
 but kernel-debugging workflows are not implemented yet.
