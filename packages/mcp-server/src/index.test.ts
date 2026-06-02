@@ -2777,4 +2777,117 @@ describe("crucible MCP tools", () => {
     expect(payload.ok).toBe(false);
     expect(payload.error.message).toContain("no output");
   });
+
+  it("network_set_mode persists mode to config file", async () => {
+    const dir = await createTempDir("crucible-mcp-netcfg-");
+    const configPath = path.join(dir, "crucible.config.json");
+    const configData = {
+      vm: { name: "persist-vm" },
+      network: { mode: "isolated" },
+    };
+    await writeFile(configPath, JSON.stringify(configData, null, 2), "utf8");
+    const client = await harness({
+      config: parseCrucibleConfig(configData),
+      configPath,
+    });
+
+    const result = (await client.callTool({
+      name: "network_set_mode",
+      arguments: { mode: "nat" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { applied: boolean; configPath: string };
+    }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.applied).toBe(true);
+
+    const persisted = JSON.parse(await readFile(configPath, "utf8")) as {
+      network: { mode: string };
+    };
+    expect(persisted.network.mode).toBe("nat");
+
+    // Subsequent network_status should reflect the new mode
+    const statusResult = (await client.callTool({
+      name: "network_status",
+      arguments: {},
+    })) as ToolCallText;
+    const status = parseFirstTextPayload<{
+      ok: boolean;
+      result: { configuredMode: string };
+    }>(statusResult);
+    expect(status.result.configuredMode).toBe("nat");
+  });
+
+  it("network_set_mode without configPath still updates in-memory mode", async () => {
+    const client = await harness({
+      config: parseCrucibleConfig({
+        vm: { name: "mem-vm" },
+        network: { mode: "isolated" },
+      }),
+    });
+
+    await client.callTool({
+      name: "network_set_mode",
+      arguments: { mode: "nat" },
+    });
+
+    const statusResult = (await client.callTool({
+      name: "network_status",
+      arguments: {},
+    })) as ToolCallText;
+    const status = parseFirstTextPayload<{
+      ok: boolean;
+      result: { configuredMode: string };
+    }>(statusResult);
+    expect(status.result.configuredMode).toBe("nat");
+  });
+
+  it("network_set_mode returns applied: true", async () => {
+    const client = await harness({
+      config: parseCrucibleConfig({
+        vm: { name: "applied-vm" },
+        network: { mode: "isolated" },
+      }),
+    });
+
+    const result = (await client.callTool({
+      name: "network_set_mode",
+      arguments: { mode: "capture" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      result: { applied: boolean };
+    }>(result);
+    expect(payload.ok).toBe(true);
+    expect(payload.result.applied).toBe(true);
+  });
+
+  it("network_set_mode rejects invalid config JSON without mutating in-memory mode", async () => {
+    const dir = await createTempDir("crucible-mcp-netcfg-bad-");
+    const configPath = path.join(dir, "crucible.config.json");
+    await writeFile(configPath, "{ not-json", "utf8");
+    const client = await harness({
+      config: parseCrucibleConfig({
+        vm: { name: "bad-config-vm" },
+        network: { mode: "isolated" },
+      }),
+      configPath,
+    });
+
+    const result = (await client.callTool({
+      name: "network_set_mode",
+      arguments: { mode: "nat" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { message: string } }>(result);
+    expect(payload.ok).toBe(false);
+
+    const statusResult = (await client.callTool({
+      name: "network_status",
+      arguments: {},
+    })) as ToolCallText;
+    const status = parseFirstTextPayload<{ result: { configuredMode: string } }>(statusResult);
+    expect(status.result.configuredMode).toBe("isolated");
+    await expect(readFile(configPath, "utf8")).resolves.toBe("{ not-json");
+  });
 });

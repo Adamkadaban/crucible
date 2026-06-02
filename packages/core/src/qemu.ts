@@ -6,6 +6,7 @@ import { buildNetworkPlan, type QemuNetworkPlan } from "./network.js";
 
 const DEFAULT_QEMU_EXECUTABLE = "qemu-system-x86_64";
 const DEFAULT_DISK_ID = "crucible-disk0";
+const DEFAULT_DISK_NODE = "crucible-disk0-node";
 const QGA_CHARDEV_ID = "crucible-qga0";
 
 export type QemuDiskPlan = {
@@ -292,7 +293,7 @@ function renderQemuStartDryRunLines(plan: QemuCommandPlan): readonly string[] {
 }
 
 function buildDiskArgs(config: CrucibleConfig, diskPath: string): readonly string[] {
-  const drive = `file=${diskPath},if=none,format=qcow2,id=${DEFAULT_DISK_ID},cache=none,discard=unmap`;
+  const drive = `file=${diskPath},if=none,format=qcow2,id=${DEFAULT_DISK_ID},node-name=${DEFAULT_DISK_NODE},cache=none,discard=unmap`;
 
   // bootindex 10 keeps the install CD (bootindex 1) ahead of the empty disk
   // during first boot so OVMF actually enumerates the Windows installer ESP

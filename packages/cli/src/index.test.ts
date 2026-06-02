@@ -646,8 +646,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("policy-configured: succeeded");
     expect(result.stdout).toContain("guest/provision/configure-policy.ps1");
     expect(result.stdout).toContain("Snapshot created: clean-base");
-    expect(result.stdout).toContain("Guest health: degraded");
-    expect(result.stdout).toContain("debugger-health: unknown");
+    expect(result.stdout).toContain("Guest health: healthy");
+    expect(result.stdout).toContain("debugger-health: pass");
     expect(progressEvents[0]).toBe("start");
     expect(progressEvents).toContain("start:media-ready");
     expect(progressEvents).toContain("done:snapshot-prepared");
