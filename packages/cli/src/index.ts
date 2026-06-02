@@ -269,6 +269,25 @@ const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
   "8": "8",
   "9": "9",
 };
+const QEMU_KEY_ALIASES: Readonly<Record<string, string>> = {
+  ctrl: "ctrl",
+  control: "ctrl",
+  alt: "alt",
+  shift: "shift",
+  win: "meta_l",
+  windows: "meta_l",
+  cmd: "meta_l",
+  meta: "meta_l",
+  enter: "ret",
+  return: "ret",
+  escape: "esc",
+  esc: "esc",
+  space: "spc",
+  tab: "tab",
+  delete: "delete",
+  del: "delete",
+  backspace: "backspace",
+};
 
 export async function runCrucibleCli(
   args: readonly string[],
@@ -635,13 +654,13 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
         return "right";
     }
   };
-  const mouseMoveEvent = (x: number, y: number) => ({
+  const mouseMoveEvent = (x: number) => ({
     type: "abs" as const,
     data: { axis: "x", value: x },
     // QMP absolute pointer coordinates are normalized 0..0x7fff.
   });
   const mouseAbsEvents = (x: number, y: number) => [
-    mouseMoveEvent(x, y),
+    mouseMoveEvent(x),
     { type: "abs" as const, data: { axis: "y", value: y } },
   ];
   const mouseButtonEvents = (button: QmpMouseButton) => [
@@ -654,6 +673,22 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     if (/^[a-z]$/.test(key)) return key;
     if (/^[A-Z]$/.test(key)) return `shift-${key.toLowerCase()}`;
     throw new CrucibleError("CONFIG_INVALID", `unsupported key for VM text input: ${JSON.stringify(key)}`);
+  };
+  const normalizeQemuKey = (key: string) => {
+    const parts = key
+      .trim()
+      .split(/[+-]/)
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0);
+    if (parts.length === 0) {
+      throw new CrucibleError("CONFIG_INVALID", "key must not be empty");
+    }
+    return parts.map((part) => QEMU_KEY_ALIASES[part] ?? part).join("-");
+  };
+  const assertPairedCoordinates = (x: number | undefined, y: number | undefined) => {
+    if ((x === undefined) !== (y === undefined)) {
+      throw new CrucibleError("CONFIG_INVALID", "x and y must be supplied together");
+    }
   };
   const render = async () => {
     const status = await manager.status();
@@ -698,12 +733,24 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       const fileInfo = await fsStat(outputPath);
       return { path: outputPath, sizeBytes: fileInfo.size };
     },
-    displayInfo: async () => ({
-      available: true,
-      backend: "qmp-input-send-event",
-      inputAvailable: true,
-      message: "QMP input-send-event is available when the VM QMP socket is reachable.",
-    }),
+    displayInfo: async () => {
+      try {
+        await withQmp(async () => undefined);
+        return {
+          available: true,
+          backend: "qmp-input-send-event",
+          inputAvailable: true,
+          message: "QMP input-send-event is available.",
+        };
+      } catch (error) {
+        return {
+          available: false,
+          backend: "qmp-input-send-event",
+          inputAvailable: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
     mouseMove: async (x: number, y: number) => {
       await sendInput(mouseAbsEvents(x, y));
       return { action: "mouse_move", backend: "qmp-input-send-event", x, y };
@@ -713,7 +760,8 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       readonly y?: number;
       readonly button: "left" | "middle" | "right";
     }) => {
-      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y ?? 0);
+      assertPairedCoordinates(input.x, input.y);
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
       await sendInput([...events, ...mouseButtonEvents(input.button)]);
       return { action: "mouse_click", backend: "qmp-input-send-event", ...input };
     },
@@ -722,7 +770,8 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       readonly y?: number;
       readonly button: "left" | "middle" | "right";
     }) => {
-      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y ?? 0);
+      assertPairedCoordinates(input.x, input.y);
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
       await sendInput([...events, ...mouseButtonEvents(input.button), ...mouseButtonEvents(input.button)]);
       return { action: "mouse_double_click", backend: "qmp-input-send-event", ...input };
     },
@@ -742,8 +791,9 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       return { action: "mouse_drag", backend: "qmp-input-send-event", x: input.toX, y: input.toY, button: input.button };
     },
     keyPress: async (key: string) => {
-      await sendMonitorCommand(`sendkey ${key}`);
-      return { action: "key_press", backend: "qmp-input-send-event", key };
+      const normalized = normalizeQemuKey(key);
+      await sendMonitorCommand(`sendkey ${normalized}`);
+      return { action: "key_press", backend: "qmp-input-send-event", key: normalized };
     },
     typeText: async (text: string, delayMs?: number) => {
       for (const key of text) {

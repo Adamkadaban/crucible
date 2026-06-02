@@ -1847,7 +1847,7 @@ describe("crucible MCP tools", () => {
       name: "vm_mouse_drag",
       arguments: { fromX: 1, fromY: 2, toX: 3, toY: 4, button: "middle" },
     });
-    await client.callTool({ name: "vm_key_press", arguments: { key: "Ctrl+L" } });
+    await client.callTool({ name: "vm_key_press", arguments: { key: "ctrl-l" } });
     await client.callTool({ name: "vm_type_text", arguments: { text: "abc", delayMs: 1 } });
 
     expect(parseFirstTextPayload<{ ok: boolean; result: { backend: string } }>(display).result.backend).toBe(
@@ -1858,7 +1858,7 @@ describe("crucible MCP tools", () => {
       "click:30,40,left",
       "double:current,current,right",
       "drag:1,2,3,4,middle",
-      "key:Ctrl+L",
+      "key:ctrl-l",
       "type:abc:1",
     ]);
   });
@@ -1884,6 +1884,23 @@ describe("crucible MCP tools", () => {
     expect(payload.error.message).toContain("x and y");
   });
 
+  it("rejects VM mouse coordinates outside QMP absolute range", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running" }),
+        start: () => Promise.resolve({ state: "running", pid: 1234 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        mouseMove: (x: number, y: number) => Promise.resolve({ action: "mouse_move", x, y }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_mouse_move",
+      arguments: { x: 0x8000, y: 0 },
+    })) as ToolCallText & { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("Number must be less than or equal to 32767");
+  });
+
   it("reports unsupported VM display input tools", async () => {
     const client = await harness({
       vmAdapter: {
@@ -1894,7 +1911,7 @@ describe("crucible MCP tools", () => {
     });
     const result = (await client.callTool({
       name: "vm_key_press",
-      arguments: { key: "Ctrl+L" },
+      arguments: { key: "ctrl-l" },
     })) as ToolCallText;
     const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
       result,

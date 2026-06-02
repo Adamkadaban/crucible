@@ -237,15 +237,16 @@ const VmScreenshotInput = z
   })
   .strict();
 type VmScreenshotInputType = z.infer<typeof VmScreenshotInput>;
+const QmpCoordinate = z.number().int().min(0).max(0x7fff);
 const MouseButton = z.enum(["left", "middle", "right"]);
-const MouseCoordinates = z.object({ x: z.number().int().min(0), y: z.number().int().min(0) });
+const MouseCoordinates = z.object({ x: QmpCoordinate, y: QmpCoordinate });
 const VmDisplayInfoInput = z.object({}).strict();
 const VmMouseMoveInput = MouseCoordinates.strict();
 type VmMouseMoveInputType = z.infer<typeof VmMouseMoveInput>;
 const VmMouseClickInput = z
   .object({
-    x: z.number().int().min(0).optional(),
-    y: z.number().int().min(0).optional(),
+    x: QmpCoordinate.optional(),
+    y: QmpCoordinate.optional(),
     button: MouseButton.optional(),
   })
   .strict();
@@ -254,15 +255,15 @@ const VmMouseDoubleClickInput = VmMouseClickInput;
 type VmMouseDoubleClickInputType = z.infer<typeof VmMouseDoubleClickInput>;
 const VmMouseDragInput = z
   .object({
-    fromX: z.number().int().min(0),
-    fromY: z.number().int().min(0),
-    toX: z.number().int().min(0),
-    toY: z.number().int().min(0),
+    fromX: QmpCoordinate,
+    fromY: QmpCoordinate,
+    toX: QmpCoordinate,
+    toY: QmpCoordinate,
     button: MouseButton.optional(),
   })
   .strict();
 type VmMouseDragInputType = z.infer<typeof VmMouseDragInput>;
-const VmKeyPressInput = z.object({ key: z.string().min(1).max(64) }).strict();
+const VmKeyPressInput = z.object({ key: z.string().regex(/^[a-z0-9_+-]+$/).min(1).max(64) }).strict();
 type VmKeyPressInputType = z.infer<typeof VmKeyPressInput>;
 const VmTypeTextInput = z
   .object({ text: z.string().min(1).max(4096), delayMs: z.number().int().min(0).max(5000).optional() })
@@ -930,7 +931,7 @@ function registerVmTools(
     "vm_key_press",
     {
       title: "Press VM key",
-      description: "Send a key or key chord such as Ctrl+L, Alt+F4, or Win+R to the VM display.",
+      description: "Send a QEMU sendkey name or chord such as ctrl-l, alt-f4, or meta_l-r to the VM display.",
       inputSchema: VmKeyPressInput.shape,
     },
     (input: VmKeyPressInputType) => {
