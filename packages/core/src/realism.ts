@@ -197,13 +197,13 @@ export function buildRealismDecoyFilePlan(
   const ordinary = ordinaryPaths.map((relativePath, index) => ({
     relativePath,
     content: decoyContent(persona, relativePath),
-    lastWriteTimeUtc: seededTimestamp(persona.seed, `file-${index}`),
+    lastWriteTimeUtc: personaTimestamp(persona, `file-${index}`),
     category: "ordinary-user" as const,
   }));
   const secrets = inertSecretFiles.map((relativePath, index) => ({
     relativePath,
     content: inertSecretContent(persona, relativePath, index),
-    lastWriteTimeUtc: seededTimestamp(persona.seed, `secret-${index}`),
+    lastWriteTimeUtc: personaTimestamp(persona, `secret-${index}`),
     category: "inert-secret" as const,
   }));
 
@@ -257,7 +257,7 @@ export function buildRealismSoftwareMarkers(
   return [...base, ...profileSpecific[persona.profile]].map((entry, index) => ({
     ...entry,
     version: `${1 + numberFromSeed(persona.seed, `software-${index}-major`, 120)}.${numberFromSeed(persona.seed, `software-${index}-minor`, 20)}.${numberFromSeed(persona.seed, `software-${index}-patch`, 5000)}`,
-    installDate: seededInstallDate(persona.seed, `software-${index}`),
+    installDate: personaInstallDate(persona, `software-${index}`),
   }));
 }
 
@@ -288,8 +288,24 @@ function seededTimestamp(seed: string, label: string): string {
   return new Date(Date.UTC(2025, 0, day, Math.floor(minute / 60), minute % 60, 0)).toISOString();
 }
 
+function personaTimestamp(
+  persona: Omit<RealismPersona, "decoyFiles" | "softwareMarkers">,
+  label: string,
+): string {
+  return persona.randomizeInstallTimes
+    ? seededTimestamp(persona.seed, label)
+    : "2025-01-01T12:00:00.000Z";
+}
+
 function seededInstallDate(seed: string, label: string): string {
   return seededTimestamp(seed, label).slice(0, 10).replaceAll("-", "");
+}
+
+function personaInstallDate(
+  persona: Omit<RealismPersona, "decoyFiles" | "softwareMarkers">,
+  label: string,
+): string {
+  return persona.randomizeInstallTimes ? seededInstallDate(persona.seed, label) : "20250101";
 }
 
 function decoyContent(

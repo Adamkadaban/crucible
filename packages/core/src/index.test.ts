@@ -191,6 +191,25 @@ describe("core bootstrap exports", () => {
     );
   });
 
+  it("honors disabled realism timestamp randomization", () => {
+    const persona = buildRealismPersona({
+      vmName: "timestamp-vm",
+      config: parseCrucibleConfig({
+        realism: {
+          enabled: true,
+          seed: "timestamp-seed",
+          installCommonSoftware: true,
+          randomizeInstallTimes: false,
+        },
+      }).realism,
+    });
+
+    expect(persona?.decoyFiles.every((file) => file.lastWriteTimeUtc === "2025-01-01T12:00:00.000Z")).toBe(
+      true,
+    );
+    expect(persona?.softwareMarkers.every((software) => software.installDate === "20250101")).toBe(true);
+  });
+
   it("allows JSON schema markers in config files", () => {
     const config = parseCrucibleConfig({
       $schema: "./schemas/config.schema.json",

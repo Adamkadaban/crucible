@@ -359,9 +359,6 @@ function applyRealismToAnalysisPolicy(
       ...analysisPolicy.profile,
       hostname: analysisPolicy.profile.hostname ?? persona.hostname,
       username: analysisPolicy.profile.username ?? persona.userUsername,
-      locale: persona.locale,
-      screenSize: persona.screenResolution,
-      commonAnalysisLabCamouflage: true,
     },
   };
 }
