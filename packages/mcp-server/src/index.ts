@@ -263,7 +263,7 @@ const VmMouseDragInput = z
   })
   .strict();
 type VmMouseDragInputType = z.infer<typeof VmMouseDragInput>;
-const VmKeyPressInput = z.object({ key: z.string().regex(/^[a-z0-9_+-]+$/).min(1).max(64) }).strict();
+const VmKeyPressInput = z.object({ key: z.string().regex(/^[a-z0-9_+-]+$/i).min(1).max(64) }).strict();
 type VmKeyPressInputType = z.infer<typeof VmKeyPressInput>;
 const VmTypeTextInput = z
   .object({ text: z.string().min(1).max(4096), delayMs: z.number().int().min(0).max(5000).optional() })
@@ -855,7 +855,7 @@ function registerVmTools(
     "vm_display_info",
     {
       title: "VM display info",
-      description: "Report whether GUI display automation is available; dimensions may be omitted by adapters.",
+      description: "Report whether GUI display automation is available; dimensions are adapter-dependent.",
       inputSchema: VmDisplayInfoInput.shape,
     },
     () => {

@@ -254,6 +254,7 @@ const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
   "-": "minus",
   "=": "equal",
   ";": "semicolon",
+  ":": "shift-semicolon",
   "'": "apostrophe",
   "[": "bracket_left",
   "]": "bracket_right",
