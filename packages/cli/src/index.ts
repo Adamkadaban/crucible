@@ -501,7 +501,7 @@ async function runVmViewCommand(
     `VNC endpoint: ${parsed.args.host}:${port}`,
     `QMP command: change vnc ${endpoint}`,
     `viewer command: ${formatCommand(viewerCommand)}`,
-    "Safety: binds display to loopback by default; does not restart or reconfigure the VM beyond the live VNC endpoint.",
+    "Safety: binds display to loopback only; does not restart or reconfigure the VM beyond the live VNC endpoint.",
   ];
 
   if (parsed.args.dryRun) {
