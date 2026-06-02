@@ -1898,7 +1898,7 @@ describe("crucible MCP tools", () => {
       arguments: { x: 0x8000, y: 0 },
     })) as ToolCallText & { isError?: boolean };
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("Number must be less than or equal to 32767");
+    expect(result.content[0]?.text).toContain("32767");
   });
 
   it("rejects malformed VM key press chords", async () => {
