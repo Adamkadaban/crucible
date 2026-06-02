@@ -855,7 +855,7 @@ function registerVmTools(
     "vm_display_info",
     {
       title: "VM display info",
-      description: "Report display size and whether GUI input automation is available.",
+      description: "Report whether GUI display automation is available; dimensions may be omitted by adapters.",
       inputSchema: VmDisplayInfoInput.shape,
     },
     () => {

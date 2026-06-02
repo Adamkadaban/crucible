@@ -1901,6 +1901,23 @@ describe("crucible MCP tools", () => {
     expect(result.content[0]?.text).toContain("Number must be less than or equal to 32767");
   });
 
+  it("rejects malformed VM key press chords", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running" }),
+        start: () => Promise.resolve({ state: "running", pid: 1234 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        keyPress: (key: string) => Promise.resolve({ action: "key_press", key }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "ctrl l" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("Invalid");
+  });
+
   it("reports unsupported VM display input tools", async () => {
     const client = await harness({
       vmAdapter: {

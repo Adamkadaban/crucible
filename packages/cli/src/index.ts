@@ -649,12 +649,6 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     withQmp((qmp) =>
       qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs }),
     );
-  const sendMonitorCommands = (commands: readonly string[]) =>
-    withQmp(async (qmp) => {
-      for (const command of commands) {
-        await qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs });
-      }
-    });
   const buttonName = (button: QmpMouseButton) => {
     switch (button) {
       case "left":
@@ -808,16 +802,14 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     },
     typeText: async (text: string, delayMs?: number) => {
       const commands = [...text].map((key) => `sendkey ${toQemuKey(key)}`);
-      if (delayMs === undefined || delayMs === 0) {
-        await sendMonitorCommands(commands);
-      } else {
-        await withQmp(async (qmp) => {
-          for (const command of commands) {
-            await qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs });
+      await withQmp(async (qmp) => {
+        for (const command of commands) {
+          await qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs });
+          if (delayMs !== undefined && delayMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
-        });
-      }
+        }
+      });
       return { action: "type_text", backend: "qmp-input-send-event", textLength: text.length };
     },
   };
