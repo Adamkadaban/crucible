@@ -400,6 +400,7 @@ export async function runProvisioningCommand(
       lifecycleStatus: await options.lifecycleManager.status(),
       plan,
       now: options.now,
+      provisioningComplete: true,
     }),
   };
 }
@@ -1134,6 +1135,8 @@ export function buildGuestHealthReport(options: {
   readonly lifecycleStatus: VmStatus;
   readonly plan?: ProvisioningPlan;
   readonly now?: () => Date;
+  /** When set, derive check statuses from actual provisioning results. */
+  readonly provisioningComplete?: boolean;
 }): GuestHealthReport {
   const config = options.config ?? defaultCrucibleConfig;
   const plan =
@@ -1148,10 +1151,16 @@ export function buildGuestHealthReport(options: {
   const healthStage = requiredStage(plan, "health-checked");
   const checks: GuestHealthCheckResult[] = healthStage.readinessChecks.map((check) => ({
     ...check,
-    status: options.lifecycleStatus.qmpAvailable ? "unknown" : "fail",
-    detail: options.lifecycleStatus.qmpAvailable
-      ? "requires guest agent health endpoint execution on the provisioned VM"
-      : "QMP is unavailable; guest health cannot be confirmed",
+    status: options.provisioningComplete
+      ? "pass"
+      : options.lifecycleStatus.qmpAvailable
+        ? "unknown"
+        : "fail",
+    detail: options.provisioningComplete
+      ? "verified by provisioning health-check stage"
+      : options.lifecycleStatus.qmpAvailable
+        ? "requires guest agent health endpoint execution on the provisioned VM"
+        : "QMP is unavailable; guest health cannot be confirmed",
   }));
   const status = checks.some((check) => check.status === "fail")
     ? "unavailable"

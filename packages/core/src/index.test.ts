@@ -604,7 +604,7 @@ describe("core bootstrap exports", () => {
 
     expect(plan.disk.path).toBe("/var/lib/crucible/disks/analysis-one.qcow2");
     expect(plan.args).toContain(
-      "file=/var/lib/crucible/disks/analysis-one.qcow2,if=none,format=qcow2,id=crucible-disk0,cache=none,discard=unmap",
+      "file=/var/lib/crucible/disks/analysis-one.qcow2,if=none,format=qcow2,id=crucible-disk0,node-name=crucible-disk0-node,cache=none,discard=unmap",
     );
   });
 

@@ -74,6 +74,7 @@ export class SnapshotManager {
     try {
       await qmp.connect();
       await executeQmp(qmp, "stop", undefined, this.#config.qmp.timeoutMs, qmpCommands);
+      const jobId = `crucible-snapshot-save-${jobIdSuffix()}`;
       await executeQmp(
         qmp,
         "snapshot-save",
@@ -83,16 +84,17 @@ export class SnapshotManager {
           // CPU/memory state is saved; must be a writable qcow2 node),
           // and `devices` (block-node names whose data is captured).
           // The CRUCIBLE disk node id is configured in QemuCommandPlan
-          // via -drive ...,id=crucible-disk0; that node holds both the
+          // via -drive ...,node-name=crucible-disk0-node; that node holds both the
           // VM state and the data, so it's the same id for both.
-          "job-id": `crucible-snapshot-save-${jobIdSuffix()}`,
+          "job-id": jobId,
           tag: snapshotName,
-          vmstate: "crucible-disk0",
-          devices: ["crucible-disk0"],
+          vmstate: "crucible-disk0-node",
+          devices: ["crucible-disk0-node"],
         },
         this.#config.qmp.timeoutMs,
         qmpCommands,
       );
+      await waitForQmpJob(qmp, jobId, this.#config.qmp.timeoutMs, qmpCommands);
       await executeQmp(qmp, "cont", undefined, this.#config.qmp.timeoutMs, qmpCommands);
       mode = "online-qmp";
     } catch (error) {
@@ -148,18 +150,20 @@ export class SnapshotManager {
 
       try {
         await executeQmp(qmp, "stop", undefined, this.#config.qmp.timeoutMs, qmpCommands);
+        const jobId = `crucible-snapshot-load-${jobIdSuffix()}`;
         await executeQmp(
           qmp,
           "snapshot-load",
           {
-            "job-id": `crucible-snapshot-load-${jobIdSuffix()}`,
+            "job-id": jobId,
             tag: snapshotName,
-            vmstate: "crucible-disk0",
-            devices: ["crucible-disk0"],
+            vmstate: "crucible-disk0-node",
+            devices: ["crucible-disk0-node"],
           },
           this.#config.qmp.timeoutMs,
           qmpCommands,
         );
+        await waitForQmpJob(qmp, jobId, this.#config.qmp.timeoutMs, qmpCommands);
         await executeQmp(qmp, "cont", undefined, this.#config.qmp.timeoutMs, qmpCommands);
       } catch (error) {
         if (qmpCommands.length > 0) {
@@ -316,12 +320,59 @@ async function executeQmp(
   await qmp.execute(command, args, { timeoutMs });
 }
 
+type QmpJobInfo = {
+  readonly id?: unknown;
+  readonly status?: unknown;
+  readonly error?: unknown;
+};
+
+async function waitForQmpJob(
+  qmp: VmQmpSession,
+  jobId: string,
+  timeoutMs: number,
+  commands: string[],
+): Promise<void> {
+  const waitTimeoutMs = Math.max(timeoutMs, 60_000);
+  const deadline = Date.now() + waitTimeoutMs;
+  commands.push("query-jobs");
+  while (Date.now() < deadline) {
+    const result = await qmp.execute<readonly QmpJobInfo[]>("query-jobs", undefined, {
+      timeoutMs: waitTimeoutMs,
+    });
+    const job = result.returnValue.find((entry) => entry.id === jobId);
+    if (job === undefined) {
+      return;
+    }
+    if (job.status === "concluded" || job.status === "null") {
+      if (typeof job.error === "string" && job.error.length > 0) {
+        throw new CrucibleError("PROCESS_FAILED", `QMP snapshot job failed: ${job.error}`, {
+          jobId,
+          status: job.status,
+          error: job.error,
+        });
+      }
+      commands.push("job-dismiss");
+      await qmp.execute("job-dismiss", { id: jobId }, { timeoutMs: waitTimeoutMs });
+      return;
+    }
+    await sleep(250);
+  }
+  throw new CrucibleError("QMP_TIMEOUT", `Timed out waiting for QMP snapshot job: ${jobId}`, {
+    jobId,
+    timeoutMs: waitTimeoutMs,
+  });
+}
+
 async function tryResume(qmp: VmQmpSession, timeoutMs: number): Promise<void> {
   try {
     await qmp.execute("cont", undefined, { timeoutMs });
   } catch {
     return undefined;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function runChecked(processRunner: ProcessRunner, command: ProcessCommand): Promise<void> {

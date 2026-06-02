@@ -23,16 +23,24 @@ describe("SnapshotManager", () => {
 
     const result = await harness.manager.create();
 
-    expect(result.qmpCommands).toEqual(["stop", "snapshot-save", "cont"]);
+    expect(result.qmpCommands).toEqual([
+      "stop",
+      "snapshot-save",
+      "query-jobs",
+      "job-dismiss",
+      "cont",
+    ]);
     expect(harness.qmp.calls.map((call) => call.command)).toEqual([
       "stop",
       "snapshot-save",
+      "query-jobs",
+      "job-dismiss",
       "cont",
     ]);
     expect(harness.qmp.calls[1]?.args).toMatchObject({
       tag: CLEAN_BASE_SNAPSHOT_NAME,
-      vmstate: "crucible-disk0",
-      devices: ["crucible-disk0"],
+      vmstate: "crucible-disk0-node",
+      devices: ["crucible-disk0-node"],
     });
     expect((harness.qmp.calls[1]?.args as { "job-id"?: string })?.["job-id"]).toMatch(
       /^crucible-snapshot-save-\d+-[0-9a-f]{8}$/,
@@ -102,16 +110,24 @@ describe("SnapshotManager", () => {
 
     const result = await harness.manager.restore("clean-base");
 
-    expect(result.qmpCommands).toEqual(["stop", "snapshot-load", "cont"]);
+    expect(result.qmpCommands).toEqual([
+      "stop",
+      "snapshot-load",
+      "query-jobs",
+      "job-dismiss",
+      "cont",
+    ]);
     expect(harness.qmp.calls.map((call) => call.command)).toEqual([
       "stop",
       "snapshot-load",
+      "query-jobs",
+      "job-dismiss",
       "cont",
     ]);
     expect(harness.qmp.calls[1]?.args).toMatchObject({
       tag: "clean-base",
-      vmstate: "crucible-disk0",
-      devices: ["crucible-disk0"],
+      vmstate: "crucible-disk0-node",
+      devices: ["crucible-disk0-node"],
     });
     expect((harness.qmp.calls[1]?.args as { "job-id"?: string })?.["job-id"]).toMatch(
       /^crucible-snapshot-load-\d+-[0-9a-f]{8}$/,
@@ -148,7 +164,13 @@ describe("SnapshotManager", () => {
 
     const result = await harness.manager.restore("clean-base");
 
-    expect(result.qmpCommands).toEqual(["stop", "snapshot-load", "cont"]);
+    expect(result.qmpCommands).toEqual([
+      "stop",
+      "snapshot-load",
+      "query-jobs",
+      "job-dismiss",
+      "cont",
+    ]);
     expect(result.qcow2Commands).toEqual([]);
     expect(harness.processCommands).toEqual([]);
   });
@@ -360,6 +382,16 @@ class FakeQmpSession implements VmQmpSession {
     args?: Readonly<Record<string, unknown>>,
   ): Promise<{ readonly returnValue: T }> {
     this.calls.push({ command, args });
+    if (command === "query-jobs") {
+      const jobId = this.calls
+        .slice()
+        .reverse()
+        .map((call) => call.args?.["job-id"])
+        .find((id): id is string => typeof id === "string");
+      return Promise.resolve({
+        returnValue: [{ id: jobId, status: "concluded" }] as T,
+      });
+    }
     if (command === this.failureCommand) {
       return Promise.reject(new Error(`${command} failed`));
     }

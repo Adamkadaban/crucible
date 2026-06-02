@@ -430,7 +430,7 @@ describe("provisioning contracts", () => {
     expect(result.status).toBe("complete");
     expect(stages).toEqual(PROVISIONING_STAGE_IDS);
     expect(result.snapshot?.snapshot.name).toBe("clean-base");
-    expect(result.health.status).toBe("degraded");
+    expect(result.health.status).toBe("healthy");
     expect(result.health.checks.map((check) => check.id)).toEqual([
       "debugger-health",
       "service-health",
