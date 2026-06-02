@@ -1890,9 +1890,9 @@ function buildPackageUpdateCommand(install: GlobalInstallDetection): readonly st
 function renderMcpUpdateDryRun(): readonly string[] {
   return [
     `- opencode: would refresh ${join(homedir(), ".config", "opencode", "opencode.json")}`,
-    "- claude: would run claude MCP setup command if available",
-    "- codex: print-only guidance; no stable config writer",
-    "- copilot: print-only guidance; no stable config writer",
+    "- claude: would skip; run `crucible setup claude` to refresh via Claude CLI",
+    "- codex: would skip; run `crucible setup codex --print` for current guidance",
+    "- copilot: would skip; run `crucible setup copilot --print` for current guidance",
   ];
 }
 
@@ -2115,7 +2115,21 @@ function getMcpServerEntry(): JsonObject {
 }
 
 function jsonValuesEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return JSON.stringify(stableJsonValue(left)) === JSON.stringify(stableJsonValue(right));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (isJsonObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableJsonValue(nested)]),
+    );
+  }
+  return value;
 }
 
 function renderSetupInstruction(target: string, message: string): CommandResult {

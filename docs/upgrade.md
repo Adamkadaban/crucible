@@ -5,15 +5,15 @@ designed to keep configuration files, secrets, and snapshots intact across versi
 
 ## Host upgrade
 
-For global npm installs, use:
+For global package-manager installs, use:
 
 ```sh
 crucible update --dry-run
 crucible update --yes
 ```
 
-The update command checks npm for the latest stable `@adamkadaban/crucible`, updates the global
-package when needed, and refreshes supported MCP client entries such as opencode.
+The update command checks npm for the latest stable `@adamkadaban/crucible`, updates the detected
+global npm or pnpm install when needed, and refreshes supported MCP client entries such as opencode.
 
 For source checkouts:
 

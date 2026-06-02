@@ -175,6 +175,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("latest npm version: 1.2.3");
     expect(result.stdout).toContain("package update: would run");
     expect(result.stdout).toContain("MCP config refresh:");
+    expect(result.stdout).toContain("claude: would skip");
+    expect(result.stdout).not.toContain("would run claude MCP setup command");
     expect(commands).toEqual([
       "npm view @adamkadaban/crucible version --silent",
       "npm root -g",
@@ -749,6 +751,54 @@ describe("crucible CLI bootstrap", () => {
         command: "crucible",
         args: ["mcp", "--stdio"],
       });
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("treats reordered opencode MCP entries as current during update", async () => {
+    const previousHome = process.env.HOME;
+    const root = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = root;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } } }),
+    );
+
+    try {
+      const result = await runCrucibleCli(["update", "--yes"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view")
+                ? "1.2.3\n"
+                : command.args.includes("root")
+                  ? `${globalRoot}\n`
+                  : "updated\n",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("opencode config already current");
+      expect(result.stdout).not.toContain("Backup:");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
