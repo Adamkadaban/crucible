@@ -176,6 +176,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("latest npm version: 1.2.3");
     expect(result.stdout).toContain("package update: would run");
     expect(result.stdout).toContain("MCP config refresh:");
+    expect(result.stdout).toContain("opencode: would refresh:");
     expect(result.stdout).toContain("claude: would skip");
     expect(result.stdout).not.toContain("would run claude MCP setup command");
     expect(commands).toEqual([
@@ -183,6 +184,90 @@ describe("crucible CLI bootstrap", () => {
       "npm root -g",
       "pnpm root -g",
     ]);
+  });
+
+  it("reports current opencode MCP config during update dry-run", async () => {
+    const previousHome = process.env.HOME;
+    const home = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = home;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const configPath = path.join(home, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({ mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } } }),
+    );
+
+    try {
+      const result = await runCrucibleCli(["update", "--dry-run"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view") ? "1.2.3\n" : `${globalRoot}\n`,
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(`opencode: already current: ${configPath}`);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("reports opencode MCP dry-run parse failures without writing", async () => {
+    const previousHome = process.env.HOME;
+    const home = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = home;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const configPath = path.join(home, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, "not-json", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["update", "--dry-run"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view") ? "1.2.3\n" : `${globalRoot}\n`,
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("opencode: would fail;");
+      expect(await readFile(configPath, "utf8")).toBe("not-json");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
   });
 
   it("updates package and refreshes opencode MCP config with --yes", async () => {

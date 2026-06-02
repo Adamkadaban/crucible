@@ -1792,7 +1792,7 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
       `package update: ${needsPackageUpdate ? "would run" : "already current"}`,
       `package command: ${formatCommand(buildPackageUpdateCommand(install))}`,
       "MCP config refresh:",
-      ...renderMcpUpdateDryRun(),
+      ...(await renderMcpUpdateDryRun()),
     );
     return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
   }
@@ -1908,13 +1908,29 @@ function buildPackageUpdateCommand(install: GlobalInstallDetection): readonly st
   return ["npm", "install", "-g", "@adamkadaban/crucible@latest"];
 }
 
-function renderMcpUpdateDryRun(): readonly string[] {
+async function renderMcpUpdateDryRun(): Promise<readonly string[]> {
+  const opencodePath = join(homedir(), ".config", "opencode", "opencode.json");
+  const opencodeStatus = await describeJsonMcpUpdateDryRun(opencodePath, "mcp");
   return [
-    `- opencode: would refresh ${join(homedir(), ".config", "opencode", "opencode.json")}`,
+    `- opencode: ${opencodeStatus}: ${opencodePath}`,
     "- claude: would skip; run `crucible setup claude` to refresh via Claude CLI",
     "- codex: would skip; run `crucible setup codex --print` for current guidance",
     "- copilot: would skip; run `crucible setup copilot --print` for current guidance",
   ];
+}
+
+async function describeJsonMcpUpdateDryRun(configPath: string, mcpKey: string): Promise<string> {
+  try {
+    const config = await readJsonObjectIfExists(configPath);
+    const existing = config[mcpKey];
+    if (existing !== undefined && !isJsonObject(existing)) {
+      return `would fail; expected ${configPath}.${mcpKey} to be an object`;
+    }
+    const previousEntry = existing === undefined ? undefined : existing.crucible;
+    return jsonValuesEqual(previousEntry, getMcpServerEntry()) ? "already current" : "would refresh";
+  } catch (error) {
+    return `would fail; ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 async function refreshMcpConfigs(): Promise<{
