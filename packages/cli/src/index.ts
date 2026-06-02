@@ -736,12 +736,20 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     },
     displayInfo: async () => {
       try {
-        await withQmp(async () => undefined);
+        const commands = await withQmp(async (qmp) => {
+          const result = await qmp.execute<Array<{ name?: string }>>("query-commands", undefined, {
+            timeoutMs: config.qmp.timeoutMs,
+          });
+          return new Set(result.returnValue.map((command) => command.name).filter((name): name is string => name !== undefined));
+        });
+        const inputAvailable = commands.has("input-send-event") && commands.has("human-monitor-command");
         return {
-          available: true,
-          backend: "qmp-input-send-event",
-          inputAvailable: true,
-          message: "QMP input-send-event is available.",
+          available: inputAvailable,
+          backend: inputAvailable ? "qmp-input-send-event+human-monitor-command" : "qmp",
+          inputAvailable,
+          message: inputAvailable
+            ? "QMP input-send-event and human-monitor-command are available."
+            : "QMP is reachable, but required display input commands are unavailable.",
         };
       } catch (error) {
         return {
@@ -794,7 +802,7 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     keyPress: async (key: string) => {
       const normalized = normalizeQemuKey(key);
       await sendMonitorCommand(`sendkey ${normalized}`);
-      return { action: "key_press", backend: "qmp-input-send-event", key: normalized };
+      return { action: "key_press", backend: "qmp-human-monitor-command", key: normalized };
     },
     typeText: async (text: string, delayMs?: number) => {
       const commands = [...text].map((key) => `sendkey ${toQemuKey(key)}`);
@@ -806,7 +814,7 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
           }
         }
       });
-      return { action: "type_text", backend: "qmp-input-send-event", textLength: text.length };
+      return { action: "type_text", backend: "qmp-human-monitor-command", textLength: text.length };
     },
   };
 }
