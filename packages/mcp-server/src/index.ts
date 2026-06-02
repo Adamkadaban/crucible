@@ -936,7 +936,7 @@ function registerVmTools(
     {
       title: "Press VM key",
       description:
-        "Send a QEMU sendkey name or chord such as ctrl-l, Ctrl+L, alt-f4, or meta_l-r to the VM display; case and + separators are normalized.",
+        "Send an adapter-supported key name or chord such as ctrl-l, Ctrl+L, alt-f4, or meta_l-r to the VM display.",
       inputSchema: VmKeyPressInput.shape,
     },
     (input: VmKeyPressInputType) => {

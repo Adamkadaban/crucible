@@ -749,7 +749,7 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
         });
         const inputAvailable = commands.has("input-send-event") && commands.has("human-monitor-command");
         return {
-          available: inputAvailable,
+          available: true,
           backend: inputAvailable ? "qmp-input-send-event+human-monitor-command" : "qmp",
           inputAvailable,
           message: inputAvailable
