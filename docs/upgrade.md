@@ -5,6 +5,18 @@ designed to keep configuration files, secrets, and snapshots intact across versi
 
 ## Host upgrade
 
+For global package-manager installs, use:
+
+```sh
+crucible update --dry-run
+crucible update --yes
+```
+
+The update command checks npm for the latest stable `@adamkadaban/crucible`, updates the detected
+global npm or pnpm install when needed, and refreshes supported MCP client entries such as opencode.
+
+For source checkouts:
+
 1. `git pull origin main`.
 2. `pnpm install --frozen-lockfile` to refresh dependencies.
 3. `pnpm build` to compile the TypeScript surfaces.
