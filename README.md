@@ -143,6 +143,7 @@ crucible --help
 pnpm crucible media plan --manual
 pnpm crucible vm start --dry-run
 pnpm crucible vm status
+pnpm crucible vm view --dry-run
 pnpm crucible vm logs
 pnpm crucible vm stop
 pnpm crucible network status

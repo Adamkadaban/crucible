@@ -142,9 +142,31 @@ type CliRuntime = {
   readonly snapshotManager?: CliSnapshotManager;
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
+  readonly qmpClientFactory?: () => CliQmpClient;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
 };
+
+type CliQmpClient = {
+  readonly connect: () => Promise<unknown>;
+  readonly execute: (
+    command: string,
+    args?: Readonly<Record<string, unknown>>,
+    options?: Readonly<Record<string, unknown>>,
+  ) => Promise<unknown>;
+  readonly close: () => void;
+};
+
+type VmViewArgs = {
+  readonly dryRun: boolean;
+  readonly viewer: "remote-viewer" | "vncviewer";
+  readonly host: string;
+  readonly display: number;
+};
+
+type VmViewArgsResult =
+  | { readonly ok: true; readonly args: VmViewArgs }
+  | { readonly ok: false; readonly message: string };
 
 type ProvisionProgressReporter = {
   readonly start: () => void;
@@ -264,6 +286,8 @@ export async function runCrucibleCli(
       return runVmStopCommand(rest, runtime);
     case "vm:status":
       return runVmStatusCommand(rest, runtime);
+    case "vm:view":
+      return runVmViewCommand(rest, runtime);
     case "vm:logs":
       return runVmLogsCommand(rest, runtime);
     case "snapshot:create":
@@ -409,6 +433,116 @@ async function runVmStatusCommand(
     stdout: renderVmStatus(await getLifecycleManager(runtime).status()),
     stderr: "",
   };
+}
+
+async function runVmViewCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseVmViewArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const endpoint = `${parsed.args.host}:${parsed.args.display}`;
+  const port = 5900 + parsed.args.display;
+  const viewerCommand = buildVmViewCommand(parsed.args, port);
+  const lines = [
+    "VM view:",
+    `VNC endpoint: ${parsed.args.host}:${port}`,
+    `QMP command: change vnc ${endpoint}`,
+    `viewer command: ${formatCommand(viewerCommand)}`,
+    "Safety: binds display to loopback only; does not restart or reconfigure the VM beyond the live VNC endpoint.",
+  ];
+
+  if (parsed.args.dryRun) {
+    return { exitCode: 0, stdout: ["VM view dry run:", ...lines.slice(1)].join("\n"), stderr: "" };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const qmp =
+    runtime.qmpClientFactory?.() ??
+    new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
+  try {
+    await qmp.connect();
+    await qmp.execute(
+      "human-monitor-command",
+      { "command-line": `change vnc ${endpoint}` },
+      { timeoutMs: config.qmp.timeoutMs },
+    );
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        "Unable to enable a live VNC view for the running VM.",
+        error instanceof Error ? error.message : String(error),
+        "Try `crucible vm view --dry-run` to inspect the planned endpoint, or restart later with display support once available.",
+      ].join("\n"),
+    };
+  } finally {
+    qmp.close();
+  }
+
+  const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
+  if (!launchResult.ok) {
+    return {
+      exitCode: 1,
+      stdout: lines.join("\n"),
+      stderr: launchResult.error,
+    };
+  }
+
+  return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
+}
+
+async function launchVmViewer(
+  viewerCommand: readonly string[],
+  runner: ProcessRunner | undefined,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
+  const executable = viewerCommand[0] ?? "remote-viewer";
+  const args = viewerCommand.slice(1);
+  if (runner !== undefined) {
+    let result: ProcessResult;
+    try {
+      result = await runner.run({
+        executable,
+        args,
+        timeoutMs: 10_000,
+        maxOutputBytes: 256 * 1024,
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    if (result.exitCode !== 0 || result.timedOut) {
+      return { ok: false, error: result.stderr || "viewer command failed" };
+    }
+    return { ok: true };
+  }
+
+  try {
+    const child = spawn(executable, args, { detached: true, stdio: "ignore" });
+    const launched = await new Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>(
+      (resolve) => {
+        const timer = setTimeout(() => resolve({ ok: true }), 250);
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          resolve({ ok: false, error: error.message });
+        });
+        child.once("spawn", () => {
+          clearTimeout(timer);
+          resolve({ ok: true });
+        });
+      },
+    );
+    if (!launched.ok) {
+      return launched;
+    }
+    child.unref();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function runVmLogsCommand(
@@ -2564,6 +2698,71 @@ type NetTeardownArgsResult =
   | { readonly ok: true; readonly args: NetTeardownArgs }
   | { readonly ok: false; readonly message: string };
 
+function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
+  let dryRun = false;
+  let viewer: "remote-viewer" | "vncviewer" = "remote-viewer";
+  let host = "127.0.0.1";
+  let display = 1;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--viewer") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --viewer" };
+      }
+      if (value !== "remote-viewer" && value !== "vncviewer") {
+        return { ok: false, message: "--viewer must be remote-viewer or vncviewer" };
+      }
+      viewer = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--host") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --host" };
+      }
+      if (value !== "127.0.0.1" && value !== "localhost") {
+        return { ok: false, message: "vm view only supports loopback hosts" };
+      }
+      host = "127.0.0.1";
+      index += 1;
+      continue;
+    }
+    if (arg === "--display") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --display" };
+      }
+      if (!/^\d+$/.test(value)) {
+        return { ok: false, message: "--display must be an integer from 0 to 99" };
+      }
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 99) {
+        return { ok: false, message: "--display must be an integer from 0 to 99" };
+      }
+      display = parsed;
+      index += 1;
+      continue;
+    }
+    return { ok: false, message: `Unknown vm view option: ${arg}` };
+  }
+
+  return { ok: true, args: { dryRun, viewer, host, display } };
+}
+
+function buildVmViewCommand(args: VmViewArgs, port: number): readonly string[] {
+  if (args.viewer === "vncviewer") {
+    return ["vncviewer", `${args.host}:${args.display}`];
+  }
+  return ["remote-viewer", `vnc://${args.host}:${port}`];
+}
+
 type GuestExecArgsResult =
   | { readonly ok: true; readonly args: GuestExecArgs }
   | { readonly ok: false; readonly message: string };
@@ -3107,6 +3306,16 @@ const COMMANDS: readonly CommandDefinition[] = [
     group: "vm",
     summary: "Show lifecycle, PID, QMP, and log paths.",
     usage: ["crucible vm status"],
+  },
+  {
+    canonical: "vm:view",
+    preferred: "vm view",
+    group: "vm",
+    summary: "Open a loopback-only VNC view of the running VM.",
+    usage: [
+      "crucible vm view [--dry-run] [--viewer remote-viewer|vncviewer] [--host 127.0.0.1|localhost] [--display 1]",
+    ],
+    examples: ["crucible vm view --dry-run", "crucible vm view --viewer remote-viewer"],
   },
   {
     canonical: "vm:logs",

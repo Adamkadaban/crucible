@@ -7,6 +7,7 @@ paths that lifecycle code will execute.
 pnpm crucible vm create --dry-run
 pnpm crucible vm start --dry-run
 pnpm crucible vm status
+pnpm crucible vm view --dry-run
 pnpm crucible vm start
 pnpm crucible vm logs
 pnpm crucible vm stop
@@ -89,6 +90,10 @@ CLI lifecycle commands map directly onto the core lifecycle manager:
 - `vm start --dry-run` prints the QEMU launch plan without starting QEMU.
 - `vm start` launches QEMU detached and records pid, log, state, and artifact manifests.
 - `vm status` reports process liveness and QMP status when the VM is running.
+- `vm view` enables a loopback-only VNC endpoint on the running VM via QMP and opens a local viewer.
+  The built-in viewer choices are `--viewer remote-viewer` and `--viewer vncviewer`; other local
+  VNC clients can connect manually to the printed loopback endpoint. Use `vm view --dry-run` to
+  inspect the endpoint and viewer command without touching QMP.
 - `vm logs` prints the QEMU stdout and stderr logs, using `(missing)` before a log file exists.
 - `vm stop` requests graceful QMP `quit`, `vm stop --poweroff` requests guest powerdown, and
   `vm stop --kill` force-kills the recorded process.

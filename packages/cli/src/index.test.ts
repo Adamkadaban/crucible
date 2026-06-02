@@ -1782,6 +1782,148 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("pid: none");
   });
 
+  it("prints vm view dry-run without touching QMP", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--dry-run"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VM view dry run:");
+    expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
+    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(result.stdout).toContain("remote-viewer vnc://127.0.0.1:5901");
+  });
+
+  it("enables vm view over QMP and launches the viewer", async () => {
+    const qmpCommands: string[] = [];
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view", "--viewer", "vncviewer"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: (command: string, args?: Readonly<Record<string, unknown>>) => {
+          qmpCommands.push(`${command}:${JSON.stringify(args)}`);
+          return Promise.resolve({ id: "test", returnValue: {}, events: [] });
+        },
+        close: () => undefined,
+      }),
+      processRunner: {
+        run(command) {
+          processCommands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(qmpCommands).toEqual([
+      'human-monitor-command:{"command-line":"change vnc 127.0.0.1:1"}',
+    ]);
+    expect(processCommands).toEqual(["vncviewer 127.0.0.1:1"]);
+    expect(result.stdout).toContain("viewer: launched");
+  });
+
+  it("rejects unsupported vm view viewers", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--viewer", "sh"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--viewer must be remote-viewer or vncviewer");
+  });
+
+  it("rejects malformed vm view display values", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--display", "1junk"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--display must be an integer from 0 to 99");
+  });
+
+  it("reports missing vm view viewer executables", async () => {
+    const emptyPath = await createTempDir("crucible-empty-path-");
+    vi.stubEnv("PATH", emptyPath);
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ENOENT");
+  });
+
+  it("reports vm view injected viewer runner failures", async () => {
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+      processRunner: {
+        run() {
+          return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("spawn remote-viewer ENOENT");
+  });
+
+  it("rejects non-loopback vm view hosts", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--host", "0.0.0.0"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("loopback");
+  });
+
+  it("canonicalizes vm view localhost host to loopback address", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--dry-run", "--host", "localhost"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
+    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+  });
+
+  it("reports vm view QMP failures without launching viewer", async () => {
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.reject(new Error("change vnc unsupported")),
+        close: () => undefined,
+      }),
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Unable to enable a live VNC view");
+    expect(result.stderr).toContain("change vnc unsupported");
+    expect(processCommands).toEqual([]);
+  });
+
   it("prints missing VM logs before the VM has started", async () => {
     const root = await createTempDir("crucible-cli-");
     const config = parseCrucibleConfig({
