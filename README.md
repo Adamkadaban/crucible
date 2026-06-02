@@ -47,11 +47,11 @@ Create `crucible.config.json` in the directory where you will run Crucible, edit
 then provision with the global CLI:
 
 ```sh
-crucible config:init
+crucible config init
 crucible provision
-crucible guest:health
-crucible snapshot:list
-crucible snapshot:restore clean-base
+crucible guest health
+crucible snapshot list
+crucible snapshot restore clean-base
 ```
 
 ## Source Checkout
@@ -71,7 +71,7 @@ CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-
 Create `crucible.config.json` with your local media paths:
 
 ```sh
-pnpm crucible config:init
+pnpm crucible config init
 ```
 
 `crucible.config.json`, VM disks, generated credentials, snapshots, dumps, pcaps, symbols, and
@@ -81,15 +81,15 @@ From a source checkout, use the package script wrapper instead of the global bin
 
 ```sh
 pnpm crucible provision
-pnpm crucible guest:health
-pnpm crucible snapshot:list
+pnpm crucible guest health
+pnpm crucible snapshot list
 ```
 
 The first provision usually takes 12-18 minutes. On success Crucible creates a `clean-base`
 snapshot. Restore it before each new analysis session:
 
 ```sh
-pnpm crucible snapshot:restore clean-base
+pnpm crucible snapshot restore clean-base
 ```
 
 ## MCP Server
@@ -139,14 +139,17 @@ an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucibl
 ```sh
 pnpm crucible --help
 crucible --help
-pnpm crucible media:plan --manual
-pnpm crucible vm:start --dry-run
-pnpm crucible vm:status
-pnpm crucible vm:logs
-pnpm crucible vm:stop
-pnpm crucible net:status
-pnpm crucible snapshot:restore clean-base
+pnpm crucible media plan --manual
+pnpm crucible vm start --dry-run
+pnpm crucible vm status
+pnpm crucible vm logs
+pnpm crucible vm stop
+pnpm crucible network status
+pnpm crucible snapshot restore clean-base
 ```
+
+The older colon spellings such as `crucible vm:status` still work for compatibility, but docs prefer
+the space-separated command style.
 
 ## Safety Notes
 

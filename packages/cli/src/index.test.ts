@@ -36,6 +36,49 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
+    expect(result.stdout).toContain("crucible vm status");
+    expect(result.stdout).toContain("Command groups:");
+  });
+
+  it("prints grouped and command help", async () => {
+    const group = await runCrucibleCli(["vm", "--help"], defaultRuntime);
+    const command = await runCrucibleCli(["vm", "status", "--help"], defaultRuntime);
+
+    expect(group.exitCode).toBe(0);
+    expect(group.stdout).toContain("crucible vm");
+    expect(group.stdout).toContain("vm status");
+    expect(command.exitCode).toBe(0);
+    expect(command.stdout).toContain("crucible vm status");
+    expect(command.stdout).toContain("Aliases: vm:status");
+  });
+
+  it("supports space-separated command aliases", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const lifecycle = fakeLifecycleManager(config, { processAlive: true, qmpAvailable: true });
+    const snapshotManager = fakeSnapshotManager(config);
+
+    const vmStatus = await runCrucibleCli(["vm", "status"], {
+      config,
+      lifecycleManager: lifecycle,
+    });
+    const snapshotList = await runCrucibleCli(["snapshot", "list"], { config, snapshotManager });
+    const networkStatus = await runCrucibleCli(["network", "status"], { config });
+    const netAlias = await runCrucibleCli(["net", "status"], { config });
+    const guestExec = await runCrucibleCli(["guest", "exec", "whoami.exe"], {
+      config,
+      guestClientFactory: () => Promise.resolve(fakeGuestClient()),
+    });
+
+    expect(vmStatus.exitCode).toBe(0);
+    expect(vmStatus.stdout).toContain("status: running");
+    expect(snapshotList.exitCode).toBe(0);
+    expect(snapshotList.stdout).toContain("Snapshots: none");
+    expect(networkStatus.exitCode).toBe(0);
+    expect(networkStatus.stdout).toContain("Network status:");
+    expect(netAlias.exitCode).toBe(0);
+    expect(netAlias.stdout).toContain("Network status:");
+    expect(guestExec.exitCode).toBe(0);
+    expect(guestExec.stdout).toContain("fake-output");
   });
 
   it("prints mcp banner without starting stdio transport", async () => {
@@ -53,6 +96,14 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown command: nope");
     expect(result.stderr).toContain("crucible provision");
+  });
+
+  it("suggests close command matches", async () => {
+    const result = await runCrucibleCli(["vm", "stats"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown command: vm stats");
+    expect(result.stderr).toContain("Did you mean: crucible vm status?");
   });
 
   it("rejects invalid vm:create and vm:start options", async () => {

@@ -4,15 +4,15 @@ Crucible plans QEMU before it launches anything. Dry-run commands print the exac
 paths that lifecycle code will execute.
 
 ```sh
-pnpm crucible vm:create --dry-run
-pnpm crucible vm:start --dry-run
-pnpm crucible vm:status
-pnpm crucible vm:start
-pnpm crucible vm:logs
-pnpm crucible vm:stop
-pnpm crucible snapshot:create clean-base
-pnpm crucible snapshot:list
-pnpm crucible snapshot:restore clean-base
+pnpm crucible vm create --dry-run
+pnpm crucible vm start --dry-run
+pnpm crucible vm status
+pnpm crucible vm start
+pnpm crucible vm logs
+pnpm crucible vm stop
+pnpm crucible snapshot create clean-base
+pnpm crucible snapshot list
+pnpm crucible snapshot restore clean-base
 ```
 
 The default QEMU plan uses:
@@ -84,14 +84,14 @@ operator sample directories.
 
 CLI lifecycle commands map directly onto the core lifecycle manager:
 
-- `vm:create --dry-run` prints the qcow2 creation command and QEMU launch plan without touching disk
+- `vm create --dry-run` prints the qcow2 creation command and QEMU launch plan without touching disk
   state.
-- `vm:start --dry-run` prints the QEMU launch plan without starting QEMU.
-- `vm:start` launches QEMU detached and records pid, log, state, and artifact manifests.
-- `vm:status` reports process liveness and QMP status when the VM is running.
-- `vm:logs` prints the QEMU stdout and stderr logs, using `(missing)` before a log file exists.
-- `vm:stop` requests graceful QMP `quit`, `vm:stop --poweroff` requests guest powerdown, and
-  `vm:stop --kill` force-kills the recorded process.
+- `vm start --dry-run` prints the QEMU launch plan without starting QEMU.
+- `vm start` launches QEMU detached and records pid, log, state, and artifact manifests.
+- `vm status` reports process liveness and QMP status when the VM is running.
+- `vm logs` prints the QEMU stdout and stderr logs, using `(missing)` before a log file exists.
+- `vm stop` requests graceful QMP `quit`, `vm stop --poweroff` requests guest powerdown, and
+  `vm stop --kill` force-kills the recorded process.
 
 ## Snapshots
 
@@ -99,12 +99,12 @@ Snapshot metadata is stored in the same artifact manifest as lifecycle resources
 record includes the QEMU tag, base qcow2 path, whether it is the `clean-base` snapshot, the snapshot
 mode, and the last restore time when applicable.
 
-`snapshot:create [name]` defaults to `clean-base`. With an available QMP socket, Crucible sends
+`snapshot create [name]` defaults to `clean-base`. With an available QMP socket, Crucible sends
 `stop`, `snapshot-save`, and `cont` so the VM is paused during the save point. If QMP is unavailable
 before any snapshot command is sent, it falls back to `qemu-img snapshot -c <name> <disk>`, which is
 safe for offline qcow2 disks and host-only tests.
 
-`snapshot:restore [name]` loads the manifest entry first. QMP-backed snapshots restore with `stop`,
+`snapshot restore [name]` loads the manifest entry first. QMP-backed snapshots restore with `stop`,
 `snapshot-load`, and `cont`. Offline qcow2 snapshots restore with
 `qemu-img snapshot -a <name> <disk>`. Later malware-analysis workflow commands can depend on
 `clean-base` as the standard restore target before and after executing samples.

@@ -1,9 +1,9 @@
 # Network Isolation
 
 Crucible's malware-analysis default is no guest Internet egress. The network model defines the QEMU
-and firewall contracts used by the CLI and MCP tools. `crucible net:plan` renders concrete QEMU and
-firewall command plans without executing host changes, so use its dry-run output to verify that the
-selected mode matches the analysis risk.
+and firewall contracts used by the CLI and MCP tools. `crucible network plan` renders concrete QEMU
+and firewall command plans without executing host changes, so use its dry-run output to verify that
+the selected mode matches the analysis risk.
 
 ## Network Modes
 
@@ -50,11 +50,11 @@ capture setup can bind traffic to a specific Crucible VM.
 
 ## Firewall Plans
 
-`crucible net:plan` defaults to nftables dry-run output. Use `--backend iptables` to render an
+`crucible network plan` defaults to nftables dry-run output. Use `--backend iptables` to render an
 iptables model instead. Use `--apply` to print, but not execute, the apply and teardown command
 models after the dry-run commands.
 
-`crucible net:teardown --dry-run` renders the project-owned teardown model directly. Use
+`crucible network teardown --dry-run` renders the project-owned teardown model directly. Use
 `--backend iptables` to match an iptables deployment, and use `--apply` only after reviewing the dry
 run. The CLI prints the apply model but does not execute privileged host changes.
 
@@ -107,7 +107,7 @@ resources outside the plan's teardown contract, and broad interface names such a
 ## Operator Guidance
 
 - Use `isolated` for malware samples unless a specific analysis objective requires egress.
-- Review `vm:start --dry-run` before launch. In isolated mode, the QEMU argv should contain
+- Review `vm start --dry-run` before launch. In isolated mode, the QEMU argv should contain
   `restrict=on` and only the loopback control `hostfwd` mapping.
 - Do not add `vm.extraQemuArgs` that create bridge, socket, VNC-over-network, host filesystem, or
   unrestricted network devices unless the host is dedicated to that risk.
