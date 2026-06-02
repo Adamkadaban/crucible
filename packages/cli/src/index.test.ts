@@ -135,6 +135,9 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("prints update dry-run plan without installing", async () => {
+    const root = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(root, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(root, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
     const commands: string[] = [];
     const result = await runCrucibleCli(["update", "--dry-run"], {
       ...defaultRuntime,
@@ -144,7 +147,7 @@ describe("crucible CLI bootstrap", () => {
           return Promise.resolve({
             command,
             exitCode: 0,
-            stdout: command.args.includes("view") ? "1.2.3\n" : "/npm/global\n",
+            stdout: command.args.includes("view") ? "1.2.3\n" : `${root}\n`,
             stderr: "",
             durationMs: 1,
             timedOut: false,
@@ -159,11 +162,22 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("latest npm version: 1.2.3");
     expect(result.stdout).toContain("package update: would run");
     expect(result.stdout).toContain("MCP config refresh:");
-    expect(commands).toEqual(["npm view @adamkadaban/crucible version --silent", "npm root -g"]);
+    expect(commands).toEqual([
+      "npm view @adamkadaban/crucible version --silent",
+      "npm root -g",
+      "pnpm root -g",
+    ]);
   });
 
   it("updates package and refreshes opencode MCP config with --yes", async () => {
     const root = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
     vi.stubEnv("HOME", root);
     const commands: string[] = [];
     const result = await runCrucibleCli(["update", "--yes"], {
@@ -171,10 +185,21 @@ describe("crucible CLI bootstrap", () => {
       processRunner: {
         run(command) {
           commands.push(`${command.executable} ${command.args.join(" ")}`);
+          if (command.executable === "pnpm") {
+            return Promise.resolve({
+              command,
+              exitCode: 1,
+              stdout: "",
+              stderr: "pnpm global root unavailable",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          }
           const stdout = command.args.includes("view")
             ? "1.2.3\n"
             : command.args.includes("root")
-              ? "/npm/global\n"
+              ? `${globalRoot}\n`
               : "updated\n";
           return Promise.resolve({
             command,
@@ -198,6 +223,41 @@ describe("crucible CLI bootstrap", () => {
     expect(opencodeConfig.mcp?.crucible?.command).toBe("crucible");
     expect(opencodeConfig.mcp?.crucible?.args).toEqual(["mcp", "--stdio"]);
     expect(commands).toContain("npm install -g @adamkadaban/crucible@latest");
+  });
+
+  it("prefers pnpm update when pnpm owns the global package", async () => {
+    const npmRoot = await createTempDir("crucible-npm-root-");
+    const pnpmRoot = await createTempDir("crucible-pnpm-root-");
+    await mkdir(path.join(pnpmRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(pnpmRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          const stdout = command.args.includes("view")
+            ? "1.2.3\n"
+            : command.executable === "pnpm"
+              ? `${pnpmRoot}\n`
+              : `${npmRoot}\n`;
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(`detected install: pnpm global (${pnpmRoot})`);
+    expect(result.stdout).toContain("package command: pnpm add -g '@adamkadaban/crucible@latest'");
+    expect(commands).toContain("pnpm root -g");
   });
 
   it("requires --yes for non-interactive update apply", async () => {

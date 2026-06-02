@@ -1817,7 +1817,7 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     actions.push("package update: already current");
   }
 
-  const mcpResults = await refreshMcpConfigs(runtime);
+  const mcpResults = await refreshMcpConfigs();
   actions.push("MCP config refresh:", ...mcpResults);
   return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
 }
@@ -1828,27 +1828,43 @@ type GlobalInstallDetection = {
 };
 
 async function detectGlobalInstall(runner: ProcessRunner): Promise<GlobalInstallDetection> {
-  const npmRoot = await runner.run({
-    executable: "npm",
-    args: ["root", "-g"],
-    timeoutMs: 30_000,
-    maxOutputBytes: 64 * 1024,
-  });
-  if (npmRoot.exitCode === 0 && npmRoot.stdout.trim().length > 0) {
-    return { manager: "npm", detail: npmRoot.stdout.trim() };
-  }
+  const [npmRoot, pnpmRoot] = await Promise.all([
+    readGlobalRoot(runner, "npm"),
+    readGlobalRoot(runner, "pnpm"),
+  ]);
 
-  const pnpmRoot = await runner.run({
-    executable: "pnpm",
-    args: ["root", "-g"],
-    timeoutMs: 30_000,
-    maxOutputBytes: 64 * 1024,
-  });
-  if (pnpmRoot.exitCode === 0 && pnpmRoot.stdout.trim().length > 0) {
-    return { manager: "pnpm", detail: pnpmRoot.stdout.trim() };
+  if (pnpmRoot !== undefined && (await packageExistsInGlobalRoot(pnpmRoot))) {
+    return { manager: "pnpm", detail: pnpmRoot };
+  }
+  if (npmRoot !== undefined && (await packageExistsInGlobalRoot(npmRoot))) {
+    return { manager: "npm", detail: npmRoot };
+  }
+  if (npmRoot !== undefined) {
+    return { manager: "npm", detail: `${npmRoot} (package not found; fallback)` };
+  }
+  if (pnpmRoot !== undefined) {
+    return { manager: "pnpm", detail: `${pnpmRoot} (package not found; fallback)` };
   }
 
   return { manager: "npm", detail: "fallback" };
+}
+
+async function readGlobalRoot(
+  runner: ProcessRunner,
+  manager: "npm" | "pnpm",
+): Promise<string | undefined> {
+  const result = await runner.run({
+    executable: manager,
+    args: ["root", "-g"],
+    timeoutMs: 30_000,
+    maxOutputBytes: 64 * 1024,
+  });
+  const root = result.stdout.trim();
+  return result.exitCode === 0 && root.length > 0 ? root : undefined;
+}
+
+function packageExistsInGlobalRoot(root: string): Promise<boolean> {
+  return fileExists(join(root, "@adamkadaban", "crucible", "package.json"));
 }
 
 function formatInstallDetection(install: GlobalInstallDetection): string {
@@ -1871,7 +1887,7 @@ function renderMcpUpdateDryRun(): readonly string[] {
   ];
 }
 
-async function refreshMcpConfigs(runtime: CliRuntime): Promise<readonly string[]> {
+async function refreshMcpConfigs(): Promise<readonly string[]> {
   const results: string[] = [];
   const opencode = await setupJsonMcpCommand({
     targetName: "opencode",
@@ -1884,7 +1900,6 @@ async function refreshMcpConfigs(runtime: CliRuntime): Promise<readonly string[]
     `- opencode: ${firstLine([opencode.stdout, opencode.stderr].filter(Boolean).join(" "))}`,
   );
 
-  void runtime;
   results.push("- claude: skipped; run `crucible setup claude` to refresh via Claude CLI");
   results.push("- codex: skipped; run `crucible setup codex --print` for current guidance");
   results.push("- copilot: skipped; run `crucible setup copilot --print` for current guidance");
