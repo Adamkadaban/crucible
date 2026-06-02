@@ -2003,7 +2003,7 @@ function renderNetTeardownCommand(args: readonly string[], runtime: CliRuntime):
 
 function renderNetStatusCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   if (args.length > 0) {
-    return { exitCode: 2, stdout: "", stderr: `Unknown net:status option: ${args[0]}` };
+    return { exitCode: 2, stdout: "", stderr: `Unknown network status option: ${args[0]}` };
   }
   const config = getRuntimeConfig(runtime);
   const plan = buildNetworkPlan({
@@ -2456,7 +2456,7 @@ function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): Ne
       continue;
     }
 
-    return { ok: false, message: `Unknown net:plan option: ${arg}` };
+    return { ok: false, message: `Unknown network plan option: ${arg}` };
   }
 
   return { ok: true, args: { mode, firewallBackend, includeApply } };
@@ -2527,7 +2527,7 @@ function parseNetTeardownArgs(
       continue;
     }
 
-    return { ok: false, message: `Unknown net:teardown option: ${arg}` };
+    return { ok: false, message: `Unknown network teardown option: ${arg}` };
   }
 
   return { ok: true, args: { mode, firewallBackend, operation } };
@@ -2609,7 +2609,7 @@ function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
       index += 1;
       continue;
     }
-    return { ok: false, message: `Unknown config:init option: ${arg}` };
+    return { ok: false, message: `Unknown config init option: ${arg}` };
   }
 
   return { ok: true, args: { outputPath, force } };
@@ -2828,7 +2828,7 @@ const COMMANDS: readonly CommandDefinition[] = [
     canonical: "snapshot:create",
     preferred: "snapshot create",
     group: "snapshot",
-    summary: "Create a QMP/qcow2 snapshot.",
+    summary: "Create a QMP/qcow2 snapshot; defaults to clean-base when name is omitted.",
     usage: ["crucible snapshot create [name]"],
   },
   {
@@ -2842,7 +2842,7 @@ const COMMANDS: readonly CommandDefinition[] = [
     canonical: "snapshot:restore",
     preferred: "snapshot restore",
     group: "snapshot",
-    summary: "Restore a QMP/qcow2 snapshot.",
+    summary: "Restore a QMP/qcow2 snapshot; defaults to clean-base when name is omitted.",
     usage: ["crucible snapshot restore [name]"],
     examples: ["crucible snapshot restore clean-base"],
   },

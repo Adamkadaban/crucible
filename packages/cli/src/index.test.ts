@@ -462,7 +462,7 @@ describe("crucible CLI bootstrap", () => {
     const result = await runCrucibleCli(["config:init", "--bad"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Unknown config:init option: --bad");
+    expect(result.stderr).toContain("Unknown config init option: --bad");
   });
 
   it("prints host setup install command without --yes", async () => {
@@ -1957,7 +1957,7 @@ describe("additional CLI coverage", () => {
     const result = await runCrucibleCli(["net:teardown", "--invalid"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Unknown net:teardown option: --invalid");
+    expect(result.stderr).toContain("Unknown network teardown option: --invalid");
   });
 
   it("provision fails when stage is blocked", async () => {
@@ -2205,7 +2205,7 @@ describe("additional CLI coverage", () => {
     });
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Unknown net:status option: --verbose");
+    expect(result.stderr).toContain("Unknown network status option: --verbose");
   });
 
   it("net:plan rejects missing --mode value", async () => {
