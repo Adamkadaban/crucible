@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildLifecyclePaths,
+  CRUCIBLE_VERSION,
   defaultCrucibleConfig,
   parseCrucibleConfig,
   type GuestAgentHealth,
@@ -372,6 +373,94 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown update option: --bad");
+  });
+
+  it("reports npm version lookup spawn failures during update", async () => {
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run() {
+          return Promise.reject(new Error("spawn npm ENOENT"));
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Failed to check npm");
+    expect(result.stderr).toContain("spawn npm ENOENT");
+  });
+
+  it("reports package update spawn failures", async () => {
+    const root = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(root, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(root, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const result = await runCrucibleCli(["update", "--yes"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          if (command.args.includes("install")) {
+            return Promise.reject(new Error("spawn npm ENOENT"));
+          }
+          return Promise.resolve({
+            command,
+            exitCode: command.executable === "pnpm" ? 1 : 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : `${root}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("spawn npm ENOENT");
+  });
+
+  it("returns non-zero when update MCP refresh fails", async () => {
+    const previousHome = process.env.HOME;
+    const home = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = home;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const configPath = path.join(home, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, "not-json", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["update", "--yes"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view")
+                ? `${CRUCIBLE_VERSION}\n`
+                : command.args.includes("root")
+                  ? `${globalRoot}\n`
+                  : "updated\n",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain("MCP config refresh:");
+      expect(result.stderr).toContain("Failed to read");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
   });
 
   it("rejects invalid vm:create and vm:start options", async () => {

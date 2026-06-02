@@ -1745,12 +1745,24 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
   }
 
   const runner = runtime.processRunner ?? nodeProcessRunner;
-  const latestResult = await runner.run({
-    executable: "npm",
-    args: ["view", "@adamkadaban/crucible", "version", "--silent"],
-    timeoutMs: 60_000,
-    maxOutputBytes: 64 * 1024,
-  });
+  let latestResult: ProcessResult;
+  try {
+    latestResult = await runner.run({
+      executable: "npm",
+      args: ["view", "@adamkadaban/crucible", "version", "--silent"],
+      timeoutMs: 60_000,
+      maxOutputBytes: 64 * 1024,
+    });
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        "Failed to check npm for the latest Crucible version.",
+        error instanceof Error ? error.message : String(error),
+      ].join("\n"),
+    };
+  }
   if (latestResult.exitCode !== 0 || latestResult.timedOut) {
     return {
       exitCode: latestResult.timedOut ? 1 : (latestResult.exitCode ?? 1),
@@ -1802,13 +1814,22 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
 
   if (needsPackageUpdate) {
     const command = buildPackageUpdateCommand(install);
-    const updateResult = await runner.run({
-      executable: command[0] ?? "npm",
-      args: command.slice(1),
-      timeoutMs: 5 * 60 * 1000,
-      maxOutputBytes: 1024 * 1024,
-    });
+    let updateResult: ProcessResult;
     actions.push(`package command: ${formatCommand(command)}`);
+    try {
+      updateResult = await runner.run({
+        executable: command[0] ?? "npm",
+        args: command.slice(1),
+        timeoutMs: 5 * 60 * 1000,
+        maxOutputBytes: 1024 * 1024,
+      });
+    } catch (error) {
+      return {
+        exitCode: 1,
+        stdout: actions.join("\n"),
+        stderr: error instanceof Error ? error.message : String(error),
+      };
+    }
     if (updateResult.exitCode !== 0 || updateResult.timedOut) {
       return {
         exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
@@ -1822,8 +1843,8 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
   }
 
   const mcpResults = await refreshMcpConfigs();
-  actions.push("MCP config refresh:", ...mcpResults);
-  return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  actions.push("MCP config refresh:", ...mcpResults.lines);
+  return { exitCode: mcpResults.exitCode, stdout: actions.join("\n"), stderr: mcpResults.stderr };
 }
 
 type GlobalInstallDetection = {
@@ -1896,7 +1917,11 @@ function renderMcpUpdateDryRun(): readonly string[] {
   ];
 }
 
-async function refreshMcpConfigs(): Promise<readonly string[]> {
+async function refreshMcpConfigs(): Promise<{
+  readonly exitCode: number;
+  readonly lines: readonly string[];
+  readonly stderr: string;
+}> {
   const results: string[] = [];
   const opencode = await setupJsonMcpCommand({
     targetName: "opencode",
@@ -1912,7 +1937,7 @@ async function refreshMcpConfigs(): Promise<readonly string[]> {
   results.push("- claude: skipped; run `crucible setup claude` to refresh via Claude CLI");
   results.push("- codex: skipped; run `crucible setup codex --print` for current guidance");
   results.push("- copilot: skipped; run `crucible setup copilot --print` for current guidance");
-  return results;
+  return { exitCode: opencode.exitCode, lines: results, stderr: opencode.stderr };
 }
 
 function firstLine(value: string): string {
@@ -2999,7 +3024,7 @@ const COMMANDS: readonly CommandDefinition[] = [
   {
     canonical: "update",
     preferred: "update",
-    summary: "Update the global npm package and refresh MCP config entries.",
+    summary: "Update the global package and refresh MCP config entries.",
     usage: ["crucible update [--dry-run] [--yes]"],
     examples: ["crucible update --dry-run", "crucible update --yes"],
   },
