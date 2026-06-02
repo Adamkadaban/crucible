@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import type { ZodType } from "zod";
 import { ZodError, z } from "zod";
 
@@ -133,31 +135,107 @@ export const crucibleConfigSchema = z
 export type CrucibleConfig = z.output<typeof crucibleConfigSchema>;
 export type CrucibleConfigInput = z.input<typeof crucibleConfigSchema>;
 
+export function getDefaultCrucibleConfigPath(): string {
+  return path.join(homedir(), ".config", "crucible", "config.json");
+}
+
 export function parseCrucibleConfig(input: unknown): CrucibleConfig {
   return crucibleConfigSchema.parse(input);
 }
 
-export function loadCrucibleConfigFile(filePath = "crucible.config.json"): CrucibleConfig {
+export function loadCrucibleConfigFile(filePath?: string): CrucibleConfig {
+  const resolvedPath = path.resolve(
+    filePath ?? process.env.CRUCIBLE_CONFIG ?? getDefaultCrucibleConfigPath(),
+  );
+  const baseDirectory = path.dirname(resolvedPath);
   try {
-    return parseCrucibleConfig(JSON.parse(readFileSync(filePath, "utf8")));
+    return resolveCrucibleConfigPaths(
+      parseCrucibleConfig(JSON.parse(readFileSync(resolvedPath, "utf8"))),
+      baseDirectory,
+    );
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
-      return defaultCrucibleConfig;
+      return resolveCrucibleConfigPaths(defaultCrucibleConfig, baseDirectory);
     }
 
     if (error instanceof SyntaxError || error instanceof ZodError) {
-      throw new CrucibleError("CONFIG_INVALID", `Invalid Crucible config file: ${filePath}`, error);
+      throw new CrucibleError(
+        "CONFIG_INVALID",
+        `Invalid Crucible config file: ${resolvedPath}`,
+        error,
+      );
     }
 
     throw new CrucibleError(
       "CONFIG_INVALID",
-      `Unable to read Crucible config file: ${filePath}`,
+      `Unable to read Crucible config file: ${resolvedPath}`,
       error,
     );
   }
 }
 
 export const defaultCrucibleConfig = parseCrucibleConfig({});
+
+function resolveCrucibleConfigPaths(config: CrucibleConfig, baseDirectory: string): CrucibleConfig {
+  const resolveHostPath = (value: string): string =>
+    path.isAbsolute(value) ? value : path.resolve(baseDirectory, value);
+  return {
+    ...config,
+    media: {
+      ...config.media,
+      cacheDir: resolveHostPath(config.media.cacheDir),
+      windowsIso:
+        config.media.windowsIso === undefined
+          ? undefined
+          : {
+              ...config.media.windowsIso,
+              path: maybeResolve(config.media.windowsIso.path, resolveHostPath),
+            },
+      virtioIso:
+        config.media.virtioIso === undefined
+          ? undefined
+          : {
+              ...config.media.virtioIso,
+              path: maybeResolve(config.media.virtioIso.path, resolveHostPath),
+            },
+      driverBundle:
+        config.media.driverBundle === undefined
+          ? undefined
+          : {
+              ...config.media.driverBundle,
+              path: maybeResolve(config.media.driverBundle.path, resolveHostPath),
+            },
+    },
+    network: {
+      ...config.network,
+      pcapPath: maybeResolve(config.network.pcapPath, resolveHostPath),
+      tlsKeyLogPath: maybeResolve(config.network.tlsKeyLogPath, resolveHostPath),
+    },
+    vm: {
+      ...config.vm,
+      display: {
+        ...config.vm.display,
+        vncSocketPath: resolveHostPath(config.vm.display.vncSocketPath),
+      },
+    },
+    qmp: { ...config.qmp, socketPath: resolveHostPath(config.qmp.socketPath) },
+    qga: { ...config.qga, socketPath: resolveHostPath(config.qga.socketPath) },
+    artifacts: {
+      directory: resolveHostPath(config.artifacts.directory),
+      manifestPath: resolveHostPath(config.artifacts.manifestPath),
+      logsDirectory: resolveHostPath(config.artifacts.logsDirectory),
+      snapshotsDirectory: resolveHostPath(config.artifacts.snapshotsDirectory),
+      secretsDirectory: resolveHostPath(config.artifacts.secretsDirectory),
+    },
+  };
+}
+
+function maybeResolve(
+  value: string | undefined,
+  resolver: (value: string) => string,
+): string | undefined {
+  return value === undefined ? undefined : resolver(value);
+}
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;

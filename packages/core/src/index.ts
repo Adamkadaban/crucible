@@ -16,6 +16,7 @@ export type {
 } from "./analysis-policy.js";
 export {
   defaultCrucibleConfig,
+  getDefaultCrucibleConfigPath,
   loadCrucibleConfigFile,
   parseCrucibleConfig,
   crucibleConfigSchema,

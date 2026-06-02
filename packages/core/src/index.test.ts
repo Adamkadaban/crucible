@@ -540,7 +540,11 @@ describe("core bootstrap exports", () => {
   });
 
   it("loads default config when no config file exists", () => {
-    expect(loadCrucibleConfigFile("missing-crucible.config.json")).toEqual(defaultCrucibleConfig);
+    const config = loadCrucibleConfigFile("missing-crucible.config.json");
+    expect(config.vm.name).toBe(defaultCrucibleConfig.vm.name);
+    expect(config.vm.display.vncSocketPath).toBe(resolve("artifacts/vnc.sock"));
+    expect(config.artifacts.manifestPath).toBe(resolve("artifacts/manifest.json"));
+    expect(config.qmp.socketPath).toBe(resolve("artifacts/qmp.sock"));
   });
 
   it("wraps invalid config file failures", () => {
