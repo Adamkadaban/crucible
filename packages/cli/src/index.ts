@@ -759,7 +759,7 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       } catch (error) {
         return {
           available: false,
-          backend: "qmp-input-send-event",
+          backend: "qmp",
           inputAvailable: false,
           message: error instanceof Error ? error.message : String(error),
         };
