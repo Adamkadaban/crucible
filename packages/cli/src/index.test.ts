@@ -14,7 +14,12 @@ import {
   type VmStatus,
 } from "@crucible/core";
 
-import { normalizeVmTextInput, qemuKeyForTextInput, runCrucibleCli } from "./index.js";
+import {
+  buildMcpVmAdapter,
+  normalizeVmTextInput,
+  qemuKeyForTextInput,
+  runCrucibleCli,
+} from "./index.js";
 
 const defaultRuntime = { config: defaultCrucibleConfig };
 const tempDirs: string[] = [];
@@ -92,6 +97,54 @@ describe("crucible CLI bootstrap", () => {
 
   it("normalizes VM text input line endings before key expansion", () => {
     expect(normalizeVmTextInput("one\r\ntwo\rthree\nfour")).toBe("one\ntwo\nthree\nfour");
+  });
+
+  it("drives VM display input through QMP-backed MCP adapter methods", async () => {
+    const calls: Array<{ command: string; args?: Readonly<Record<string, unknown>> }> = [];
+    const adapter = buildMcpVmAdapter(parseCrucibleConfig({ vm: { name: "test-win" } }), () => ({
+      connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+      execute: <T = unknown>(command: string, args?: Readonly<Record<string, unknown>>) => {
+        calls.push({ command, args });
+        const returnValue =
+          command === "query-commands"
+            ? ([{ name: "input-send-event" }, { name: "human-monitor-command" }] as T)
+            : ({} as T);
+        return Promise.resolve({ id: "test", returnValue, events: [] });
+      },
+      close: () => undefined,
+    }));
+
+    await expect(adapter.displayInfo()).resolves.toMatchObject({
+      available: true,
+      inputAvailable: true,
+      backend: "qmp-input-send-event+qmp-human-monitor-command",
+    });
+    await expect(adapter.mouseClick({ x: 10, y: 20, button: "left" })).resolves.toMatchObject({
+      action: "mouse_click",
+      backend: "qmp-input-send-event",
+    });
+    await expect(adapter.keyPress("ctrl+alt+delete")).resolves.toMatchObject({
+      action: "key_press",
+      key: "ctrl-alt-delete",
+    });
+    await expect(adapter.typeText("A_+\r\n")).resolves.toMatchObject({
+      action: "type_text",
+      textLength: 4,
+    });
+
+    expect(calls).toContainEqual({ command: "query-commands", args: undefined });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        command: "human-monitor-command",
+        args: { "command-line": "sendkey shift-minus" },
+      }),
+    );
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        command: "human-monitor-command",
+        args: { "command-line": "sendkey ret" },
+      }),
+    );
   });
 
   it("passes guest command help flags after the argument separator", async () => {

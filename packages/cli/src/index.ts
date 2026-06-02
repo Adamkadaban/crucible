@@ -241,6 +241,7 @@ type UpdateArgsResult =
 
 type JsonObject = { [key: string]: unknown };
 type QmpMouseButton = "left" | "middle" | "right";
+type CliQmpSession = Pick<QmpClient, "connect" | "execute" | "close">;
 
 const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
   " ": "spc",
@@ -664,13 +665,14 @@ function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
   return runtime.snapshotManager ?? new SnapshotManager({ config: getRuntimeConfig(runtime) });
 }
 
-function buildMcpVmAdapter(config: CrucibleConfig) {
+export function buildMcpVmAdapter(
+  config: CrucibleConfig,
+  qmpClientFactory: () => CliQmpSession = () =>
+    new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs }),
+) {
   const manager = new VmLifecycleManager({ config });
-  const withQmp = async <T>(operation: (qmp: QmpClient) => Promise<T>) => {
-    const qmp = new QmpClient({
-      socketPath: config.qmp.socketPath,
-      timeoutMs: config.qmp.timeoutMs,
-    });
+  const withQmp = async <T>(operation: (qmp: CliQmpSession) => Promise<T>) => {
+    const qmp = qmpClientFactory();
     try {
       await qmp.connect();
       return await operation(qmp);
@@ -753,10 +755,7 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       await mkdir(dirname(outputPath), { recursive: true });
       const isPng = outputPath.endsWith(".png");
       const ppmPath = isPng ? `${outputPath}.tmp.ppm` : outputPath;
-      const qmp = new QmpClient({
-        socketPath: config.qmp.socketPath,
-        timeoutMs: config.qmp.timeoutMs,
-      });
+      const qmp = qmpClientFactory();
       try {
         await qmp.connect();
         await qmp.execute("screendump", { filename: ppmPath }, { timeoutMs: config.qmp.timeoutMs });

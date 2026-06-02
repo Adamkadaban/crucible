@@ -182,7 +182,13 @@ function Install-CommonSoftwareMarkers {
     $uninstallRoot = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
     $programFiles = ${env:ProgramFiles}
     foreach ($software in @($persona.softwareMarkers)) {
+        if ($null -eq $software -or [string]::IsNullOrWhiteSpace([string]$software.name)) {
+            continue
+        }
         $safeName = ([string]$software.name) -replace '[\\/:*?"<>|]', '_'
+        if ([string]::IsNullOrWhiteSpace($safeName)) {
+            continue
+        }
         $installLocation = Join-Path $programFiles $safeName
         New-Item -ItemType Directory -Force -LiteralPath $installLocation | Out-Null
         Set-Content -LiteralPath (Join-Path $installLocation "README-crucible-realism.txt") -Encoding UTF8 -Value @(
