@@ -119,29 +119,37 @@ function Find-CruciblePayloadRoot {
     return $payload.DeviceID
 }
 
+function Read-RealismPersona {
+    $payloadRoot = Find-CruciblePayloadRoot
+    if ([string]::IsNullOrWhiteSpace($payloadRoot)) {
+        return $null
+    }
+
+    $personaPath = Join-Path $payloadRoot "realism\persona.json"
+    if (-not (Test-Path -LiteralPath $personaPath)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $personaPath -Raw | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+}
+
 function Install-DecoyUserFiles {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Username
     )
 
-    $payloadRoot = Find-CruciblePayloadRoot
-    if ([string]::IsNullOrWhiteSpace($payloadRoot)) {
-        return
-    }
-
-    $personaPath = Join-Path $payloadRoot "realism\persona.json"
-    if (-not (Test-Path -LiteralPath $personaPath)) {
-        return
-    }
-
-    $persona = Get-Content -LiteralPath $personaPath -Raw | ConvertFrom-Json
+    $persona = Read-RealismPersona
     if (-not $persona.populateUserFiles) {
         return
     }
 
     $profileRoot = Join-Path "C:\Users" $Username
-    New-Item -ItemType Directory -Force -Path $profileRoot | Out-Null
+    New-Item -ItemType Directory -Force -LiteralPath $profileRoot | Out-Null
     foreach ($file in @($persona.decoyFiles)) {
         $relativePath = [string]$file.relativePath
         if (
@@ -154,7 +162,7 @@ function Install-DecoyUserFiles {
         }
 
         $targetPath = Join-Path $profileRoot $relativePath
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+        New-Item -ItemType Directory -Force -LiteralPath (Split-Path -Parent $targetPath) | Out-Null
         Set-Content -LiteralPath $targetPath -Value ([string]$file.content) -Encoding UTF8
         if ($file.lastWriteTimeUtc) {
             (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc = [datetime]$file.lastWriteTimeUtc
@@ -163,17 +171,7 @@ function Install-DecoyUserFiles {
 }
 
 function Install-CommonSoftwareMarkers {
-    $payloadRoot = Find-CruciblePayloadRoot
-    if ([string]::IsNullOrWhiteSpace($payloadRoot)) {
-        return
-    }
-
-    $personaPath = Join-Path $payloadRoot "realism\persona.json"
-    if (-not (Test-Path -LiteralPath $personaPath)) {
-        return
-    }
-
-    $persona = Get-Content -LiteralPath $personaPath -Raw | ConvertFrom-Json
+    $persona = Read-RealismPersona
     if (-not $persona.installCommonSoftware) {
         return
     }
@@ -183,20 +181,20 @@ function Install-CommonSoftwareMarkers {
     foreach ($software in @($persona.softwareMarkers)) {
         $safeName = ([string]$software.name) -replace '[\\/:*?"<>|]', '_'
         $installLocation = Join-Path $programFiles $safeName
-        New-Item -ItemType Directory -Force -Path $installLocation | Out-Null
+        New-Item -ItemType Directory -Force -LiteralPath $installLocation | Out-Null
         Set-Content -LiteralPath (Join-Path $installLocation "README-crucible-realism.txt") -Encoding UTF8 -Value @(
             "Crucible realism marker for $($software.name).",
             "This is an inert install-presence marker, not a bundled third-party application."
         )
 
         $keyPath = Join-Path $uninstallRoot "CrucibleRealism-$safeName"
-        New-Item -Path $keyPath -Force | Out-Null
-        New-ItemProperty -Path $keyPath -Name "DisplayName" -PropertyType String -Value ([string]$software.name) -Force | Out-Null
-        New-ItemProperty -Path $keyPath -Name "DisplayVersion" -PropertyType String -Value ([string]$software.version) -Force | Out-Null
-        New-ItemProperty -Path $keyPath -Name "Publisher" -PropertyType String -Value ([string]$software.publisher) -Force | Out-Null
-        New-ItemProperty -Path $keyPath -Name "InstallDate" -PropertyType String -Value ([string]$software.installDate) -Force | Out-Null
-        New-ItemProperty -Path $keyPath -Name "InstallLocation" -PropertyType String -Value $installLocation -Force | Out-Null
-        New-ItemProperty -Path $keyPath -Name "SystemComponent" -PropertyType DWord -Value 0 -Force | Out-Null
+        New-Item -LiteralPath $keyPath -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "DisplayName" -PropertyType String -Value ([string]$software.name) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "DisplayVersion" -PropertyType String -Value ([string]$software.version) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "Publisher" -PropertyType String -Value ([string]$software.publisher) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "InstallDate" -PropertyType String -Value ([string]$software.installDate) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "InstallLocation" -PropertyType String -Value $installLocation -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "SystemComponent" -PropertyType DWord -Value 0 -Force | Out-Null
     }
 }
 
