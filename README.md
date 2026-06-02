@@ -127,7 +127,10 @@ Example client config:
 Useful MCP tools include `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`, `snapshot_restore`,
 `guest_health`, `guest_exec`, `guest_upload_file`, `guest_download_file`, `debug_open`,
 `debug_command`, `debug_dump`, `dump_process`, `memory_scan`, and network/ProcMon inspection
-helpers.
+helpers. GUI-oriented MCP clients can combine `vm_screenshot` with `vm_mouse_move`,
+`vm_mouse_click`, `vm_mouse_double_click`, `vm_mouse_drag`, `vm_key_press`, and `vm_type_text`.
+Mouse coordinates use QMP absolute pointer coordinates, and key input is sent through QEMU monitor
+`sendkey` names or chords such as `ctrl-l` and `alt-f4`.
 
 User-mode CDB automation is supported. KD/KDNET tooling is installed and reported in health output,
 but kernel-debugging workflows are not implemented yet.
