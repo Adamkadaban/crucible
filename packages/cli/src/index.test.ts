@@ -1825,8 +1825,15 @@ describe("crucible CLI bootstrap", () => {
     expect(qmpCommands).toEqual([
       'human-monitor-command:{"command-line":"change vnc 127.0.0.1:1"}',
     ]);
-    expect(processCommands).toEqual(["vncviewer 127.0.0.1:5901"]);
+    expect(processCommands).toEqual(["vncviewer 127.0.0.1:1"]);
     expect(result.stdout).toContain("viewer: launched");
+  });
+
+  it("rejects unsupported vm view viewers", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--viewer", "sh"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--viewer must be remote-viewer or vncviewer");
   });
 
   it("rejects non-loopback vm view hosts", async () => {

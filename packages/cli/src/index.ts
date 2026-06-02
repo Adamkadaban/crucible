@@ -159,7 +159,7 @@ type CliQmpClient = {
 
 type VmViewArgs = {
   readonly dryRun: boolean;
-  readonly viewer?: string;
+  readonly viewer: "remote-viewer" | "vncviewer";
   readonly host: string;
   readonly display: number;
 };
@@ -484,22 +484,44 @@ async function runVmViewCommand(
     qmp.close();
   }
 
-  const runner = runtime.processRunner ?? nodeProcessRunner;
-  const result = await runner.run({
-    executable: viewerCommand[0] ?? "remote-viewer",
-    args: viewerCommand.slice(1),
-    timeoutMs: 10_000,
-    maxOutputBytes: 256 * 1024,
-  });
-  if (result.exitCode !== 0 || result.timedOut) {
+  const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
+  if (!launchResult.ok) {
     return {
-      exitCode: result.timedOut ? 1 : (result.exitCode ?? 1),
+      exitCode: 1,
       stdout: lines.join("\n"),
-      stderr: result.stderr || "viewer command failed",
+      stderr: launchResult.error,
     };
   }
 
-  return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: result.stderr };
+  return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
+}
+
+async function launchVmViewer(
+  viewerCommand: readonly string[],
+  runner: ProcessRunner | undefined,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
+  const executable = viewerCommand[0] ?? "remote-viewer";
+  const args = viewerCommand.slice(1);
+  if (runner !== undefined) {
+    const result = await runner.run({
+      executable,
+      args,
+      timeoutMs: 10_000,
+      maxOutputBytes: 256 * 1024,
+    });
+    if (result.exitCode !== 0 || result.timedOut) {
+      return { ok: false, error: result.stderr || "viewer command failed" };
+    }
+    return { ok: true };
+  }
+
+  try {
+    const child = spawn(executable, args, { detached: true, stdio: "ignore" });
+    child.unref();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function runVmLogsCommand(
@@ -2657,7 +2679,7 @@ type NetTeardownArgsResult =
 
 function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
   let dryRun = false;
-  let viewer: string | undefined;
+  let viewer: "remote-viewer" | "vncviewer" = "remote-viewer";
   let host = "127.0.0.1";
   let display = 1;
 
@@ -2671,6 +2693,9 @@ function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
       const value = args[index + 1];
       if (value === undefined) {
         return { ok: false, message: "Missing value for --viewer" };
+      }
+      if (value !== "remote-viewer" && value !== "vncviewer") {
+        return { ok: false, message: "--viewer must be remote-viewer or vncviewer" };
       }
       viewer = value;
       index += 1;
@@ -2708,8 +2733,8 @@ function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
 }
 
 function buildVmViewCommand(args: VmViewArgs, port: number): readonly string[] {
-  if (args.viewer !== undefined) {
-    return [args.viewer, `${args.host}:${port}`];
+  if (args.viewer === "vncviewer") {
+    return ["vncviewer", `${args.host}:${args.display}`];
   }
   return ["remote-viewer", `vnc://${args.host}:${port}`];
 }
@@ -3263,7 +3288,9 @@ const COMMANDS: readonly CommandDefinition[] = [
     preferred: "vm view",
     group: "vm",
     summary: "Open a loopback-only VNC view of the running VM.",
-    usage: ["crucible vm view [--dry-run] [--viewer remote-viewer|vncviewer] [--display 1]"],
+    usage: [
+      "crucible vm view [--dry-run] [--viewer remote-viewer|vncviewer] [--host 127.0.0.1|localhost] [--display 1]",
+    ],
     examples: ["crucible vm view --dry-run", "crucible vm view --viewer remote-viewer"],
   },
   {
