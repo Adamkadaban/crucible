@@ -194,7 +194,7 @@ export type ProvisioningExecutor = {
 
 export type ProvisioningCommandRunnerOptions = {
   readonly config?: CrucibleConfig;
-  readonly lifecycleManager: Pick<VmLifecycleManager, "start" | "status">;
+  readonly lifecycleManager: Pick<VmLifecycleManager, "start" | "stop" | "status">;
   readonly executor?: ProvisioningExecutor;
   readonly snapshotManager: {
     readonly create: (snapshotName: string) => Promise<SnapshotCreateResult>;
@@ -381,7 +381,14 @@ export async function runProvisioningCommand(
     await options.afterStage?.(stage, step);
   }
 
-  const snapshot = await options.snapshotManager.create(snapshotName);
+  await options.lifecycleManager.stop();
+  let snapshot: SnapshotCreateResult;
+  try {
+    snapshot = await options.snapshotManager.create(snapshotName);
+  } finally {
+    await options.lifecycleManager.start();
+    await waitForLifecycleQmp(options.lifecycleManager);
+  }
   steps.push({
     id: "snapshot-created",
     title: "Clean snapshot created",
@@ -403,6 +410,19 @@ export async function runProvisioningCommand(
       provisioningComplete: true,
     }),
   };
+}
+
+async function waitForLifecycleQmp(
+  lifecycleManager: Pick<VmLifecycleManager, "status">,
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const status = await lifecycleManager.status();
+    if (status.qmpAvailable) {
+      return;
+    }
+    await sleep(500);
+  }
 }
 
 async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
