@@ -20,7 +20,11 @@ import {
 } from "./analysis-policy.js";
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { CrucibleError } from "./errors.js";
-import { createEmptyArtifactManifest, upsertArtifactRecord, type ArtifactManifest } from "./manifest.js";
+import {
+  createEmptyArtifactManifest,
+  upsertArtifactRecord,
+  type ArtifactManifest,
+} from "./manifest.js";
 import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
 import { ensureMtlsBundle } from "./mtls.js";
 import { buildNetworkPlan } from "./network.js";
@@ -849,7 +853,9 @@ async function writeRealismPersonaManifest(
 ): Promise<void> {
   let manifest: ArtifactManifest;
   try {
-    manifest = JSON.parse(await readFile(config.artifacts.manifestPath, "utf8")) as ArtifactManifest;
+    manifest = JSON.parse(
+      await readFile(config.artifacts.manifestPath, "utf8"),
+    ) as ArtifactManifest;
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") {
       throw error;

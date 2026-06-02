@@ -204,10 +204,12 @@ describe("core bootstrap exports", () => {
       }).realism,
     });
 
-    expect(persona?.decoyFiles.every((file) => file.lastWriteTimeUtc === "2025-01-01T12:00:00.000Z")).toBe(
+    expect(
+      persona?.decoyFiles.every((file) => file.lastWriteTimeUtc === "2025-01-01T12:00:00.000Z"),
+    ).toBe(true);
+    expect(persona?.softwareMarkers.every((software) => software.installDate === "20250101")).toBe(
       true,
     );
-    expect(persona?.softwareMarkers.every((software) => software.installDate === "20250101")).toBe(true);
   });
 
   it("allows JSON schema markers in config files", () => {

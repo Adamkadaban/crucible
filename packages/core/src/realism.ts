@@ -5,7 +5,13 @@ import { z } from "zod";
 const WINDOWS_ACCOUNT_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,19}$/;
 const WINDOWS_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?$/;
 
-const realismProfileSchema = z.enum(["minimal", "office-user", "developer", "student", "home-user"]);
+const realismProfileSchema = z.enum([
+  "minimal",
+  "office-user",
+  "developer",
+  "student",
+  "home-user",
+]);
 
 export const realismConfigSchema = z
   .object({
@@ -72,7 +78,12 @@ export type RealismPersona = {
 const FIRST_NAMES = ["Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Jamie", "Avery"];
 const LAST_NAMES = ["Brooks", "Carter", "Hayes", "Miller", "Parker", "Reed", "Sullivan", "Turner"];
 const LOCALES = ["en-US", "en-GB", "en-CA", "en-AU"];
-const TIMEZONES = ["Pacific Standard Time", "Mountain Standard Time", "Central Standard Time", "Eastern Standard Time"];
+const TIMEZONES = [
+  "Pacific Standard Time",
+  "Mountain Standard Time",
+  "Central Standard Time",
+  "Eastern Standard Time",
+];
 const RESOLUTIONS = ["1366x768", "1440x900", "1600x900", "1920x1080", "2560x1440"];
 const HOST_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -87,8 +98,10 @@ export function buildRealismPersona(options: {
   const seed = options.config.seed ?? `${options.vmName}:${options.config.profile}`;
   const firstName = pick(seed, "first-name", FIRST_NAMES);
   const lastName = pick(seed, "last-name", LAST_NAMES);
-  const userUsername = options.config.userUsername ?? accountName(`${firstName}${lastName[0] ?? ""}`);
-  const adminUsername = options.config.adminUsername ?? accountName(`admin${token(seed, "admin", 4).toLowerCase()}`);
+  const userUsername =
+    options.config.userUsername ?? accountName(`${firstName}${lastName[0] ?? ""}`);
+  const adminUsername =
+    options.config.adminUsername ?? accountName(`admin${token(seed, "admin", 4).toLowerCase()}`);
   const fullName = options.config.fullName ?? `${firstName} ${lastName}`;
   const locale = options.config.locale ?? pick(seed, "locale", LOCALES);
   const keyboardLayout = options.config.keyboardLayout ?? locale;
@@ -191,8 +204,9 @@ export function buildRealismDecoyFilePlan(
       ]
     : [];
 
-  const randomizedOrdinaryFiles = Array.from({ length: persona.profile === "minimal" ? 4 : 10 }, (_, index) =>
-    randomizedUserFilePath(persona.seed, index),
+  const randomizedOrdinaryFiles = Array.from(
+    { length: persona.profile === "minimal" ? 4 : 10 },
+    (_, index) => randomizedUserFilePath(persona.seed, index),
   );
   const ordinaryPaths = [...profileFiles[persona.profile], ...randomizedOrdinaryFiles];
   const ordinary = ordinaryPaths.map((relativePath, index) => ({
@@ -212,8 +226,28 @@ export function buildRealismDecoyFilePlan(
 }
 
 function randomizedUserFilePath(seed: string, index: number): string {
-  const folders = ["Desktop", "Documents", "Documents\\Archive", "Downloads", "Pictures", "Pictures\\Camera Roll", "Videos", "Music"];
-  const basenames = ["notes", "todo", "receipt", "scan", "meeting", "draft", "photo-list", "backup", "ideas", "schedule"];
+  const folders = [
+    "Desktop",
+    "Documents",
+    "Documents\\Archive",
+    "Downloads",
+    "Pictures",
+    "Pictures\\Camera Roll",
+    "Videos",
+    "Music",
+  ];
+  const basenames = [
+    "notes",
+    "todo",
+    "receipt",
+    "scan",
+    "meeting",
+    "draft",
+    "photo-list",
+    "backup",
+    "ideas",
+    "schedule",
+  ];
   const extensions = ["txt", "csv", "md", "url"];
   const folder = pick(seed, `random-file-folder-${index}`, folders);
   const basename = pick(seed, `random-file-name-${index}`, basenames);
@@ -235,7 +269,10 @@ export function buildRealismSoftwareMarkers(
     { name: "Adobe Acrobat Reader", publisher: "Adobe" },
     { name: "VLC media player", publisher: "VideoLAN" },
   ];
-  const profileSpecific: Record<RealismProfileName, readonly { name: string; publisher: string }[]> = {
+  const profileSpecific: Record<
+    RealismProfileName,
+    readonly { name: string; publisher: string }[]
+  > = {
     minimal: [{ name: "Notepad++", publisher: "Notepad++ Team" }],
     "office-user": [
       { name: "Microsoft Teams", publisher: "Microsoft Corporation" },

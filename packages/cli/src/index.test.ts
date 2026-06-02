@@ -14,7 +14,7 @@ import {
   type VmStatus,
 } from "@crucible/core";
 
-import { runCrucibleCli } from "./index.js";
+import { qemuKeyForTextInput, runCrucibleCli } from "./index.js";
 
 const defaultRuntime = { config: defaultCrucibleConfig };
 const tempDirs: string[] = [];
@@ -81,6 +81,13 @@ describe("crucible CLI bootstrap", () => {
     expect(netAlias.stdout).toContain("Network status:");
     expect(guestExec.exitCode).toBe(0);
     expect(guestExec.stdout).toContain("fake-output");
+  });
+
+  it("maps common ASCII punctuation for VM text input", () => {
+    expect(qemuKeyForTextInput("_")).toBe("shift-minus");
+    expect(qemuKeyForTextInput("+")).toBe("shift-equal");
+    expect(qemuKeyForTextInput("?")).toBe("shift-slash");
+    expect(qemuKeyForTextInput("@")).toBe("shift-2");
   });
 
   it("passes guest command help flags after the argument separator", async () => {
@@ -192,12 +199,18 @@ describe("crucible CLI bootstrap", () => {
     const globalRoot = await createTempDir("crucible-global-root-");
     process.env.HOME = home;
     await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
-    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
     const configPath = path.join(home, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(
       configPath,
-      JSON.stringify({ mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } } }),
+      JSON.stringify({
+        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+      }),
     );
 
     try {
@@ -235,7 +248,11 @@ describe("crucible CLI bootstrap", () => {
     const globalRoot = await createTempDir("crucible-global-root-");
     process.env.HOME = home;
     await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
-    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
     const configPath = path.join(home, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(configPath, "not-json", "utf8");
@@ -509,7 +526,11 @@ describe("crucible CLI bootstrap", () => {
     const globalRoot = await createTempDir("crucible-global-root-");
     process.env.HOME = home;
     await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
-    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
     const configPath = path.join(home, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(configPath, "not-json", "utf8");
@@ -940,12 +961,18 @@ describe("crucible CLI bootstrap", () => {
     const globalRoot = await createTempDir("crucible-global-root-");
     process.env.HOME = root;
     await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
-    await writeFile(path.join(globalRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
     const configPath = path.join(root, ".config", "opencode", "opencode.json");
     await mkdir(path.dirname(configPath), { recursive: true });
     await writeFile(
       configPath,
-      JSON.stringify({ mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } } }),
+      JSON.stringify({
+        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+      }),
     );
 
     try {
@@ -1886,7 +1913,10 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("canonicalizes vm view localhost host to loopback address", async () => {
-    const result = await runCrucibleCli(["vm", "view", "--dry-run", "--host", "localhost"], defaultRuntime);
+    const result = await runCrucibleCli(
+      ["vm", "view", "--dry-run", "--host", "localhost"],
+      defaultRuntime,
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");

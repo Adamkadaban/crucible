@@ -865,7 +865,10 @@ describe("provisioning contracts", () => {
       },
     });
 
-    const autounattend = await readFile(join(root, "artifacts", "boot", "Autounattend.xml"), "utf8");
+    const autounattend = await readFile(
+      join(root, "artifacts", "boot", "Autounattend.xml"),
+      "utf8",
+    );
     expect(autounattend).toContain("<ComputerName>DESKTOP-LAB42</ComputerName>");
     expect(autounattend).toContain("<InputLocale>en-GB</InputLocale>");
     expect(autounattend).toContain("<TimeZone>GMT Standard Time</TimeZone>");
@@ -881,7 +884,10 @@ describe("provisioning contracts", () => {
     expect(adminSecret.username).toBe("localadmin");
     const persona = JSON.parse(
       await readFile(join(root, "artifacts", "boot", "realism-persona.json"), "utf8"),
-    ) as { decoyFiles: { relativePath: string; category: string }[]; softwareMarkers: { name: string }[] };
+    ) as {
+      decoyFiles: { relativePath: string; category: string }[];
+      softwareMarkers: { name: string }[];
+    };
     expect(persona.decoyFiles.some((file) => file.relativePath.startsWith("Videos\\"))).toBe(true);
     expect(persona.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
     expect(persona.softwareMarkers.map((software) => software.name)).toEqual(
@@ -890,21 +896,18 @@ describe("provisioning contracts", () => {
     expect(commands.at(-1)?.args).toContain(
       `/realism/persona.json=${join(root, "artifacts", "boot", "realism-persona.json")}`,
     );
-    const manifest = JSON.parse(await readFile(join(root, "artifacts", "manifest.json"), "utf8")) as {
+    const manifest = JSON.parse(
+      await readFile(join(root, "artifacts", "manifest.json"), "utf8"),
+    ) as {
       artifacts: {
         kind: string;
         name: string;
         metadata?: { hostname?: string; decoyFiles?: { content?: string }[] };
       }[];
     };
-    expect(manifest.artifacts).toContainEqual(
-      expect.objectContaining({
-        kind: "persona",
-        name: "realism persona",
-        metadata: expect.objectContaining({ hostname: "DESKTOP-LAB42" }),
-      }),
-    );
     const personaRecord = manifest.artifacts.find((artifact) => artifact.kind === "persona");
+    expect(personaRecord?.name).toBe("realism persona");
+    expect(personaRecord?.metadata?.hostname).toBe("DESKTOP-LAB42");
     expect(personaRecord?.metadata?.decoyFiles?.some((file) => "content" in file)).toBe(false);
     expect(plan.realismPersona?.userUsername).toBe("devuser");
   });
@@ -951,7 +954,10 @@ describe("provisioning contracts", () => {
       },
     });
 
-    const autounattend = await readFile(join(root, "artifacts", "boot", "Autounattend.xml"), "utf8");
+    const autounattend = await readFile(
+      join(root, "artifacts", "boot", "Autounattend.xml"),
+      "utf8",
+    );
     expect(autounattend).toContain("<ComputerName>ANALYSIS-ONE</ComputerName>");
   });
 

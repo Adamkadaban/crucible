@@ -1801,7 +1801,8 @@ describe("crucible MCP tools", () => {
       status: () => Promise.resolve({ state: "running" }),
       start: () => Promise.resolve({ state: "running", pid: 1234 }),
       stop: () => Promise.resolve({ state: "stopped" }),
-      displayInfo: () => Promise.resolve({ available: true, inputAvailable: true, backend: "fake" }),
+      displayInfo: () =>
+        Promise.resolve({ available: true, inputAvailable: true, backend: "fake" }),
       mouseMove: (x: number, y: number) => {
         calls.push(`move:${x},${y}`);
         return Promise.resolve({ action: "mouse_move", x, y });
@@ -1826,7 +1827,12 @@ describe("crucible MCP tools", () => {
         button: "left" | "middle" | "right";
       }) => {
         calls.push(`drag:${input.fromX},${input.fromY},${input.toX},${input.toY},${input.button}`);
-        return Promise.resolve({ action: "mouse_drag", x: input.toX, y: input.toY, button: input.button });
+        return Promise.resolve({
+          action: "mouse_drag",
+          x: input.toX,
+          y: input.toY,
+          button: input.button,
+        });
       },
       keyPress: (key: string) => {
         calls.push(`key:${key}`);
@@ -1839,7 +1845,10 @@ describe("crucible MCP tools", () => {
     };
     const client = await harness({ vmAdapter: fakeVm });
 
-    const display = (await client.callTool({ name: "vm_display_info", arguments: {} })) as ToolCallText;
+    const display = (await client.callTool({
+      name: "vm_display_info",
+      arguments: {},
+    })) as ToolCallText;
     await client.callTool({ name: "vm_mouse_move", arguments: { x: 10, y: 20 } });
     await client.callTool({ name: "vm_mouse_click", arguments: { x: 30, y: 40 } });
     await client.callTool({ name: "vm_mouse_double_click", arguments: { button: "right" } });
@@ -1850,9 +1859,9 @@ describe("crucible MCP tools", () => {
     await client.callTool({ name: "vm_key_press", arguments: { key: "Ctrl+L" } });
     await client.callTool({ name: "vm_type_text", arguments: { text: "C:\\Temp", delayMs: 1 } });
 
-    expect(parseFirstTextPayload<{ ok: boolean; result: { backend: string } }>(display).result.backend).toBe(
-      "fake",
-    );
+    expect(
+      parseFirstTextPayload<{ ok: boolean; result: { backend: string } }>(display).result.backend,
+    ).toBe("fake");
     expect(calls).toEqual([
       "move:10,20",
       "click:30,40,left",
@@ -1876,9 +1885,10 @@ describe("crucible MCP tools", () => {
       name: "vm_mouse_click",
       arguments: { x: 30 },
     })) as ToolCallText;
-    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
-      result,
-    );
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      error: { kind: string; message: string };
+    }>(result);
     expect(payload.ok).toBe(false);
     expect(payload.error.kind).toBe("validation");
     expect(payload.error.message).toContain("x and y");
@@ -1944,9 +1954,10 @@ describe("crucible MCP tools", () => {
       name: "vm_key_press",
       arguments: { key: "ctrl-l" },
     })) as ToolCallText;
-    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
-      result,
-    );
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      error: { kind: string; message: string };
+    }>(result);
     expect(payload.ok).toBe(false);
     expect(payload.error.kind).toBe("vm-offline");
     expect(payload.error.message).toContain("key input");
@@ -1958,9 +1969,10 @@ describe("crucible MCP tools", () => {
       name: "vm_mouse_move",
       arguments: { x: 10, y: 20 },
     })) as ToolCallText;
-    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
-      result,
-    );
+    const payload = parseFirstTextPayload<{
+      ok: boolean;
+      error: { kind: string; message: string };
+    }>(result);
     expect(payload.ok).toBe(false);
     expect(payload.error.kind).toBe("vm-offline");
     expect(payload.error.message).toContain("VM adapter is not configured");

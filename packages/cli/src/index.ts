@@ -256,9 +256,29 @@ const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
   ";": "semicolon",
   ":": "shift-semicolon",
   "'": "apostrophe",
+  '"': "shift-apostrophe",
   "[": "bracket_left",
   "]": "bracket_right",
+  "{": "shift-bracket_left",
+  "}": "shift-bracket_right",
   "`": "grave_accent",
+  "~": "shift-grave_accent",
+  _: "shift-minus",
+  "+": "shift-equal",
+  "|": "shift-backslash",
+  "<": "shift-comma",
+  ">": "shift-dot",
+  "?": "shift-slash",
+  "!": "shift-1",
+  "@": "shift-2",
+  "#": "shift-3",
+  $: "shift-4",
+  "%": "shift-5",
+  "^": "shift-6",
+  "&": "shift-7",
+  "*": "shift-8",
+  "(": "shift-9",
+  ")": "shift-0",
   "0": "0",
   "1": "1",
   "2": "2",
@@ -289,6 +309,17 @@ const QEMU_KEY_ALIASES: Readonly<Record<string, string>> = {
   del: "delete",
   backspace: "backspace",
 };
+
+export function qemuKeyForTextInput(key: string): string {
+  const mapped = QEMU_TEXT_KEY_MAP[key];
+  if (mapped !== undefined) return mapped;
+  if (/^[a-z]$/.test(key)) return key;
+  if (/^[A-Z]$/.test(key)) return `shift-${key.toLowerCase()}`;
+  throw new CrucibleError(
+    "CONFIG_INVALID",
+    `unsupported key for VM text input: ${JSON.stringify(key)}`,
+  );
+}
 
 export async function runCrucibleCli(
   args: readonly string[],
@@ -571,19 +602,19 @@ async function launchVmViewer(
 
   try {
     const child = spawn(executable, args, { detached: true, stdio: "ignore" });
-    const launched = await new Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }>(
-      (resolve) => {
-        const timer = setTimeout(() => resolve({ ok: true }), 250);
-        child.once("error", (error) => {
-          clearTimeout(timer);
-          resolve({ ok: false, error: error.message });
-        });
-        child.once("spawn", () => {
-          clearTimeout(timer);
-          resolve({ ok: true });
-        });
-      },
-    );
+    const launched = await new Promise<
+      { readonly ok: true } | { readonly ok: false; readonly error: string }
+    >((resolve) => {
+      const timer = setTimeout(() => resolve({ ok: true }), 250);
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        resolve({ ok: false, error: error.message });
+      });
+      child.once("spawn", () => {
+        clearTimeout(timer);
+        resolve({ ok: true });
+      });
+    });
     if (!launched.ok) {
       return launched;
     }
@@ -632,7 +663,10 @@ function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
 function buildMcpVmAdapter(config: CrucibleConfig) {
   const manager = new VmLifecycleManager({ config });
   const withQmp = async <T>(operation: (qmp: QmpClient) => Promise<T>) => {
-    const qmp = new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
+    const qmp = new QmpClient({
+      socketPath: config.qmp.socketPath,
+      timeoutMs: config.qmp.timeoutMs,
+    });
     try {
       await qmp.connect();
       return await operation(qmp);
@@ -642,13 +676,17 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
   };
   const sendInput = (events: readonly Record<string, unknown>[]) =>
     withQmp((qmp) =>
-      qmp.execute("input-send-event", { events }, { timeoutMs: config.qmp.timeoutMs }).then(
-        () => undefined,
-      ),
+      qmp
+        .execute("input-send-event", { events }, { timeoutMs: config.qmp.timeoutMs })
+        .then(() => undefined),
     );
   const sendMonitorCommand = (command: string) =>
     withQmp((qmp) =>
-      qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs }),
+      qmp.execute(
+        "human-monitor-command",
+        { "command-line": command },
+        { timeoutMs: config.qmp.timeoutMs },
+      ),
     );
   const buttonName = (button: QmpMouseButton) => {
     switch (button) {
@@ -673,13 +711,6 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     { type: "btn" as const, data: { button: buttonName(button), down: true } },
     { type: "btn" as const, data: { button: buttonName(button), down: false } },
   ];
-  const toQemuKey = (key: string) => {
-    const mapped = QEMU_TEXT_KEY_MAP[key];
-    if (mapped !== undefined) return mapped;
-    if (/^[a-z]$/.test(key)) return key;
-    if (/^[A-Z]$/.test(key)) return `shift-${key.toLowerCase()}`;
-    throw new CrucibleError("CONFIG_INVALID", `unsupported key for VM text input: ${JSON.stringify(key)}`);
-  };
   const normalizeQemuKey = (key: string) => {
     const parts = key
       .trim()
@@ -745,7 +776,11 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
           const result = await qmp.execute<Array<{ name?: string }>>("query-commands", undefined, {
             timeoutMs: config.qmp.timeoutMs,
           });
-          return new Set(result.returnValue.map((command) => command.name).filter((name): name is string => name !== undefined));
+          return new Set(
+            result.returnValue
+              .map((command) => command.name)
+              .filter((name): name is string => name !== undefined),
+          );
         });
         const mouseAvailable = commands.has("input-send-event");
         const keyAvailable = commands.has("human-monitor-command");
@@ -793,7 +828,11 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
     }) => {
       assertPairedCoordinates(input.x, input.y);
       const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
-      await sendInput([...events, ...mouseButtonEvents(input.button), ...mouseButtonEvents(input.button)]);
+      await sendInput([
+        ...events,
+        ...mouseButtonEvents(input.button),
+        ...mouseButtonEvents(input.button),
+      ]);
       return { action: "mouse_double_click", backend: "qmp-input-send-event", ...input };
     },
     mouseDrag: async (input: {
@@ -809,7 +848,13 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
         ...mouseAbsEvents(input.toX, input.toY),
         { type: "btn", data: { button: buttonName(input.button), down: false } },
       ]);
-      return { action: "mouse_drag", backend: "qmp-input-send-event", x: input.toX, y: input.toY, button: input.button };
+      return {
+        action: "mouse_drag",
+        backend: "qmp-input-send-event",
+        x: input.toX,
+        y: input.toY,
+        button: input.button,
+      };
     },
     keyPress: async (key: string) => {
       const normalized = normalizeQemuKey(key);
@@ -817,10 +862,14 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       return { action: "key_press", backend: "qmp-human-monitor-command", key: normalized };
     },
     typeText: async (text: string, delayMs?: number) => {
-      const commands = [...text].map((key) => `sendkey ${toQemuKey(key)}`);
+      const commands = [...text].map((key) => `sendkey ${qemuKeyForTextInput(key)}`);
       await withQmp(async (qmp) => {
         for (const command of commands) {
-          await qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs });
+          await qmp.execute(
+            "human-monitor-command",
+            { "command-line": command },
+            { timeoutMs: config.qmp.timeoutMs },
+          );
           if (delayMs !== undefined && delayMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
@@ -2270,7 +2319,9 @@ async function describeJsonMcpUpdateDryRun(configPath: string, mcpKey: string): 
       return `would fail; expected ${configPath}.${mcpKey} to be an object`;
     }
     const previousEntry = existing === undefined ? undefined : existing.crucible;
-    return jsonValuesEqual(previousEntry, getMcpServerEntry()) ? "already current" : "would refresh";
+    return jsonValuesEqual(previousEntry, getMcpServerEntry())
+      ? "already current"
+      : "would refresh";
   } catch (error) {
     return `would fail; ${error instanceof Error ? error.message : String(error)}`;
   }

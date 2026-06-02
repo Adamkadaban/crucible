@@ -124,7 +124,10 @@
           "enum": ["minimal", "office-user", "developer", "student", "home-user"],
           "default": "office-user"
         },
-        "hostname": { "type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?$" },
+        "hostname": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?$"
+        },
         "adminUsername": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,19}$" },
         "userUsername": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,19}$" },
         "fullName": { "type": "string", "minLength": 1 },

@@ -172,11 +172,11 @@ Provisioning uses the persona in these places:
 - The `local-accounts-created` stage receives the same generated usernames and creates matching
   password secret JSON files under `artifacts.secretsDirectory`.
 - The payload ISO includes `realism/persona.json`, which the account stage reads to populate benign
-  decoy files across `Desktop`, `Documents`, `Downloads`, `Pictures`, `Videos`, `Music`, and selected
-  app-data-style paths.
-- If `simulateUserHistory` is true, the decoy plan includes intentionally fake, inert
-  stealer-target files such as `.aws\credentials`, `.ssh\id_rsa`, FileZilla config, backup-code
-  notes, and wallet-looking paths. These are honeytoken-style placeholders, not real secrets.
+  decoy files across `Desktop`, `Documents`, `Downloads`, `Pictures`, `Videos`, `Music`, and
+  selected app-data-style paths.
+- If `simulateUserHistory` is true, the decoy plan includes intentionally fake, inert stealer-target
+  files such as `.aws\credentials`, `.ssh\id_rsa`, FileZilla config, backup-code notes, and
+  wallet-looking paths. These are honeytoken-style placeholders, not real secrets.
 - If `installCommonSoftware` is true, provisioning creates inert install-presence markers and
   uninstall-registry entries for common applications such as Chrome, Firefox, 7-Zip, Acrobat Reader,
   VLC, and profile-specific apps. It does not download or run third-party installers.

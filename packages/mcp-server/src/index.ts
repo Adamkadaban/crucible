@@ -61,10 +61,23 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     description: "Capture a screenshot of the VM display via QMP screendump.",
   },
   { name: "vm_display_info", description: "Report VM display/input automation availability." },
-  { name: "vm_mouse_move", description: "Move the VM mouse pointer to normalized QMP coordinates (0..0x7fff)." },
-  { name: "vm_mouse_click", description: "Click a VM mouse button at optional normalized QMP coordinates (0..0x7fff)." },
-  { name: "vm_mouse_double_click", description: "Double-click a VM mouse button at optional normalized QMP coordinates (0..0x7fff)." },
-  { name: "vm_mouse_drag", description: "Drag the VM mouse pointer between normalized QMP coordinates (0..0x7fff)." },
+  {
+    name: "vm_mouse_move",
+    description: "Move the VM mouse pointer to normalized QMP coordinates (0..0x7fff).",
+  },
+  {
+    name: "vm_mouse_click",
+    description: "Click a VM mouse button at optional normalized QMP coordinates (0..0x7fff).",
+  },
+  {
+    name: "vm_mouse_double_click",
+    description:
+      "Double-click a VM mouse button at optional normalized QMP coordinates (0..0x7fff).",
+  },
+  {
+    name: "vm_mouse_drag",
+    description: "Drag the VM mouse pointer between normalized QMP coordinates (0..0x7fff).",
+  },
   { name: "vm_key_press", description: "Send a QEMU sendkey name or chord to the VM display." },
   { name: "vm_type_text", description: "Type supported literal text into the VM display." },
   {
@@ -263,10 +276,21 @@ const VmMouseDragInput = z
   })
   .strict();
 type VmMouseDragInputType = z.infer<typeof VmMouseDragInput>;
-const VmKeyPressInput = z.object({ key: z.string().regex(/^[a-z0-9_]+([+-][a-z0-9_]+)*$/i).min(1).max(64) }).strict();
+const VmKeyPressInput = z
+  .object({
+    key: z
+      .string()
+      .regex(/^[a-z0-9_]+([+-][a-z0-9_]+)*$/i)
+      .min(1)
+      .max(64),
+  })
+  .strict();
 type VmKeyPressInputType = z.infer<typeof VmKeyPressInput>;
 const VmTypeTextInput = z
-  .object({ text: z.string().min(1).max(4096), delayMs: z.number().int().min(0).max(5000).optional() })
+  .object({
+    text: z.string().min(1).max(4096),
+    delayMs: z.number().int().min(0).max(5000).optional(),
+  })
   .strict();
 type VmTypeTextInputType = z.infer<typeof VmTypeTextInput>;
 const NetworkStatusInput = z.object({}).strict();
@@ -859,7 +883,8 @@ function registerVmTools(
     "vm_display_info",
     {
       title: "VM display info",
-      description: "Report whether GUI display automation is available; dimensions are adapter-dependent.",
+      description:
+        "Report whether GUI display automation is available; dimensions are adapter-dependent.",
       inputSchema: VmDisplayInfoInput.shape,
     },
     () => {
@@ -873,7 +898,8 @@ function registerVmTools(
     "vm_mouse_move",
     {
       title: "Move VM mouse",
-      description: "Move the VM mouse pointer to QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      description:
+        "Move the VM mouse pointer to QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseMoveInput.shape,
     },
     (input: VmMouseMoveInputType) => {
@@ -887,7 +913,8 @@ function registerVmTools(
     "vm_mouse_click",
     {
       title: "Click VM mouse",
-      description: "Click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      description:
+        "Click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseClickInput.shape,
     },
     (input: VmMouseClickInputType) => {
@@ -904,7 +931,8 @@ function registerVmTools(
     "vm_mouse_double_click",
     {
       title: "Double-click VM mouse",
-      description: "Double-click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      description:
+        "Double-click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseDoubleClickInput.shape,
     },
     (input: VmMouseDoubleClickInputType) => {
@@ -921,7 +949,8 @@ function registerVmTools(
     "vm_mouse_drag",
     {
       title: "Drag VM mouse",
-      description: "Drag a mouse button between QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      description:
+        "Drag a mouse button between QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseDragInput.shape,
     },
     (input: VmMouseDragInputType) => {
@@ -950,7 +979,8 @@ function registerVmTools(
     "vm_type_text",
     {
       title: "Type VM text",
-      description: "Type supported literal text into the VM display with an optional per-character delay.",
+      description:
+        "Type supported literal text into the VM display with an optional per-character delay.",
       inputSchema: VmTypeTextInput.shape,
     },
     (input: VmTypeTextInputType) => {
