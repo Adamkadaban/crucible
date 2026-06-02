@@ -1836,6 +1836,13 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("--viewer must be remote-viewer or vncviewer");
   });
 
+  it("rejects malformed vm view display values", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--display", "1junk"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--display must be an integer from 0 to 99");
+  });
+
   it("reports missing vm view viewer executables", async () => {
     const emptyPath = await createTempDir("crucible-empty-path-");
     vi.stubEnv("PATH", emptyPath);

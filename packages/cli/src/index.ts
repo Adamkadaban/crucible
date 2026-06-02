@@ -2734,6 +2734,9 @@ function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
       if (value === undefined) {
         return { ok: false, message: "Missing value for --display" };
       }
+      if (!/^\d+$/.test(value)) {
+        return { ok: false, message: "--display must be an integer from 0 to 99" };
+      }
       const parsed = Number.parseInt(value, 10);
       if (!Number.isInteger(parsed) || parsed < 0 || parsed > 99) {
         return { ok: false, message: "--display must be an integer from 0 to 99" };
