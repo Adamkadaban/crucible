@@ -95,6 +95,7 @@ type CommandGroupDefinition = {
 type ParsedCliInvocation =
   | { readonly kind: "command"; readonly command: string; readonly rest: readonly string[] }
   | { readonly kind: "help"; readonly text: string }
+  | { readonly kind: "unknown-help"; readonly command: string }
   | { readonly kind: "unknown"; readonly command: string };
 
 type CliGuestHealthClient = {
@@ -215,6 +216,9 @@ export async function runCrucibleCli(
   const parsed = parseCliInvocation(args);
   if (parsed.kind === "help") {
     return { exitCode: 0, stdout: parsed.text, stderr: "" };
+  }
+  if (parsed.kind === "unknown-help") {
+    return { exitCode: 2, stdout: "", stderr: renderUnknownCommand(parsed.command) };
   }
   if (parsed.kind === "unknown") {
     return { exitCode: 2, stdout: "", stderr: renderUnknownCommand(parsed.command) };
@@ -2918,11 +2922,19 @@ function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
   }
 
   if (args[0] === "help") {
-    return { kind: "help", text: getHelpForTokens(args.slice(1)) };
+    const tokens = args.slice(1);
+    const help = getHelpForTokens(tokens);
+    return help.kind === "unknown"
+      ? { kind: "unknown-help", command: help.command }
+      : { kind: "help", text: help.text };
   }
 
   if (helpIndex > 0) {
-    return { kind: "help", text: getHelpForTokens(args.slice(0, helpIndex)) };
+    const tokens = args.slice(0, helpIndex);
+    const help = getHelpForTokens(tokens);
+    return help.kind === "unknown"
+      ? { kind: "unknown-help", command: help.command }
+      : { kind: "help", text: help.text };
   }
 
   const direct = getCommandByName(args[0]);
@@ -2947,29 +2959,33 @@ function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
   return { kind: "unknown", command: args[0] ?? "" };
 }
 
-function getHelpForTokens(tokens: readonly string[]): string {
+type HelpLookupResult =
+  | { readonly kind: "help"; readonly text: string }
+  | { readonly kind: "unknown"; readonly command: string };
+
+function getHelpForTokens(tokens: readonly string[]): HelpLookupResult {
   if (tokens.length === 0) {
-    return getHelpText();
+    return { kind: "help", text: getHelpText() };
   }
 
   const direct = tokens.length === 1 ? getCommandByName(tokens[0]) : undefined;
   if (direct !== undefined) {
-    return getCommandHelpText(direct);
+    return { kind: "help", text: getCommandHelpText(direct) };
   }
 
   const groupName = normalizeCommandGroupName(tokens[0]);
   if (groupName === undefined) {
-    return renderUnknownCommand(tokens.join(" "));
+    return { kind: "unknown", command: tokens[0] ?? "" };
   }
 
   if (tokens.length === 1) {
-    return getGroupHelpText(groupName);
+    return { kind: "help", text: getGroupHelpText(groupName) };
   }
 
   const command = getCommandByGroupedName(groupName, tokens[1]);
   return command === undefined
-    ? renderUnknownCommand(tokens.join(" "))
-    : getCommandHelpText(command);
+    ? { kind: "unknown", command: [tokens[0], tokens[1]].filter(Boolean).join(" ") }
+    : { kind: "help", text: getCommandHelpText(command) };
 }
 
 function getCommandByName(name: string | undefined): CommandDefinition | undefined {

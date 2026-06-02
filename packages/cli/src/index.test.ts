@@ -134,6 +134,18 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Did you mean: crucible vm status?");
   });
 
+  it("reports unknown help requests as command errors", async () => {
+    const flagHelp = await runCrucibleCli(["vm", "stats", "--help"], defaultRuntime);
+    const pseudoHelp = await runCrucibleCli(["help", "vm", "stats"], defaultRuntime);
+
+    expect(flagHelp.exitCode).toBe(2);
+    expect(flagHelp.stdout).toBe("");
+    expect(flagHelp.stderr).toContain("Unknown command: vm stats");
+    expect(pseudoHelp.exitCode).toBe(2);
+    expect(pseudoHelp.stdout).toBe("");
+    expect(pseudoHelp.stderr).toContain("Unknown command: vm stats");
+  });
+
   it("rejects invalid vm:create and vm:start options", async () => {
     const create = await runCrucibleCli(["vm:create"], defaultRuntime);
     const start = await runCrucibleCli(["vm:start", "--bad"], defaultRuntime);
