@@ -135,6 +135,18 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Did you mean: crucible vm status?");
   });
 
+  it("reports unknown help requests as command errors", async () => {
+    const flagHelp = await runCrucibleCli(["vm", "stats", "--help"], defaultRuntime);
+    const pseudoHelp = await runCrucibleCli(["help", "vm", "stats"], defaultRuntime);
+
+    expect(flagHelp.exitCode).toBe(2);
+    expect(flagHelp.stdout).toBe("");
+    expect(flagHelp.stderr).toContain("Unknown command: vm stats");
+    expect(pseudoHelp.exitCode).toBe(2);
+    expect(pseudoHelp.stdout).toBe("");
+    expect(pseudoHelp.stderr).toContain("Unknown command: vm stats");
+  });
+
   it("prints update dry-run plan without installing", async () => {
     const root = await createTempDir("crucible-global-root-");
     await mkdir(path.join(root, "@adamkadaban", "crucible"), { recursive: true });
@@ -259,6 +271,37 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain(`detected install: pnpm global (${pnpmRoot})`);
     expect(result.stdout).toContain("package command: pnpm add -g '@adamkadaban/crucible@latest'");
     expect(commands).toContain("pnpm root -g");
+  });
+
+  it("falls back to npm when pnpm is not installed", async () => {
+    const npmRoot = await createTempDir("crucible-npm-root-");
+    await mkdir(path.join(npmRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(npmRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          if (command.executable === "pnpm") {
+            return Promise.reject(new Error("spawn pnpm ENOENT"));
+          }
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : `${npmRoot}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(`detected install: npm global (${npmRoot})`);
+    expect(result.stdout).toContain(
+      "package command: npm install -g '@adamkadaban/crucible@latest'",
+    );
   });
 
   it("requires --yes for non-interactive update apply", async () => {
