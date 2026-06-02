@@ -794,14 +794,16 @@ function registerNetworkTools(
 
       // Persist the mode change
       if (input.mode !== mode) {
-        mode = input.mode;
         if (configPath !== undefined) {
           try {
             let raw: Record<string, unknown> = {};
             try {
               raw = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
-            } catch {
-              // file missing or invalid — start fresh
+            } catch (error) {
+              if (!isNotFoundError(error)) {
+                throw error;
+              }
+              // Missing config file: create a minimal config that records the mode.
             }
             const network = (
               typeof raw.network === "object" && raw.network !== null ? raw.network : {}
@@ -816,6 +818,7 @@ function registerNetworkTools(
             });
           }
         }
+        mode = input.mode;
       }
 
       return toJsonContent({
