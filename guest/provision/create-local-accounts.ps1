@@ -165,7 +165,10 @@ function Install-DecoyUserFiles {
         New-Item -ItemType Directory -Force -LiteralPath (Split-Path -Parent $targetPath) | Out-Null
         Set-Content -LiteralPath $targetPath -Value ([string]$file.content) -Encoding UTF8
         if ($file.lastWriteTimeUtc) {
-            (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc = [datetime]$file.lastWriteTimeUtc
+            try {
+                (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc = [datetime]$file.lastWriteTimeUtc
+            } catch {
+            }
         }
     }
 }
