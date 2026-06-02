@@ -525,7 +525,8 @@ async function launchVmViewer(
           resolve({ ok: false, error: error.message });
         });
         child.once("spawn", () => {
-          setTimeout(() => resolve({ ok: true }), 0);
+          clearTimeout(timer);
+          resolve({ ok: true });
         });
       },
     );
