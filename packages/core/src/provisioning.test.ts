@@ -477,6 +477,49 @@ describe("provisioning contracts", () => {
     expect(result.health.status).toBe("unavailable");
   });
 
+  it("restarts the VM when final snapshot creation fails", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "analysis-one" } });
+    const lifecycleEvents: string[] = [];
+
+    await expect(
+      runProvisioningCommand({
+        config,
+        lifecycleManager: {
+          start: () => {
+            lifecycleEvents.push("start");
+            return Promise.resolve({ pid: 1234, status: fakeVmStatus(config, true) });
+          },
+          stop: () => {
+            lifecycleEvents.push("stop");
+            return Promise.resolve({
+              status: fakeVmStatus(config, false),
+              mode: "stop",
+              qmpCommandSent: false,
+              killedAfterTimeout: false,
+            });
+          },
+          status: () => Promise.resolve(fakeVmStatus(config, true)),
+        },
+        executor: {
+          runStage(stage) {
+            return Promise.resolve({
+              id: stage.id,
+              title: stage.title,
+              status: "succeeded",
+              detail: stage.script?.scriptPath ?? "readiness contract",
+            });
+          },
+        },
+        snapshotManager: {
+          create: () => Promise.reject(new Error("snapshot failed")),
+        },
+        skipBootKeyNudge: true,
+      }),
+    ).rejects.toThrow("snapshot failed");
+
+    expect(lifecycleEvents).toEqual(["start", "stop", "start"]);
+  });
+
   it("prepares first-boot host artifacts and commands", async () => {
     const root = await mkdtempPath("crucible-first-boot-");
     const windowsIso = join(root, "windows.iso");

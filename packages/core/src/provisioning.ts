@@ -382,8 +382,13 @@ export async function runProvisioningCommand(
   }
 
   await options.lifecycleManager.stop();
-  const snapshot = await options.snapshotManager.create(snapshotName);
-  await options.lifecycleManager.start();
+  let snapshot: SnapshotCreateResult;
+  try {
+    snapshot = await options.snapshotManager.create(snapshotName);
+  } finally {
+    await options.lifecycleManager.start();
+    await waitForLifecycleQmp(options.lifecycleManager);
+  }
   steps.push({
     id: "snapshot-created",
     title: "Clean snapshot created",
@@ -405,6 +410,19 @@ export async function runProvisioningCommand(
       provisioningComplete: true,
     }),
   };
+}
+
+async function waitForLifecycleQmp(
+  lifecycleManager: Pick<VmLifecycleManager, "status">,
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const status = await lifecycleManager.status();
+    if (status.qmpAvailable) {
+      return;
+    }
+    await sleep(500);
+  }
 }
 
 async function sendFirstBootIsoKey(config: CrucibleConfig): Promise<void> {
