@@ -747,14 +747,21 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
           });
           return new Set(result.returnValue.map((command) => command.name).filter((name): name is string => name !== undefined));
         });
-        const inputAvailable = commands.has("input-send-event") && commands.has("human-monitor-command");
+        const mouseAvailable = commands.has("input-send-event");
+        const keyAvailable = commands.has("human-monitor-command");
+        const inputAvailable = mouseAvailable || keyAvailable;
+        const inputBackends = [
+          mouseAvailable ? "qmp-input-send-event" : undefined,
+          keyAvailable ? "qmp-human-monitor-command" : undefined,
+        ].filter((backend): backend is string => backend !== undefined);
         return {
           available: true,
-          backend: inputAvailable ? "qmp-input-send-event+human-monitor-command" : "qmp",
+          backend: inputBackends.length > 0 ? inputBackends.join("+") : "qmp",
           inputAvailable,
-          message: inputAvailable
-            ? "QMP input-send-event and human-monitor-command are available."
-            : "QMP is reachable, but required display input commands are unavailable.",
+          message:
+            inputBackends.length > 0
+              ? `QMP display is reachable; input backend(s): ${inputBackends.join(", ")}.`
+              : "QMP display is reachable, but display input commands are unavailable.",
         };
       } catch (error) {
         return {
