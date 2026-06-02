@@ -1781,7 +1781,7 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
   }
 
-  if (!parsed.args.yes && !process.stdin.isTTY) {
+  if (!parsed.args.yes && (!process.stdin.isTTY || !process.stdout.isTTY)) {
     return {
       exitCode: 1,
       stdout: actions.join("\n"),
@@ -1789,7 +1789,7 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     };
   }
 
-  if (!parsed.args.yes && process.stdin.isTTY && process.stdout.isTTY) {
+  if (!parsed.args.yes) {
     const confirmed = await confirmYes("Update Crucible and refresh MCP config? [Y/n] ");
     if (!confirmed) {
       return { exitCode: 1, stdout: actions.join("\n"), stderr: "Update cancelled." };

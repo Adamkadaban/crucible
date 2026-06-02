@@ -283,6 +283,45 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("Non-interactive update requires --yes");
   });
 
+  it("requires --yes when update stdout is piped", async () => {
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    try {
+      const result = await runCrucibleCli(["update"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: 0,
+              stdout: command.args.includes("view") ? "1.2.3\n" : "/npm/global\n",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Non-interactive update requires --yes");
+    } finally {
+      if (stdinDescriptor === undefined) {
+        Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
+      } else {
+        Object.defineProperty(process.stdin, "isTTY", stdinDescriptor);
+      }
+      if (stdoutDescriptor === undefined) {
+        Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: undefined });
+      } else {
+        Object.defineProperty(process.stdout, "isTTY", stdoutDescriptor);
+      }
+    }
+  });
+
   it("rejects unknown update options", async () => {
     const result = await runCrucibleCli(["update", "--bad"], defaultRuntime);
 
