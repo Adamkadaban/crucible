@@ -53,6 +53,13 @@ describe("crucible MCP tools", () => {
       "vm_start",
       "vm_stop",
       "vm_screenshot",
+      "vm_display_info",
+      "vm_mouse_move",
+      "vm_mouse_click",
+      "vm_mouse_double_click",
+      "vm_mouse_drag",
+      "vm_key_press",
+      "vm_type_text",
       "network_status",
       "network_set_mode",
       "network_active_status",
@@ -1786,6 +1793,177 @@ describe("crucible MCP tools", () => {
     expect(payload.ok).toBe(true);
     expect(payload.result.path).toBe("test.ppm");
     expect(payload.result.sizeBytes).toBe(1234);
+  });
+
+  it("dispatches VM display input tools through the adapter", async () => {
+    const calls: string[] = [];
+    const fakeVm = {
+      status: () => Promise.resolve({ state: "running" }),
+      start: () => Promise.resolve({ state: "running", pid: 1234 }),
+      stop: () => Promise.resolve({ state: "stopped" }),
+      displayInfo: () => Promise.resolve({ available: true, inputAvailable: true, backend: "fake" }),
+      mouseMove: (x: number, y: number) => {
+        calls.push(`move:${x},${y}`);
+        return Promise.resolve({ action: "mouse_move", x, y });
+      },
+      mouseClick: (input: { x?: number; y?: number; button: "left" | "middle" | "right" }) => {
+        calls.push(`click:${input.x ?? "current"},${input.y ?? "current"},${input.button}`);
+        return Promise.resolve({ action: "mouse_click", ...input });
+      },
+      mouseDoubleClick: (input: {
+        x?: number;
+        y?: number;
+        button: "left" | "middle" | "right";
+      }) => {
+        calls.push(`double:${input.x ?? "current"},${input.y ?? "current"},${input.button}`);
+        return Promise.resolve({ action: "mouse_double_click", ...input });
+      },
+      mouseDrag: (input: {
+        fromX: number;
+        fromY: number;
+        toX: number;
+        toY: number;
+        button: "left" | "middle" | "right";
+      }) => {
+        calls.push(`drag:${input.fromX},${input.fromY},${input.toX},${input.toY},${input.button}`);
+        return Promise.resolve({ action: "mouse_drag", x: input.toX, y: input.toY, button: input.button });
+      },
+      keyPress: (key: string) => {
+        calls.push(`key:${key}`);
+        return Promise.resolve({ action: "key_press", key });
+      },
+      typeText: (text: string, delayMs?: number) => {
+        calls.push(`type:${text}:${delayMs ?? "none"}`);
+        return Promise.resolve({ action: "type_text", textLength: text.length });
+      },
+    };
+    const client = await harness({ vmAdapter: fakeVm });
+
+    const display = (await client.callTool({ name: "vm_display_info", arguments: {} })) as ToolCallText;
+    await client.callTool({ name: "vm_mouse_move", arguments: { x: 10, y: 20 } });
+    await client.callTool({ name: "vm_mouse_click", arguments: { x: 30, y: 40 } });
+    await client.callTool({ name: "vm_mouse_double_click", arguments: { button: "right" } });
+    await client.callTool({
+      name: "vm_mouse_drag",
+      arguments: { fromX: 1, fromY: 2, toX: 3, toY: 4, button: "middle" },
+    });
+    await client.callTool({ name: "vm_key_press", arguments: { key: "Ctrl+L" } });
+    await client.callTool({ name: "vm_type_text", arguments: { text: "C:\\Temp", delayMs: 1 } });
+
+    expect(parseFirstTextPayload<{ ok: boolean; result: { backend: string } }>(display).result.backend).toBe(
+      "fake",
+    );
+    expect(calls).toEqual([
+      "move:10,20",
+      "click:30,40,left",
+      "double:current,current,right",
+      "drag:1,2,3,4,middle",
+      "key:Ctrl+L",
+      "type:C:\\Temp:1",
+    ]);
+  });
+
+  it("validates paired VM mouse click coordinates", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running" }),
+        start: () => Promise.resolve({ state: "running", pid: 1234 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        mouseClick: () => Promise.resolve({ action: "mouse_click" }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_mouse_click",
+      arguments: { x: 30 },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
+      result,
+    );
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("validation");
+    expect(payload.error.message).toContain("x and y");
+  });
+
+  it("rejects VM mouse coordinates outside QMP absolute range", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running" }),
+        start: () => Promise.resolve({ state: "running", pid: 1234 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        mouseMove: (x: number, y: number) => Promise.resolve({ action: "mouse_move", x, y }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_mouse_move",
+      arguments: { x: 0x8000, y: 0 },
+    })) as ToolCallText & { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("32767");
+  });
+
+  it("rejects malformed VM key press chords", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running" }),
+        start: () => Promise.resolve({ state: "running", pid: 1234 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+        keyPress: (key: string) => Promise.resolve({ action: "key_press", key }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "ctrl l" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("Invalid");
+
+    const separatorsOnly = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "+++" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(separatorsOnly.isError).toBe(true);
+    expect(separatorsOnly.content[0]?.text).toContain("Invalid");
+
+    const trailingSeparator = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "ctrl-" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(trailingSeparator.isError).toBe(true);
+    expect(trailingSeparator.content[0]?.text).toContain("Invalid");
+  });
+
+  it("reports unsupported VM display input tools", async () => {
+    const client = await harness({
+      vmAdapter: {
+        status: () => Promise.resolve({ state: "running" }),
+        start: () => Promise.resolve({ state: "running", pid: 1234 }),
+        stop: () => Promise.resolve({ state: "stopped" }),
+      },
+    });
+    const result = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "ctrl-l" },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
+      result,
+    );
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("vm-offline");
+    expect(payload.error.message).toContain("key input");
+  });
+
+  it("reports unconfigured VM adapter for display input tools", async () => {
+    const client = await harness({});
+    const result = (await client.callTool({
+      name: "vm_mouse_move",
+      arguments: { x: 10, y: 20 },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
+      result,
+    );
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("vm-offline");
+    expect(payload.error.message).toContain("VM adapter is not configured");
   });
 
   it("debug_open launches a debug session via guest agent", async () => {

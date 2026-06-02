@@ -240,6 +240,55 @@ type UpdateArgsResult =
   | { readonly ok: false; readonly message: string };
 
 type JsonObject = { [key: string]: unknown };
+type QmpMouseButton = "left" | "middle" | "right";
+
+const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
+  " ": "spc",
+  "\n": "ret",
+  "\r": "ret",
+  "\t": "tab",
+  ".": "dot",
+  ",": "comma",
+  "/": "slash",
+  "\\": "backslash",
+  "-": "minus",
+  "=": "equal",
+  ";": "semicolon",
+  ":": "shift-semicolon",
+  "'": "apostrophe",
+  "[": "bracket_left",
+  "]": "bracket_right",
+  "`": "grave_accent",
+  "0": "0",
+  "1": "1",
+  "2": "2",
+  "3": "3",
+  "4": "4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9": "9",
+};
+const QEMU_KEY_ALIASES: Readonly<Record<string, string>> = {
+  ctrl: "ctrl",
+  control: "ctrl",
+  alt: "alt",
+  shift: "shift",
+  win: "meta_l",
+  windows: "meta_l",
+  cmd: "meta_l",
+  meta: "meta_l",
+  enter: "ret",
+  return: "ret",
+  escape: "esc",
+  esc: "esc",
+  space: "spc",
+  tab: "tab",
+  delete: "delete",
+  del: "delete",
+  backspace: "backspace",
+};
 
 export async function runCrucibleCli(
   args: readonly string[],
@@ -582,6 +631,71 @@ function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
 
 function buildMcpVmAdapter(config: CrucibleConfig) {
   const manager = new VmLifecycleManager({ config });
+  const withQmp = async <T>(operation: (qmp: QmpClient) => Promise<T>) => {
+    const qmp = new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
+    try {
+      await qmp.connect();
+      return await operation(qmp);
+    } finally {
+      qmp.close();
+    }
+  };
+  const sendInput = (events: readonly Record<string, unknown>[]) =>
+    withQmp((qmp) =>
+      qmp.execute("input-send-event", { events }, { timeoutMs: config.qmp.timeoutMs }).then(
+        () => undefined,
+      ),
+    );
+  const sendMonitorCommand = (command: string) =>
+    withQmp((qmp) =>
+      qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs }),
+    );
+  const buttonName = (button: QmpMouseButton) => {
+    switch (button) {
+      case "left":
+        return "left";
+      case "middle":
+        return "middle";
+      case "right":
+        return "right";
+    }
+  };
+  const mouseMoveEvent = (x: number) => ({
+    type: "abs" as const,
+    data: { axis: "x", value: x },
+    // QMP absolute pointer coordinates are normalized 0..0x7fff.
+  });
+  const mouseAbsEvents = (x: number, y: number) => [
+    mouseMoveEvent(x),
+    { type: "abs" as const, data: { axis: "y", value: y } },
+  ];
+  const mouseButtonEvents = (button: QmpMouseButton) => [
+    { type: "btn" as const, data: { button: buttonName(button), down: true } },
+    { type: "btn" as const, data: { button: buttonName(button), down: false } },
+  ];
+  const toQemuKey = (key: string) => {
+    const mapped = QEMU_TEXT_KEY_MAP[key];
+    if (mapped !== undefined) return mapped;
+    if (/^[a-z]$/.test(key)) return key;
+    if (/^[A-Z]$/.test(key)) return `shift-${key.toLowerCase()}`;
+    throw new CrucibleError("CONFIG_INVALID", `unsupported key for VM text input: ${JSON.stringify(key)}`);
+  };
+  const normalizeQemuKey = (key: string) => {
+    const parts = key
+      .trim()
+      .split(/[+-]/)
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0);
+    if (parts.length === 0) {
+      throw new CrucibleError("CONFIG_INVALID", "key must not be empty");
+    }
+    return parts.map((part) => QEMU_KEY_ALIASES[part] ?? part).join("-");
+  };
+  const assertPairedCoordinates = (x: number | undefined, y: number | undefined) => {
+    if ((x === undefined) !== (y === undefined)) {
+      throw new CrucibleError("CONFIG_INVALID", "x and y must be supplied together");
+    }
+  };
   const render = async () => {
     const status = await manager.status();
     return {
@@ -624,6 +738,95 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       }
       const fileInfo = await fsStat(outputPath);
       return { path: outputPath, sizeBytes: fileInfo.size };
+    },
+    displayInfo: async () => {
+      try {
+        const commands = await withQmp(async (qmp) => {
+          const result = await qmp.execute<Array<{ name?: string }>>("query-commands", undefined, {
+            timeoutMs: config.qmp.timeoutMs,
+          });
+          return new Set(result.returnValue.map((command) => command.name).filter((name): name is string => name !== undefined));
+        });
+        const mouseAvailable = commands.has("input-send-event");
+        const keyAvailable = commands.has("human-monitor-command");
+        const inputAvailable = mouseAvailable || keyAvailable;
+        const inputBackends = [
+          mouseAvailable ? "qmp-input-send-event" : undefined,
+          keyAvailable ? "qmp-human-monitor-command" : undefined,
+        ].filter((backend): backend is string => backend !== undefined);
+        return {
+          available: true,
+          backend: inputBackends.length > 0 ? inputBackends.join("+") : "qmp",
+          inputAvailable,
+          message:
+            inputBackends.length > 0
+              ? `QMP display is reachable; input backend(s): ${inputBackends.join(", ")}.`
+              : "QMP display is reachable, but display input commands are unavailable.",
+        };
+      } catch (error) {
+        return {
+          available: false,
+          backend: "qmp",
+          inputAvailable: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+    mouseMove: async (x: number, y: number) => {
+      await sendInput(mouseAbsEvents(x, y));
+      return { action: "mouse_move", backend: "qmp-input-send-event", x, y };
+    },
+    mouseClick: async (input: {
+      readonly x?: number;
+      readonly y?: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      assertPairedCoordinates(input.x, input.y);
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
+      await sendInput([...events, ...mouseButtonEvents(input.button)]);
+      return { action: "mouse_click", backend: "qmp-input-send-event", ...input };
+    },
+    mouseDoubleClick: async (input: {
+      readonly x?: number;
+      readonly y?: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      assertPairedCoordinates(input.x, input.y);
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
+      await sendInput([...events, ...mouseButtonEvents(input.button), ...mouseButtonEvents(input.button)]);
+      return { action: "mouse_double_click", backend: "qmp-input-send-event", ...input };
+    },
+    mouseDrag: async (input: {
+      readonly fromX: number;
+      readonly fromY: number;
+      readonly toX: number;
+      readonly toY: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      await sendInput([
+        ...mouseAbsEvents(input.fromX, input.fromY),
+        { type: "btn", data: { button: buttonName(input.button), down: true } },
+        ...mouseAbsEvents(input.toX, input.toY),
+        { type: "btn", data: { button: buttonName(input.button), down: false } },
+      ]);
+      return { action: "mouse_drag", backend: "qmp-input-send-event", x: input.toX, y: input.toY, button: input.button };
+    },
+    keyPress: async (key: string) => {
+      const normalized = normalizeQemuKey(key);
+      await sendMonitorCommand(`sendkey ${normalized}`);
+      return { action: "key_press", backend: "qmp-human-monitor-command", key: normalized };
+    },
+    typeText: async (text: string, delayMs?: number) => {
+      const commands = [...text].map((key) => `sendkey ${toQemuKey(key)}`);
+      await withQmp(async (qmp) => {
+        for (const command of commands) {
+          await qmp.execute("human-monitor-command", { "command-line": command }, { timeoutMs: config.qmp.timeoutMs });
+          if (delayMs !== undefined && delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+      });
+      return { action: "type_text", backend: "qmp-human-monitor-command", textLength: text.length };
     },
   };
 }

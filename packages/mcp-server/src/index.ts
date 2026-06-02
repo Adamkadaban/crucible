@@ -60,6 +60,13 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
     name: "vm_screenshot",
     description: "Capture a screenshot of the VM display via QMP screendump.",
   },
+  { name: "vm_display_info", description: "Report VM display/input automation availability." },
+  { name: "vm_mouse_move", description: "Move the VM mouse pointer to normalized QMP coordinates (0..0x7fff)." },
+  { name: "vm_mouse_click", description: "Click a VM mouse button at optional normalized QMP coordinates (0..0x7fff)." },
+  { name: "vm_mouse_double_click", description: "Double-click a VM mouse button at optional normalized QMP coordinates (0..0x7fff)." },
+  { name: "vm_mouse_drag", description: "Drag the VM mouse pointer between normalized QMP coordinates (0..0x7fff)." },
+  { name: "vm_key_press", description: "Send a QEMU sendkey name or chord to the VM display." },
+  { name: "vm_type_text", description: "Type supported literal text into the VM display." },
   {
     name: "network_status",
     description: "Report configured VM network mode and live-switch capability.",
@@ -230,6 +237,38 @@ const VmScreenshotInput = z
   })
   .strict();
 type VmScreenshotInputType = z.infer<typeof VmScreenshotInput>;
+const QmpCoordinate = z.number().int().min(0).max(0x7fff);
+const MouseButton = z.enum(["left", "middle", "right"]);
+const MouseCoordinates = z.object({ x: QmpCoordinate, y: QmpCoordinate });
+const VmDisplayInfoInput = z.object({}).strict();
+const VmMouseMoveInput = MouseCoordinates.strict();
+type VmMouseMoveInputType = z.infer<typeof VmMouseMoveInput>;
+const VmMouseClickInput = z
+  .object({
+    x: QmpCoordinate.optional(),
+    y: QmpCoordinate.optional(),
+    button: MouseButton.optional(),
+  })
+  .strict();
+type VmMouseClickInputType = z.infer<typeof VmMouseClickInput>;
+const VmMouseDoubleClickInput = VmMouseClickInput;
+type VmMouseDoubleClickInputType = z.infer<typeof VmMouseDoubleClickInput>;
+const VmMouseDragInput = z
+  .object({
+    fromX: QmpCoordinate,
+    fromY: QmpCoordinate,
+    toX: QmpCoordinate,
+    toY: QmpCoordinate,
+    button: MouseButton.optional(),
+  })
+  .strict();
+type VmMouseDragInputType = z.infer<typeof VmMouseDragInput>;
+const VmKeyPressInput = z.object({ key: z.string().regex(/^[a-z0-9_]+([+-][a-z0-9_]+)*$/i).min(1).max(64) }).strict();
+type VmKeyPressInputType = z.infer<typeof VmKeyPressInput>;
+const VmTypeTextInput = z
+  .object({ text: z.string().min(1).max(4096), delayMs: z.number().int().min(0).max(5000).optional() })
+  .strict();
+type VmTypeTextInputType = z.infer<typeof VmTypeTextInput>;
 const NetworkStatusInput = z.object({}).strict();
 const NetworkSetModeInput = z.object({ mode: z.enum(["isolated", "nat", "capture"]) }).strict();
 type NetworkSetModeInputType = z.infer<typeof NetworkSetModeInput>;
@@ -373,6 +412,25 @@ export type VmLifecycleSnapshot = {
   readonly startedAt?: string;
 };
 
+export type VmDisplayInfo = {
+  readonly available: boolean;
+  readonly backend?: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly inputAvailable: boolean;
+  readonly message?: string;
+};
+
+export type VmInputActionResult = {
+  readonly action: string;
+  readonly backend?: string;
+  readonly x?: number;
+  readonly y?: number;
+  readonly button?: "left" | "middle" | "right";
+  readonly key?: string;
+  readonly textLength?: number;
+};
+
 export type SnapshotInfo = {
   readonly name: string;
   readonly path: string;
@@ -388,6 +446,27 @@ export type CrucibleVmAdapter = {
   readonly start: () => Promise<VmLifecycleSnapshot>;
   readonly stop: () => Promise<VmLifecycleSnapshot>;
   readonly screenshot?: (outputPath: string) => Promise<{ path: string; sizeBytes: number }>;
+  readonly displayInfo?: () => Promise<VmDisplayInfo>;
+  readonly mouseMove?: (x: number, y: number) => Promise<VmInputActionResult>;
+  readonly mouseClick?: (input: {
+    readonly x?: number;
+    readonly y?: number;
+    readonly button: "left" | "middle" | "right";
+  }) => Promise<VmInputActionResult>;
+  readonly mouseDoubleClick?: (input: {
+    readonly x?: number;
+    readonly y?: number;
+    readonly button: "left" | "middle" | "right";
+  }) => Promise<VmInputActionResult>;
+  readonly mouseDrag?: (input: {
+    readonly fromX: number;
+    readonly fromY: number;
+    readonly toX: number;
+    readonly toY: number;
+    readonly button: "left" | "middle" | "right";
+  }) => Promise<VmInputActionResult>;
+  readonly keyPress?: (key: string) => Promise<VmInputActionResult>;
+  readonly typeText?: (text: string, delayMs?: number) => Promise<VmInputActionResult>;
 };
 
 export type CrucibleSnapshotAdapter = {
@@ -746,6 +825,139 @@ function registerVmTools(
           error: toToolError(classifyError(error), error, auditLogPath),
         });
       }
+    },
+  );
+  const unsupported = (message: string) =>
+    toJsonContent({
+      ok: false,
+      error: {
+        kind: "vm-offline" as const,
+        message: vm === undefined ? "VM adapter is not configured" : message,
+        auditLogPath,
+      },
+    });
+  const wrapInput = async (operation: () => Promise<VmDisplayInfo | VmInputActionResult>) => {
+    try {
+      return toJsonContent({ ok: true, result: await operation(), auditLogPath });
+    } catch (error) {
+      return toJsonContent({
+        ok: false,
+        error: toToolError(classifyError(error), error, auditLogPath),
+      });
+    }
+  };
+  const invalidCoordinates = () =>
+    toJsonContent({
+      ok: false,
+      error: {
+        kind: "validation" as const,
+        message: "x and y must be supplied together",
+        auditLogPath,
+      },
+    });
+  server.registerTool(
+    "vm_display_info",
+    {
+      title: "VM display info",
+      description: "Report whether GUI display automation is available; dimensions are adapter-dependent.",
+      inputSchema: VmDisplayInfoInput.shape,
+    },
+    () => {
+      if (vm?.displayInfo === undefined) {
+        return unsupported("VM adapter does not support display automation");
+      }
+      return wrapInput(() => vm.displayInfo!());
+    },
+  );
+  server.registerTool(
+    "vm_mouse_move",
+    {
+      title: "Move VM mouse",
+      description: "Move the VM mouse pointer to QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      inputSchema: VmMouseMoveInput.shape,
+    },
+    (input: VmMouseMoveInputType) => {
+      if (vm?.mouseMove === undefined) {
+        return unsupported("VM adapter does not support mouse movement");
+      }
+      return wrapInput(() => vm.mouseMove!(input.x, input.y));
+    },
+  );
+  server.registerTool(
+    "vm_mouse_click",
+    {
+      title: "Click VM mouse",
+      description: "Click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      inputSchema: VmMouseClickInput.shape,
+    },
+    (input: VmMouseClickInputType) => {
+      if (vm?.mouseClick === undefined) {
+        return unsupported("VM adapter does not support mouse clicks");
+      }
+      if ((input.x === undefined) !== (input.y === undefined)) {
+        return invalidCoordinates();
+      }
+      return wrapInput(() => vm.mouseClick!({ ...input, button: input.button ?? "left" }));
+    },
+  );
+  server.registerTool(
+    "vm_mouse_double_click",
+    {
+      title: "Double-click VM mouse",
+      description: "Double-click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      inputSchema: VmMouseDoubleClickInput.shape,
+    },
+    (input: VmMouseDoubleClickInputType) => {
+      if (vm?.mouseDoubleClick === undefined) {
+        return unsupported("VM adapter does not support mouse double-clicks");
+      }
+      if ((input.x === undefined) !== (input.y === undefined)) {
+        return invalidCoordinates();
+      }
+      return wrapInput(() => vm.mouseDoubleClick!({ ...input, button: input.button ?? "left" }));
+    },
+  );
+  server.registerTool(
+    "vm_mouse_drag",
+    {
+      title: "Drag VM mouse",
+      description: "Drag a mouse button between QMP absolute coordinates, normalized 0..0x7fff per axis.",
+      inputSchema: VmMouseDragInput.shape,
+    },
+    (input: VmMouseDragInputType) => {
+      if (vm?.mouseDrag === undefined) {
+        return unsupported("VM adapter does not support mouse dragging");
+      }
+      return wrapInput(() => vm.mouseDrag!({ ...input, button: input.button ?? "left" }));
+    },
+  );
+  server.registerTool(
+    "vm_key_press",
+    {
+      title: "Press VM key",
+      description:
+        "Send an adapter-supported key name or chord such as ctrl-l, Ctrl+L, alt-f4, or meta_l-r to the VM display.",
+      inputSchema: VmKeyPressInput.shape,
+    },
+    (input: VmKeyPressInputType) => {
+      if (vm?.keyPress === undefined) {
+        return unsupported("VM adapter does not support key input");
+      }
+      return wrapInput(() => vm.keyPress!(input.key));
+    },
+  );
+  server.registerTool(
+    "vm_type_text",
+    {
+      title: "Type VM text",
+      description: "Type supported literal text into the VM display with an optional per-character delay.",
+      inputSchema: VmTypeTextInput.shape,
+    },
+    (input: VmTypeTextInputType) => {
+      if (vm?.typeText === undefined) {
+        return unsupported("VM adapter does not support text input");
+      }
+      return wrapInput(() => vm.typeText!(input.text, input.delayMs));
     },
   );
 }
