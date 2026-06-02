@@ -1847,8 +1847,8 @@ describe("crucible MCP tools", () => {
       name: "vm_mouse_drag",
       arguments: { fromX: 1, fromY: 2, toX: 3, toY: 4, button: "middle" },
     });
-    await client.callTool({ name: "vm_key_press", arguments: { key: "ctrl-l" } });
-    await client.callTool({ name: "vm_type_text", arguments: { text: "abc", delayMs: 1 } });
+    await client.callTool({ name: "vm_key_press", arguments: { key: "Ctrl+L" } });
+    await client.callTool({ name: "vm_type_text", arguments: { text: "C:\\Temp", delayMs: 1 } });
 
     expect(parseFirstTextPayload<{ ok: boolean; result: { backend: string } }>(display).result.backend).toBe(
       "fake",
@@ -1858,8 +1858,8 @@ describe("crucible MCP tools", () => {
       "click:30,40,left",
       "double:current,current,right",
       "drag:1,2,3,4,middle",
-      "key:ctrl-l",
-      "type:abc:1",
+      "key:Ctrl+L",
+      "type:C:\\Temp:1",
     ]);
   });
 
