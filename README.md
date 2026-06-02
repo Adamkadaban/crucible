@@ -36,6 +36,7 @@ npm install -g @adamkadaban/crucible
 crucible --help
 crucible doctor
 crucible setup host --print
+crucible update --dry-run
 ```
 
 The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
@@ -146,6 +147,7 @@ pnpm crucible vm logs
 pnpm crucible vm stop
 pnpm crucible network status
 pnpm crucible snapshot restore clean-base
+crucible update --dry-run
 ```
 
 The older colon spellings such as `crucible vm:status` still work for compatibility, but docs prefer

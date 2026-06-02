@@ -10,6 +10,7 @@ Windows x64 guest-agent binary.
 npm install -g @adamkadaban/crucible
 crucible --help
 crucible doctor
+crucible update --dry-run
 ```
 
 Use a source checkout only when developing Crucible itself.
@@ -130,3 +131,6 @@ crucible setup copilot --print
 `setup opencode` updates `~/.config/opencode/opencode.json`. `setup claude` uses the Claude CLI to
 add a user-scoped stdio MCP server. Codex and Copilot CLI setup currently print explicit MCP config
 guidance because their local MCP configuration formats vary by version.
+
+Use `crucible update --dry-run` to check the installed Crucible version against npm and see which
+MCP client entries would be refreshed. Use `crucible update --yes` in non-interactive shells.

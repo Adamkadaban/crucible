@@ -16,6 +16,7 @@ import {
   buildMediaCachePlan,
   buildQemuCommandPlan,
   CrucibleError,
+  CRUCIBLE_VERSION,
   DebuggerSessionManager,
   describeCommand,
   FIREWALL_BACKENDS,
@@ -206,6 +207,15 @@ type SetupArgsResult =
   | { readonly ok: true; readonly args: SetupArgs }
   | { readonly ok: false; readonly message: string };
 
+type UpdateArgs = {
+  readonly dryRun: boolean;
+  readonly yes: boolean;
+};
+
+type UpdateArgsResult =
+  | { readonly ok: true; readonly args: UpdateArgs }
+  | { readonly ok: false; readonly message: string };
+
 type JsonObject = { [key: string]: unknown };
 
 export async function runCrucibleCli(
@@ -232,6 +242,8 @@ export async function runCrucibleCli(
       return doctorCommand(rest);
     case "setup":
       return setupCommand(rest, runtime);
+    case "update":
+      return updateCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
     case "net:status":
@@ -1705,6 +1717,7 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
         configPath: join(homedir(), ".config", "opencode", "opencode.json"),
         mcpKey: "mcp",
         printOnly: parsed.args.printOnly,
+        mode: "setup",
       });
     case "claude":
       return setupClaudeCommand(parsed.args.printOnly);
@@ -1719,6 +1732,168 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
         'Copilot CLI MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` if your Copilot CLI build supports MCP.',
       );
   }
+}
+
+async function updateCommand(args: readonly string[], runtime: CliRuntime): Promise<CommandResult> {
+  const parsed = parseUpdateArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const runner = runtime.processRunner ?? nodeProcessRunner;
+  const latestResult = await runner.run({
+    executable: "npm",
+    args: ["view", "@adamkadaban/crucible", "version", "--silent"],
+    timeoutMs: 60_000,
+    maxOutputBytes: 64 * 1024,
+  });
+  if (latestResult.exitCode !== 0 || latestResult.timedOut) {
+    return {
+      exitCode: latestResult.timedOut ? 1 : (latestResult.exitCode ?? 1),
+      stdout: "",
+      stderr: [`Failed to check npm for the latest Crucible version.`, latestResult.stderr]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
+
+  const latestVersion = latestResult.stdout.trim();
+  if (latestVersion.length === 0) {
+    return { exitCode: 1, stdout: "", stderr: "npm did not report a latest Crucible version." };
+  }
+
+  const install = await detectGlobalInstall(runner);
+  const actions: string[] = [
+    "Crucible update plan:",
+    `current version: ${CRUCIBLE_VERSION}`,
+    `latest npm version: ${latestVersion}`,
+    `detected install: ${formatInstallDetection(install)}`,
+  ];
+  const needsPackageUpdate = latestVersion !== CRUCIBLE_VERSION;
+
+  if (parsed.args.dryRun) {
+    actions.push(
+      `package update: ${needsPackageUpdate ? "would run" : "already current"}`,
+      `package command: ${formatCommand(buildPackageUpdateCommand(install))}`,
+      "MCP config refresh:",
+      ...renderMcpUpdateDryRun(),
+    );
+    return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  }
+
+  if (!parsed.args.yes && !process.stdin.isTTY) {
+    return {
+      exitCode: 1,
+      stdout: actions.join("\n"),
+      stderr: "Non-interactive update requires --yes.",
+    };
+  }
+
+  if (!parsed.args.yes && process.stdin.isTTY && process.stdout.isTTY) {
+    const confirmed = await confirmYes("Update Crucible and refresh MCP config? [Y/n] ");
+    if (!confirmed) {
+      return { exitCode: 1, stdout: actions.join("\n"), stderr: "Update cancelled." };
+    }
+  }
+
+  if (needsPackageUpdate) {
+    const command = buildPackageUpdateCommand(install);
+    const updateResult = await runner.run({
+      executable: command[0] ?? "npm",
+      args: command.slice(1),
+      timeoutMs: 5 * 60 * 1000,
+      maxOutputBytes: 1024 * 1024,
+    });
+    actions.push(`package command: ${formatCommand(command)}`);
+    if (updateResult.exitCode !== 0 || updateResult.timedOut) {
+      return {
+        exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
+        stdout: actions.join("\n"),
+        stderr: updateResult.stderr,
+      };
+    }
+    actions.push("package update: completed");
+  } else {
+    actions.push("package update: already current");
+  }
+
+  const mcpResults = await refreshMcpConfigs(runtime);
+  actions.push("MCP config refresh:", ...mcpResults);
+  return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+}
+
+type GlobalInstallDetection = {
+  readonly manager: "npm" | "pnpm";
+  readonly detail: string;
+};
+
+async function detectGlobalInstall(runner: ProcessRunner): Promise<GlobalInstallDetection> {
+  const npmRoot = await runner.run({
+    executable: "npm",
+    args: ["root", "-g"],
+    timeoutMs: 30_000,
+    maxOutputBytes: 64 * 1024,
+  });
+  if (npmRoot.exitCode === 0 && npmRoot.stdout.trim().length > 0) {
+    return { manager: "npm", detail: npmRoot.stdout.trim() };
+  }
+
+  const pnpmRoot = await runner.run({
+    executable: "pnpm",
+    args: ["root", "-g"],
+    timeoutMs: 30_000,
+    maxOutputBytes: 64 * 1024,
+  });
+  if (pnpmRoot.exitCode === 0 && pnpmRoot.stdout.trim().length > 0) {
+    return { manager: "pnpm", detail: pnpmRoot.stdout.trim() };
+  }
+
+  return { manager: "npm", detail: "fallback" };
+}
+
+function formatInstallDetection(install: GlobalInstallDetection): string {
+  return `${install.manager} global (${install.detail})`;
+}
+
+function buildPackageUpdateCommand(install: GlobalInstallDetection): readonly string[] {
+  if (install.manager === "pnpm") {
+    return ["pnpm", "add", "-g", "@adamkadaban/crucible@latest"];
+  }
+  return ["npm", "install", "-g", "@adamkadaban/crucible@latest"];
+}
+
+function renderMcpUpdateDryRun(): readonly string[] {
+  return [
+    `- opencode: would refresh ${join(homedir(), ".config", "opencode", "opencode.json")}`,
+    "- claude: would run claude MCP setup command if available",
+    "- codex: print-only guidance; no stable config writer",
+    "- copilot: print-only guidance; no stable config writer",
+  ];
+}
+
+async function refreshMcpConfigs(runtime: CliRuntime): Promise<readonly string[]> {
+  const results: string[] = [];
+  const opencode = await setupJsonMcpCommand({
+    targetName: "opencode",
+    configPath: join(homedir(), ".config", "opencode", "opencode.json"),
+    mcpKey: "mcp",
+    printOnly: false,
+    mode: "update",
+  });
+  results.push(
+    `- opencode: ${firstLine([opencode.stdout, opencode.stderr].filter(Boolean).join(" "))}`,
+  );
+
+  void runtime;
+  results.push("- claude: skipped; run `crucible setup claude` to refresh via Claude CLI");
+  results.push("- codex: skipped; run `crucible setup codex --print` for current guidance");
+  results.push("- copilot: skipped; run `crucible setup copilot --print` for current guidance");
+  return results;
+}
+
+function firstLine(value: string): string {
+  const line = value.split("\n").find((candidate) => candidate.trim().length > 0);
+  return line ?? "no output";
 }
 
 function setupFlags(args: SetupArgs): string[] {
@@ -1853,6 +2028,7 @@ async function setupJsonMcpCommand(options: {
   readonly configPath: string;
   readonly mcpKey: string;
   readonly printOnly: boolean;
+  readonly mode?: "setup" | "update";
 }): Promise<CommandResult> {
   const entry = getMcpServerEntry();
   if (options.printOnly) {
@@ -1882,7 +2058,16 @@ async function setupJsonMcpCommand(options: {
     };
   }
   const existing: JsonObject = currentMcp ?? {};
+  const previousEntry = existing.crucible;
+  const changed = !jsonValuesEqual(previousEntry, entry);
   config[options.mcpKey] = { ...existing, crucible: entry };
+  if (options.mode === "update" && !changed) {
+    return {
+      exitCode: 0,
+      stdout: `${options.targetName} config already current: ${options.configPath}`,
+      stderr: "",
+    };
+  }
   let backupPath: string | undefined;
   try {
     backupPath = await writeJsonConfigWithBackup(options.configPath, config);
@@ -1893,7 +2078,8 @@ async function setupJsonMcpCommand(options: {
       stderr: `Failed to write ${options.configPath}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  const lines = [`Updated ${options.targetName} config: ${options.configPath}`];
+  const verb = options.mode === "update" ? "Refreshed" : "Updated";
+  const lines = [`${verb} ${options.targetName} config: ${options.configPath}`];
   if (backupPath !== undefined) {
     lines.push(`Backup: ${backupPath}`);
   }
@@ -1902,6 +2088,10 @@ async function setupJsonMcpCommand(options: {
 
 function getMcpServerEntry(): JsonObject {
   return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"] };
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function renderSetupInstruction(target: string, message: string): CommandResult {
@@ -2637,6 +2827,25 @@ function parseSetupArgs(args: readonly string[]): SetupArgsResult {
   return { ok: true, args: { target, printOnly, yes } };
 }
 
+function parseUpdateArgs(args: readonly string[]): UpdateArgsResult {
+  let dryRun = false;
+  let yes = false;
+
+  for (const arg of args) {
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--yes") {
+      yes = true;
+      continue;
+    }
+    return { ok: false, message: `Unknown update option: ${arg}` };
+  }
+
+  return { ok: true, args: { dryRun, yes } };
+}
+
 function isSetupTarget(value: string | undefined): value is SetupTarget {
   return (
     value === "host" ||
@@ -2748,6 +2957,13 @@ const COMMANDS: readonly CommandDefinition[] = [
     summary: "Install host prerequisites or configure MCP clients.",
     usage: ["crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]"],
     examples: ["crucible setup host --print", "crucible setup opencode"],
+  },
+  {
+    canonical: "update",
+    preferred: "update",
+    summary: "Update the global npm package and refresh MCP config entries.",
+    usage: ["crucible update [--dry-run] [--yes]"],
+    examples: ["crucible update --dry-run", "crucible update --yes"],
   },
   {
     canonical: "provision",
@@ -3049,9 +3265,9 @@ function levenshteinDistance(left: string, right: string): number {
     for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
       const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
       current[rightIndex] = Math.min(
-        current[rightIndex - 1] + 1,
-        previous[rightIndex] + 1,
-        previous[rightIndex - 1] + cost,
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + cost,
       );
     }
     previous.splice(0, previous.length, ...current);

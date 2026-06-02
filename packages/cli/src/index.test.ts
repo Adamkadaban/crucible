@@ -20,6 +20,7 @@ const tempDirs: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
@@ -104,6 +105,101 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown command: vm stats");
     expect(result.stderr).toContain("Did you mean: crucible vm status?");
+  });
+
+  it("prints update dry-run plan without installing", async () => {
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : "/npm/global\n",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Crucible update plan:");
+    expect(result.stdout).toContain("latest npm version: 1.2.3");
+    expect(result.stdout).toContain("package update: would run");
+    expect(result.stdout).toContain("MCP config refresh:");
+    expect(commands).toEqual(["npm view @adamkadaban/crucible version --silent", "npm root -g"]);
+  });
+
+  it("updates package and refreshes opencode MCP config with --yes", async () => {
+    const root = await createTempDir("crucible-home-");
+    vi.stubEnv("HOME", root);
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update", "--yes"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          const stdout = command.args.includes("view")
+            ? "1.2.3\n"
+            : command.args.includes("root")
+              ? "/npm/global\n"
+              : "updated\n";
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+    const opencodeConfig = JSON.parse(
+      await readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
+    ) as { mcp?: { crucible?: { command?: string; args?: string[] } } };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("package update: completed");
+    expect(result.stdout).toContain("Refreshed opencode config:");
+    expect(opencodeConfig.mcp?.crucible?.command).toBe("crucible");
+    expect(opencodeConfig.mcp?.crucible?.args).toEqual(["mcp", "--stdio"]);
+    expect(commands).toContain("npm install -g @adamkadaban/crucible@latest");
+  });
+
+  it("requires --yes for non-interactive update apply", async () => {
+    const result = await runCrucibleCli(["update"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : "/npm/global\n",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Non-interactive update requires --yes");
+  });
+
+  it("rejects unknown update options", async () => {
+    const result = await runCrucibleCli(["update", "--bad"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown update option: --bad");
   });
 
   it("rejects invalid vm:create and vm:start options", async () => {
