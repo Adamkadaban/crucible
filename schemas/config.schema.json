@@ -131,7 +131,11 @@
         "locale": { "type": "string", "minLength": 1 },
         "timezone": { "type": "string", "minLength": 1 },
         "keyboardLayout": { "type": "string", "minLength": 1 },
-        "screenResolution": { "type": "string", "pattern": "^\\d{3,5}x\\d{3,5}$" },
+        "screenResolution": {
+          "type": "string",
+          "pattern": "^\\d{3,5}x\\d{3,5}$",
+          "description": "Persona metadata only; display settings are not applied in the guest yet."
+        },
         "installCommonSoftware": { "type": "boolean", "default": false },
         "populateUserFiles": { "type": "boolean", "default": true },
         "simulateUserHistory": { "type": "boolean", "default": false },

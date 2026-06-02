@@ -22,6 +22,7 @@ export const realismConfigSchema = z
     screenResolution: z
       .string()
       .regex(/^\d{3,5}x\d{3,5}$/)
+      .describe("Persona metadata only; display settings are not applied in the guest yet.")
       .optional(),
     installCommonSoftware: z.boolean().default(false),
     populateUserFiles: z.boolean().default(true),

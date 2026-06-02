@@ -438,6 +438,67 @@ describe("provisioning contracts", () => {
     ).resolves.toMatchObject({ username: "CrucibleUser" });
   });
 
+  it("rewrites stale persona account secrets back to default usernames", async () => {
+    const root = await mkdtempPath("crucible-default-secrets-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const secretsDirectory = join(root, "secrets");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      writeWindowsAccountSecrets({
+        vmName: "secret-vm",
+        secretsDirectory,
+        standardUsername: "devuser",
+        adminUsername: "localadmin",
+      }),
+    ]);
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "secret-vm", diskGiB: 64 },
+        media: { windowsIso: { path: windowsIso }, virtioIso: { path: virtioIso } },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory,
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    await expect(
+      readFile(join(secretsDirectory, "secret-vm", "windows", "standard-user.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toMatchObject({ username: "CrucibleUser" });
+    await expect(
+      readFile(join(secretsDirectory, "secret-vm", "windows", "admin-user.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toMatchObject({ username: "CrucibleAdmin" });
+  });
+
   it("builds a deterministic guest certificate staging plan from host secrets", () => {
     const plan = buildGuestAgentCertificateStagePlan({
       vmName: "analysis one",

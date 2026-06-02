@@ -162,6 +162,9 @@ the artifact manifest so analysts can reproduce the same persona later. `timezon
 time zone ID such as `Pacific Standard Time` or `Eastern Standard Time`, not an IANA name such as
 `America/New_York`.
 
+`screenResolution` is recorded as persona metadata only. Current provisioning does not apply display
+settings inside the guest.
+
 Provisioning uses the persona in these places:
 
 - Autounattend uses the generated hostname, locale, keyboard layout, timezone, and local-account

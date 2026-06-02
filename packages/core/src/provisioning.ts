@@ -60,6 +60,9 @@ export const PROVISIONING_SECRET_KINDS = [
   "mtls-guest-server-certificate",
 ] as const;
 
+const DEFAULT_WINDOWS_STANDARD_USERNAME = "CrucibleUser";
+const DEFAULT_WINDOWS_ADMIN_USERNAME = "CrucibleAdmin";
+
 export type ProvisioningStageId = (typeof PROVISIONING_STAGE_IDS)[number];
 export type ProvisioningScriptRunner = (typeof PROVISIONING_SCRIPT_RUNNERS)[number];
 export type ProvisioningSecretKind = (typeof PROVISIONING_SECRET_KINDS)[number];
@@ -907,6 +910,8 @@ async function ensureWindowsAccountSecrets(options: {
   readonly standardUsername?: string;
   readonly adminUsername?: string;
 }): Promise<readonly EmbeddedAccount[]> {
+  const expectedStandardUsername = options.standardUsername ?? DEFAULT_WINDOWS_STANDARD_USERNAME;
+  const expectedAdminUsername = options.adminUsername ?? DEFAULT_WINDOWS_ADMIN_USERNAME;
   const contract = buildProvisioningSecretStorageContract(options.vmName, options.secretsDirectory);
   const standardRef = requiredSecretRef(contract, "windows-standard-password");
   const adminRef = requiredSecretRef(contract, "windows-admin-password");
@@ -924,8 +929,7 @@ async function ensureWindowsAccountSecrets(options: {
       const standard = JSON.parse(standardRaw) as WindowsAccountSecret;
       const admin = JSON.parse(adminRaw) as WindowsAccountSecret;
       shouldWriteAccounts =
-        (options.standardUsername !== undefined && standard.username !== options.standardUsername) ||
-        (options.adminUsername !== undefined && admin.username !== options.adminUsername);
+        standard.username !== expectedStandardUsername || admin.username !== expectedAdminUsername;
     } catch {
       shouldWriteAccounts = true;
     }
@@ -1699,7 +1703,7 @@ export async function writeWindowsAccountSecrets(
     {
       ref: standardRef,
       secret: {
-        username: options.standardUsername ?? "CrucibleUser",
+        username: options.standardUsername ?? DEFAULT_WINDOWS_STANDARD_USERNAME,
         password: generatePassword(passwordLength, random),
         principal: "standard" as const,
         generatedAt,
@@ -1708,7 +1712,7 @@ export async function writeWindowsAccountSecrets(
     {
       ref: adminRef,
       secret: {
-        username: options.adminUsername ?? "CrucibleAdmin",
+        username: options.adminUsername ?? DEFAULT_WINDOWS_ADMIN_USERNAME,
         password: generatePassword(passwordLength, random),
         principal: "admin" as const,
         generatedAt,
