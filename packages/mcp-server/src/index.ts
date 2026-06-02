@@ -830,7 +830,11 @@ function registerVmTools(
   const unsupported = (message: string) =>
     toJsonContent({
       ok: false,
-      error: { kind: "vm-offline" as const, message, auditLogPath },
+      error: {
+        kind: "vm-offline" as const,
+        message: vm === undefined ? "VM adapter is not configured" : message,
+        auditLogPath,
+      },
     });
   const wrapInput = async (operation: () => Promise<VmDisplayInfo | VmInputActionResult>) => {
     try {
@@ -883,7 +887,7 @@ function registerVmTools(
     "vm_mouse_click",
     {
       title: "Click VM mouse",
-      description: "Click a mouse button at the current pointer or supplied QMP absolute coordinates.",
+      description: "Click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseClickInput.shape,
     },
     (input: VmMouseClickInputType) => {
@@ -900,7 +904,7 @@ function registerVmTools(
     "vm_mouse_double_click",
     {
       title: "Double-click VM mouse",
-      description: "Double-click a mouse button at the current pointer or supplied QMP absolute coordinates.",
+      description: "Double-click a mouse button at the current pointer or supplied QMP absolute coordinates, normalized 0..0x7fff per axis.",
       inputSchema: VmMouseDoubleClickInput.shape,
     },
     (input: VmMouseDoubleClickInputType) => {
