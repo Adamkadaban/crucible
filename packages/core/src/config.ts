@@ -8,6 +8,7 @@ import { analysisVmPolicyConfigSchema } from "./analysis-policy.js";
 import { CrucibleError } from "./errors.js";
 import { DEFAULT_MEDIA_CACHE_DIR } from "./media.js";
 import { networkConfigSchema } from "./network.js";
+import { realismConfigSchema } from "./realism.js";
 
 const isoPathSchema = z
   .string()
@@ -126,6 +127,7 @@ export const crucibleConfigSchema = z
     virtio: z.preprocess((value) => value ?? {}, virtioConfigSchema),
     network: z.preprocess((value) => value ?? {}, networkConfigSchema),
     analysisPolicy: z.preprocess((value) => value ?? {}, analysisVmPolicyConfigSchema),
+    realism: z.preprocess((value) => value ?? {}, realismConfigSchema),
     qmp: z.preprocess((value) => value ?? {}, qmpConfigSchema),
     qga: z.preprocess((value) => value ?? {}, qgaConfigSchema),
     artifacts: z.preprocess((value) => value ?? {}, artifactsConfigSchema),

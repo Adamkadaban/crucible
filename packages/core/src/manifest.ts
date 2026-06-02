@@ -5,7 +5,8 @@ export type ArtifactKind =
   | "log"
   | "snapshot"
   | "credential"
-  | "media";
+  | "media"
+  | "persona";
 
 export type ArtifactRecord = {
   readonly kind: ArtifactKind;

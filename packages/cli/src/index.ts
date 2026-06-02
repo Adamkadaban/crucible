@@ -1303,6 +1303,12 @@ function getExampleConfigJson(): string {
         mode: "isolated",
         controlPort: 8443,
       },
+      realism: {
+        enabled: false,
+        seed: "optional-reproducible-seed",
+        profile: "office-user",
+        populateUserFiles: true,
+      },
       qmp: {
         socketPath: "artifacts/qmp.sock",
         timeoutMs: 5000,

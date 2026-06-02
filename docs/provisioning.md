@@ -148,6 +148,37 @@ Host-side helpers parse the JSON audit output and produce readiness checks for `
 `code-integrity-recorded`, `test-signing-disabled`, and `analysis-profile-audited`. These checks are
 fixture-tested and do not require a real Windows VM in CI.
 
+## Realism Persona
+
+The optional `realism` config section adds a seeded, reproducible persona to reduce obvious default
+sandbox fingerprints. It is disabled by default and does not make QEMU/KVM undetectable. MITRE
+ATT&CK T1497-style checks can still detect virtualization, analysis tools, short uptime, or other
+environment artifacts.
+
+When `realism.enabled` is true, Crucible generates or accepts explicit values for the hostname,
+standard/admin usernames, full name, locale, keyboard layout, timezone, screen resolution, and
+profile (`minimal`, `office-user`, `developer`, `student`, or `home-user`). The seed is recorded in
+the artifact manifest so analysts can reproduce the same persona later.
+
+Provisioning uses the persona in these places:
+
+- Autounattend uses the generated hostname, locale, keyboard layout, timezone, and local-account
+  names during first boot.
+- The `local-accounts-created` stage receives the same generated usernames and creates matching
+  password secret JSON files under `artifacts.secretsDirectory`.
+- The payload ISO includes `realism/persona.json`, which the account stage reads to populate benign
+  decoy files across `Desktop`, `Documents`, `Downloads`, `Pictures`, `Videos`, `Music`, and selected
+  app-data-style paths.
+- If `simulateUserHistory` is true, the decoy plan includes intentionally fake, inert
+  stealer-target files such as `.aws\credentials`, `.ssh\id_rsa`, FileZilla config, backup-code
+  notes, and wallet-looking paths. These are honeytoken-style placeholders, not real secrets.
+- If `installCommonSoftware` is true, provisioning creates inert install-presence markers and
+  uninstall-registry entries for common applications such as Chrome, Firefox, 7-Zip, Acrobat Reader,
+  VLC, and profile-specific apps. It does not download or run third-party installers.
+
+Never use real personal data, synced browser profiles, credentials, SSH keys, API tokens, cloud
+accounts, or operator home directories as realism sources.
+
 ## Guest Health
 
 `crucible guest health` renders the readiness checks from the `health-checked` stage:

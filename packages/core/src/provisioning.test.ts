@@ -275,6 +275,22 @@ describe("provisioning contracts", () => {
     );
   });
 
+  it("passes configured account names to local account provisioning", () => {
+    const plan = buildProvisioningPlan({
+      vmName: "analysis one",
+      secretsDirectory: "secrets",
+      controlPort: 9443,
+      guestAddress: "192.0.2.2",
+      standardUsername: "devuser",
+      adminUsername: "localadmin",
+    });
+
+    const localAccounts = plan.stages.find((stage) => stage.id === "local-accounts-created");
+    expect(localAccounts?.script?.arguments).toEqual(
+      expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
+    );
+  });
+
   it("defines host-only secret references for Windows credentials and mTLS material", () => {
     const secrets = buildProvisioningSecretStorageContract(
       "Analysis VM!",
@@ -668,6 +684,107 @@ describe("provisioning contracts", () => {
       "utf8",
     );
     expect(setupComplete).toContain("qemu-ga-x86_64.msi");
+  });
+
+  it("applies seeded realism persona to first-boot provisioning", async () => {
+    const root = await mkdtempPath("crucible-realism-boot-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+    ]);
+    const commands: ProcessCommand[] = [];
+
+    const plan = await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "realism-vm", diskGiB: 64 },
+        media: {
+          windowsIso: { path: windowsIso },
+          virtioIso: { path: virtioIso },
+        },
+        realism: {
+          enabled: true,
+          seed: "realism-seed",
+          profile: "developer",
+          hostname: "DESKTOP-LAB42",
+          adminUsername: "localadmin",
+          userUsername: "devuser",
+          fullName: "Dev User",
+          locale: "en-GB",
+          timezone: "GMT Standard Time",
+          keyboardLayout: "en-GB",
+          screenResolution: "1440x900",
+          installCommonSoftware: true,
+          populateUserFiles: true,
+          simulateUserHistory: true,
+        },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          commands.push(command);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    const autounattend = await readFile(join(root, "artifacts", "boot", "Autounattend.xml"), "utf8");
+    expect(autounattend).toContain("<ComputerName>DESKTOP-LAB42</ComputerName>");
+    expect(autounattend).toContain("<InputLocale>en-GB</InputLocale>");
+    expect(autounattend).toContain("<TimeZone>GMT Standard Time</TimeZone>");
+    expect(autounattend).toContain("<Name>localadmin</Name>");
+    expect(autounattend).toContain("<Name>devuser</Name>");
+    const standardSecret = JSON.parse(
+      await readFile(join(root, "secrets", "realism-vm", "windows", "standard-user.json"), "utf8"),
+    ) as { username: string };
+    const adminSecret = JSON.parse(
+      await readFile(join(root, "secrets", "realism-vm", "windows", "admin-user.json"), "utf8"),
+    ) as { username: string };
+    expect(standardSecret.username).toBe("devuser");
+    expect(adminSecret.username).toBe("localadmin");
+    const persona = JSON.parse(
+      await readFile(join(root, "artifacts", "boot", "realism-persona.json"), "utf8"),
+    ) as { decoyFiles: { relativePath: string; category: string }[]; softwareMarkers: { name: string }[] };
+    expect(persona.decoyFiles.some((file) => file.relativePath.startsWith("Videos\\"))).toBe(true);
+    expect(persona.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
+    expect(persona.softwareMarkers.map((software) => software.name)).toEqual(
+      expect.arrayContaining(["Google Chrome", "Visual Studio Code"]),
+    );
+    expect(commands.at(-1)?.args).toContain(
+      `/realism/persona.json=${join(root, "artifacts", "boot", "realism-persona.json")}`,
+    );
+    const manifest = JSON.parse(await readFile(join(root, "artifacts", "manifest.json"), "utf8")) as {
+      artifacts: { kind: string; name: string; metadata?: { hostname?: string } }[];
+    };
+    expect(manifest.artifacts).toContainEqual(
+      expect.objectContaining({
+        kind: "persona",
+        name: "realism persona",
+        metadata: expect.objectContaining({ hostname: "DESKTOP-LAB42" }),
+      }),
+    );
+    expect(plan.realismPersona?.userUsername).toBe("devuser");
   });
 
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {

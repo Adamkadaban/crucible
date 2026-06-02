@@ -89,6 +89,11 @@ pnpm crucible snapshot list
 The first provision usually takes 12-18 minutes. On success Crucible creates a `clean-base`
 snapshot. Restore it before each new analysis session:
 
+Optional `realism.enabled` provisioning generates a seeded, reproducible guest persona with less
+obvious default usernames/hostnames, benign user files across common folders, inert stealer-target
+honeytoken files, and optional common-software presence markers. It does not make QEMU/KVM
+undetectable and must never use real personal data or credentials.
+
 ```sh
 pnpm crucible snapshot restore clean-base
 ```

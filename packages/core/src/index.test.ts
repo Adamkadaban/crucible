@@ -8,6 +8,7 @@ import {
   buildMediaCachePlan,
   buildNetworkPlan,
   buildNetworkTeardownOutputModel,
+  buildRealismPersona,
   buildAnalysisVmPolicyReadiness,
   buildQemuCommandPlan,
   createEmptyArtifactManifest,
@@ -163,6 +164,31 @@ describe("core bootstrap exports", () => {
     expect(defaultCrucibleConfig.analysisPolicy.requireTestSigningDisabled).toBe(true);
     expect(defaultCrucibleConfig.virtio.diskBus).toBe("virtio-scsi");
     expect(defaultCrucibleConfig.qmp.timeoutMs).toBe(DEFAULT_QMP_TIMEOUT_MS);
+    expect(defaultCrucibleConfig.realism.enabled).toBe(false);
+  });
+
+  it("parses seeded realism config and generates deterministic personas", () => {
+    const config = parseCrucibleConfig({
+      realism: {
+        enabled: true,
+        seed: "case-244",
+        profile: "developer",
+        installCommonSoftware: true,
+        simulateUserHistory: true,
+      },
+    });
+
+    const first = buildRealismPersona({ vmName: config.vm.name, config: config.realism });
+    const second = buildRealismPersona({ vmName: config.vm.name, config: config.realism });
+
+    expect(first).toEqual(second);
+    expect(first?.hostname).toMatch(/^DESKTOP-[A-Z0-9]{7}$/);
+    expect(first?.decoyFiles.some((file) => file.relativePath.startsWith("Videos\\"))).toBe(true);
+    expect(first?.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
+    expect(first?.decoyFiles.some((file) => file.relativePath === ".aws\\credentials")).toBe(true);
+    expect(first?.softwareMarkers.map((software) => software.name)).toEqual(
+      expect.arrayContaining(["Google Chrome", "Visual Studio Code", "Git"]),
+    );
   });
 
   it("allows JSON schema markers in config files", () => {
