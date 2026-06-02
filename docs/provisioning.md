@@ -150,7 +150,7 @@ fixture-tested and do not require a real Windows VM in CI.
 
 ## Guest Health
 
-`crucible guest:health` renders the readiness checks from the `health-checked` stage:
+`crucible guest health` renders the readiness checks from the `health-checked` stage:
 
 - `debugger-health` for CDB, WinDbg, KD/KDNET, GFlags, symbol path, symbol cache, Sysinternals, and
   dynamic-tool readiness.
@@ -164,9 +164,9 @@ but the guest health endpoint has not been queried.
 
 ## Clean-Base Snapshot
 
-The provisioning exit flow uses `snapshot:create clean-base` only after debugger tooling, dynamic
+The provisioning exit flow uses `snapshot create clean-base` only after debugger tooling, dynamic
 analysis tools, local accounts, guest agent setup, policy lockdown, and guest health have completed.
-`snapshot:restore clean-base` runs before the final health check. The snapshot manager stores the
+`snapshot restore clean-base` runs before the final health check. The snapshot manager stores the
 `clean-base` record in the artifact manifest with the base qcow2 disk path, QEMU snapshot tag, clean
 flag, snapshot mode, and last restore timestamp.
 
@@ -210,9 +210,9 @@ The real provisioning smoke command is:
 
 ```sh
 pnpm crucible provision && \
-  pnpm crucible snapshot:create clean-base && \
-  pnpm crucible snapshot:restore clean-base && \
-  pnpm crucible guest:health
+  pnpm crucible snapshot create clean-base && \
+  pnpm crucible snapshot restore clean-base && \
+  pnpm crucible guest health
 ```
 
 This must be run on a Linux/KVM host with Windows media, virtio media, QEMU Guest Agent readiness,

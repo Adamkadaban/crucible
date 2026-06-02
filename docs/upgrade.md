@@ -43,8 +43,8 @@ recommended flow is:
 
 1. Restore `clean-base` (or the latest known-good snapshot).
 2. Apply the upgrade steps above.
-3. Run `crucible guest:health` (or `guest_health` via MCP) to confirm.
-4. Take a fresh snapshot (`crucible snapshot:create post-upgrade`).
+3. Run `crucible guest health` (or `guest_health` via MCP) to confirm.
+4. Take a fresh snapshot (`crucible snapshot create post-upgrade`).
 5. Continue analysis from the new snapshot.
 
 ## Schema migrations

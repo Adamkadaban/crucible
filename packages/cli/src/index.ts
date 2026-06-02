@@ -76,6 +76,28 @@ type CommandResult = {
   readonly stderr: string;
 };
 
+type CommandDefinition = {
+  readonly canonical: string;
+  readonly preferred: string;
+  readonly group?: string;
+  readonly summary: string;
+  readonly usage: readonly string[];
+  readonly examples?: readonly string[];
+  readonly aliases?: readonly string[];
+};
+
+type CommandGroupDefinition = {
+  readonly name: string;
+  readonly aliases?: readonly string[];
+  readonly summary: string;
+};
+
+type ParsedCliInvocation =
+  | { readonly kind: "command"; readonly command: string; readonly rest: readonly string[] }
+  | { readonly kind: "help"; readonly text: string }
+  | { readonly kind: "unknown-help"; readonly command: string }
+  | { readonly kind: "unknown"; readonly command: string };
+
 type CliGuestHealthClient = {
   readonly health: () => Promise<GuestAgentHealth>;
   readonly exec: (request: {
@@ -191,14 +213,19 @@ export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
 ): Promise<CommandResult> {
-  const [command, ...rest] = args;
+  const parsed = parseCliInvocation(args);
+  if (parsed.kind === "help") {
+    return { exitCode: 0, stdout: parsed.text, stderr: "" };
+  }
+  if (parsed.kind === "unknown-help") {
+    return { exitCode: 2, stdout: "", stderr: renderUnknownCommand(parsed.command) };
+  }
+  if (parsed.kind === "unknown") {
+    return { exitCode: 2, stdout: "", stderr: renderUnknownCommand(parsed.command) };
+  }
+  const { command, rest } = parsed;
 
   switch (command) {
-    case undefined:
-    case "--help":
-    case "-h":
-    case "help":
-      return { exitCode: 0, stdout: getHelpText(), stderr: "" };
     case "media:plan":
       return renderMediaPlanCommand(rest, runtime);
     case "media:fetch-tools":
@@ -1976,7 +2003,7 @@ function renderNetTeardownCommand(args: readonly string[], runtime: CliRuntime):
 
 function renderNetStatusCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   if (args.length > 0) {
-    return { exitCode: 2, stdout: "", stderr: `Unknown net:status option: ${args[0]}` };
+    return { exitCode: 2, stdout: "", stderr: `Unknown network status option: ${args[0]}` };
   }
   const config = getRuntimeConfig(runtime);
   const plan = buildNetworkPlan({
@@ -2429,7 +2456,7 @@ function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): Ne
       continue;
     }
 
-    return { ok: false, message: `Unknown net:plan option: ${arg}` };
+    return { ok: false, message: `Unknown network plan option: ${arg}` };
   }
 
   return { ok: true, args: { mode, firewallBackend, includeApply } };
@@ -2500,7 +2527,7 @@ function parseNetTeardownArgs(
       continue;
     }
 
-    return { ok: false, message: `Unknown net:teardown option: ${arg}` };
+    return { ok: false, message: `Unknown network teardown option: ${arg}` };
   }
 
   return { ok: true, args: { mode, firewallBackend, operation } };
@@ -2582,7 +2609,7 @@ function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
       index += 1;
       continue;
     }
-    return { ok: false, message: `Unknown config:init option: ${arg}` };
+    return { ok: false, message: `Unknown config init option: ${arg}` };
   }
 
   return { ok: true, args: { outputPath, force } };
@@ -2693,38 +2720,451 @@ function hasExplicitGuestClientEnv(): boolean {
   );
 }
 
+const COMMAND_GROUPS: readonly CommandGroupDefinition[] = [
+  { name: "config", summary: "Create and inspect Crucible configuration." },
+  { name: "media", summary: "Plan local Windows, virtio, and tool media." },
+  { name: "vm", summary: "Create, start, stop, and inspect the analysis VM." },
+  { name: "snapshot", summary: "Create, list, and restore VM snapshots." },
+  { name: "network", aliases: ["net"], summary: "Preview and switch VM network modes." },
+  { name: "guest", summary: "Check or run commands through the Windows guest agent." },
+  { name: "debug", summary: "Run debugger smoke checks." },
+  { name: "scenario", summary: "Run canned analysis workflows." },
+];
+
+const COMMANDS: readonly CommandDefinition[] = [
+  {
+    canonical: "config:init",
+    preferred: "config init",
+    group: "config",
+    summary: "Write an example global config file.",
+    usage: ["crucible config init [--output ~/.config/crucible/config.json] [--force]"],
+    examples: ["crucible config init", "crucible config init --force"],
+  },
+  {
+    canonical: "doctor",
+    preferred: "doctor",
+    summary: "Check host prerequisites.",
+    usage: ["crucible doctor"],
+  },
+  {
+    canonical: "setup",
+    preferred: "setup",
+    summary: "Install host prerequisites or configure MCP clients.",
+    usage: ["crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]"],
+    examples: ["crucible setup host --print", "crucible setup opencode"],
+  },
+  {
+    canonical: "provision",
+    preferred: "provision",
+    summary: "Provision a Windows analysis VM and clean baseline snapshot.",
+    usage: ["crucible provision"],
+  },
+  {
+    canonical: "mcp",
+    preferred: "mcp",
+    summary: "Print MCP server info or run the stdio MCP server.",
+    usage: ["crucible mcp", "crucible mcp --stdio"],
+  },
+  {
+    canonical: "package",
+    preferred: "package",
+    summary: "Build release package artifacts from a source checkout.",
+    usage: ["crucible package"],
+  },
+  {
+    canonical: "media:plan",
+    preferred: "media plan",
+    group: "media",
+    summary: "Print required media and optional manual download links.",
+    usage: [
+      "crucible media plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
+    ],
+    examples: ["crucible media plan --manual"],
+  },
+  {
+    canonical: "media:fetch-tools",
+    preferred: "media fetch-tools",
+    group: "media",
+    summary: "Download optional tool archives into the media cache.",
+    usage: ["crucible media fetch-tools [--force]"],
+  },
+  {
+    canonical: "vm:create",
+    preferred: "vm create",
+    group: "vm",
+    summary: "Print the planned qcow2 creation and QEMU inputs.",
+    usage: ["crucible vm create --dry-run"],
+  },
+  {
+    canonical: "vm:start",
+    preferred: "vm start",
+    group: "vm",
+    summary: "Start the VM, or print the planned QEMU argv.",
+    usage: ["crucible vm start [--dry-run]"],
+    examples: ["crucible vm start --dry-run", "crucible vm start"],
+  },
+  {
+    canonical: "vm:stop",
+    preferred: "vm stop",
+    group: "vm",
+    summary: "Request graceful VM shutdown, ACPI poweroff, or kill fallback.",
+    usage: ["crucible vm stop [--poweroff|--kill]"],
+  },
+  {
+    canonical: "vm:status",
+    preferred: "vm status",
+    group: "vm",
+    summary: "Show lifecycle, PID, QMP, and log paths.",
+    usage: ["crucible vm status"],
+  },
+  {
+    canonical: "vm:logs",
+    preferred: "vm logs",
+    group: "vm",
+    summary: "Print the current VM stdout and stderr logs.",
+    usage: ["crucible vm logs"],
+  },
+  {
+    canonical: "snapshot:create",
+    preferred: "snapshot create",
+    group: "snapshot",
+    summary: "Create a QMP/qcow2 snapshot; defaults to clean-base when name is omitted.",
+    usage: ["crucible snapshot create [name]"],
+  },
+  {
+    canonical: "snapshot:list",
+    preferred: "snapshot list",
+    group: "snapshot",
+    summary: "List snapshots recorded in the artifact manifest.",
+    usage: ["crucible snapshot list"],
+  },
+  {
+    canonical: "snapshot:restore",
+    preferred: "snapshot restore",
+    group: "snapshot",
+    summary: "Restore a QMP/qcow2 snapshot; defaults to clean-base when name is omitted.",
+    usage: ["crucible snapshot restore [name]"],
+    examples: ["crucible snapshot restore clean-base"],
+  },
+  {
+    canonical: "net:plan",
+    preferred: "network plan",
+    group: "network",
+    aliases: ["net plan"],
+    summary: "Print QEMU network args and firewall plans.",
+    usage: [
+      "crucible network plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
+    ],
+  },
+  {
+    canonical: "net:status",
+    preferred: "network status",
+    group: "network",
+    aliases: ["net status"],
+    summary: "Show configured network mode and egress posture.",
+    usage: ["crucible network status"],
+  },
+  {
+    canonical: "net:set",
+    preferred: "network set",
+    group: "network",
+    aliases: ["net set"],
+    summary: "Preview a switch to isolated, NAT, or capture mode.",
+    usage: ["crucible network set isolated|nat|capture"],
+  },
+  {
+    canonical: "net:teardown",
+    preferred: "network teardown",
+    group: "network",
+    aliases: ["net teardown"],
+    summary: "Print project-owned network teardown commands.",
+    usage: [
+      "crucible network teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
+    ],
+  },
+  {
+    canonical: "guest:health",
+    preferred: "guest health",
+    group: "guest",
+    summary: "Check guest-agent and Windows policy health.",
+    usage: ["crucible guest health"],
+  },
+  {
+    canonical: "guest:exec",
+    preferred: "guest exec",
+    group: "guest",
+    summary: "Run a command through the Windows guest agent.",
+    usage: ["crucible guest exec [--as service|standard|admin] <executable> [args...]"],
+    examples: ["crucible guest exec --as admin whoami.exe"],
+  },
+  {
+    canonical: "debug:smoke",
+    preferred: "debug smoke",
+    group: "debug",
+    summary: "Run a CDB smoke command against a guest executable.",
+    usage: ["crucible debug smoke --exe <guest-executable>"],
+  },
+  {
+    canonical: "scenario:malware-dry-run",
+    preferred: "scenario malware-dry-run",
+    group: "scenario",
+    summary: "Print the malware-analysis dry-run workflow.",
+    usage: ["crucible scenario malware-dry-run"],
+  },
+];
+
+function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
+  const separatorIndex = args.indexOf("--");
+  const commandArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+  const helpIndex = commandArgs.findIndex((arg) => arg === "--help" || arg === "-h");
+  if (args.length === 0 || helpIndex === 0) {
+    return { kind: "help", text: getHelpText() };
+  }
+
+  if (args[0] === "help") {
+    const tokens = args.slice(1);
+    const help = getHelpForTokens(tokens);
+    return help.kind === "unknown"
+      ? { kind: "unknown-help", command: help.command }
+      : { kind: "help", text: help.text };
+  }
+
+  if (helpIndex > 0) {
+    const tokens = args.slice(0, helpIndex);
+    const help = getHelpForTokens(tokens);
+    return help.kind === "unknown"
+      ? { kind: "unknown-help", command: help.command }
+      : { kind: "help", text: help.text };
+  }
+
+  const direct = getCommandByName(args[0]);
+  if (direct !== undefined) {
+    return { kind: "command", command: direct.canonical, rest: args.slice(1) };
+  }
+
+  const groupName = normalizeCommandGroupName(args[0]);
+  if (groupName !== undefined) {
+    if (args[1] === undefined) {
+      return { kind: "help", text: getGroupHelpText(groupName) };
+    }
+
+    const command = getCommandByGroupedName(groupName, args[1]);
+    if (command !== undefined) {
+      return { kind: "command", command: command.canonical, rest: args.slice(2) };
+    }
+
+    return { kind: "unknown", command: [args[0], args[1]].filter(Boolean).join(" ") };
+  }
+
+  return { kind: "unknown", command: args[0] ?? "" };
+}
+
+type HelpLookupResult =
+  | { readonly kind: "help"; readonly text: string }
+  | { readonly kind: "unknown"; readonly command: string };
+
+function getHelpForTokens(tokens: readonly string[]): HelpLookupResult {
+  if (tokens.length === 0) {
+    return { kind: "help", text: getHelpText() };
+  }
+
+  const direct = tokens.length === 1 ? getCommandByName(tokens[0]) : undefined;
+  if (direct !== undefined) {
+    return { kind: "help", text: getCommandHelpText(direct) };
+  }
+
+  const groupName = normalizeCommandGroupName(tokens[0]);
+  if (groupName === undefined) {
+    return { kind: "unknown", command: tokens[0] ?? "" };
+  }
+
+  if (tokens.length === 1) {
+    return { kind: "help", text: getGroupHelpText(groupName) };
+  }
+
+  const command = getCommandByGroupedName(groupName, tokens[1]);
+  return command === undefined
+    ? { kind: "unknown", command: [tokens[0], tokens[1]].filter(Boolean).join(" ") }
+    : { kind: "help", text: getCommandHelpText(command) };
+}
+
+function getCommandByName(name: string | undefined): CommandDefinition | undefined {
+  if (name === undefined) {
+    return undefined;
+  }
+
+  return COMMANDS.find(
+    (command) =>
+      command.canonical === name || command.preferred === name || command.aliases?.includes(name),
+  );
+}
+
+function getCommandByGroupedName(
+  groupName: string,
+  subcommand: string | undefined,
+): CommandDefinition | undefined {
+  if (subcommand === undefined) {
+    return undefined;
+  }
+
+  return COMMANDS.find((command) => {
+    if (command.group !== groupName) {
+      return false;
+    }
+    const preferredSubcommand = command.preferred.split(" ").at(1);
+    const aliasSubcommands = (command.aliases ?? [])
+      .map((alias) => alias.split(" ").at(1))
+      .filter((value): value is string => value !== undefined);
+    return preferredSubcommand === subcommand || aliasSubcommands.includes(subcommand);
+  });
+}
+
+function normalizeCommandGroupName(name: string | undefined): string | undefined {
+  if (name === undefined) {
+    return undefined;
+  }
+
+  return COMMAND_GROUPS.find((group) => group.name === name || group.aliases?.includes(name))?.name;
+}
+
+function renderUnknownCommand(command: string): string {
+  const suggestion = findClosestCommand(command);
+  return [
+    `Unknown command: ${command}`,
+    suggestion === undefined ? undefined : `Did you mean: crucible ${suggestion}?`,
+    "",
+    getHelpText(),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function findClosestCommand(input: string): string | undefined {
+  const normalizedInput = normalizeSuggestionText(input);
+  let best: { readonly command: string; readonly distance: number } | undefined;
+  for (const command of COMMANDS) {
+    for (const candidate of [command.preferred, command.canonical, ...(command.aliases ?? [])]) {
+      const distance = levenshteinDistance(normalizedInput, normalizeSuggestionText(candidate));
+      if (best === undefined || distance < best.distance) {
+        best = { command: command.preferred, distance };
+      }
+    }
+  }
+
+  if (best === undefined || best.distance > Math.max(2, Math.floor(normalizedInput.length / 3))) {
+    return undefined;
+  }
+  return best.command;
+}
+
+function normalizeSuggestionText(value: string): string {
+  return value.replaceAll(":", " ").replaceAll(/\s+/g, " ").toLowerCase();
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + cost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length] ?? 0;
+}
+
 function getHelpText(): string {
   return [
     "crucible",
     "",
     "Usage:",
-    "  crucible config:init [--output ~/.config/crucible/config.json] [--force]",
+    "  crucible <command> [options]",
+    "  crucible <group> <command> [options]",
+    "  crucible <group> --help",
+    "",
+    "Common workflows:",
+    "  crucible config init",
     "  crucible doctor",
-    "  crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]",
-    "  crucible provision   Provision a Windows analysis VM",
-    "  crucible snapshot:create clean-base",
-    "  crucible snapshot:restore clean-base",
-    "  crucible guest:health",
-    "  crucible guest:exec [--as service|standard|admin] <executable> [args...]",
-    "  crucible debug:smoke --exe <guest-executable>",
-    "  crucible scenario:malware-dry-run",
-    "  crucible package",
-    "  crucible mcp         Start the MCP server (scaffolded)",
-    "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
-    "  crucible media:fetch-tools [--force]  Download optional tool archives into media/cache",
-    "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
-    "  crucible net:status",
-    "  crucible net:set isolated|nat|capture",
-    "  crucible net:teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
-    "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
-    "  crucible vm:start [--dry-run] Print or run the planned QEMU argv and sockets",
-    "  crucible vm:stop [--poweroff|--kill]",
-    "  crucible vm:status",
-    "  crucible vm:logs",
-    "  crucible snapshot:create [name]  Create a QMP/qcow2 snapshot (default: clean-base)",
-    "  crucible snapshot:list           List snapshots recorded in the artifact manifest",
-    "  crucible snapshot:restore [name] Restore a QMP/qcow2 snapshot (default: clean-base)",
+    "  crucible setup host --print",
+    "  crucible provision",
+    "  crucible vm status",
+    "  crucible snapshot restore clean-base",
+    "  crucible mcp --stdio",
+    "",
+    "Command groups:",
+    ...COMMAND_GROUPS.map(
+      (group) => `  ${group.name.padEnd(10)} ${group.summary}${formatGroupAliases(group)}`,
+    ),
+    "",
+    "Commands:",
+    ...COMMANDS.filter((command) => command.group === undefined).map(formatCommandSummary),
+    ...COMMAND_GROUPS.flatMap((group) =>
+      COMMANDS.filter((command) => command.group === group.name).map(formatCommandSummary),
+    ),
+    "",
+    "Legacy colon commands still work, for example `crucible vm:status`.",
+    "Run `crucible <group> --help` or `crucible <group> <command> --help` for details.",
   ].join("\n");
+}
+
+function getGroupHelpText(groupName: string): string {
+  const group = COMMAND_GROUPS.find((candidate) => candidate.name === groupName);
+  if (group === undefined) {
+    return getHelpText();
+  }
+  const commands = COMMANDS.filter((command) => command.group === group.name);
+  return [
+    `crucible ${group.name}`,
+    "",
+    group.summary,
+    group.aliases === undefined ? undefined : `Aliases: ${group.aliases.join(", ")}`,
+    "",
+    "Usage:",
+    `  crucible ${group.name} <command> [options]`,
+    "",
+    "Commands:",
+    ...commands.map(formatCommandSummary),
+    "",
+    "Examples:",
+    ...commands
+      .flatMap((command) => command.examples ?? command.usage.slice(0, 1))
+      .map((example) => `  ${example}`),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function getCommandHelpText(command: CommandDefinition): string {
+  return [
+    `crucible ${command.preferred}`,
+    "",
+    command.summary,
+    "",
+    "Usage:",
+    ...command.usage.map((usage) => `  ${usage}`),
+    command.aliases === undefined && !command.canonical.includes(":")
+      ? undefined
+      : `Aliases: ${[command.canonical, ...(command.aliases ?? [])].join(", ")}`,
+    command.examples === undefined ? undefined : "",
+    command.examples === undefined ? undefined : "Examples:",
+    ...(command.examples ?? []).map((example) => `  ${example}`),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function formatCommandSummary(command: CommandDefinition): string {
+  return `  ${command.preferred.padEnd(28)} ${command.summary}`;
+}
+
+function formatGroupAliases(group: CommandGroupDefinition): string {
+  return group.aliases === undefined ? "" : ` (alias: ${group.aliases.join(", ")})`;
 }
 
 if (isCliEntrypoint()) {

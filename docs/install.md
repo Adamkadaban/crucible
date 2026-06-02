@@ -41,7 +41,7 @@ downloads them on the operator's behalf.
 3. Generate `crucible.config.json` and replace the media paths:
 
 ```sh
-crucible config:init
+crucible config init
 ```
 
 ```json
@@ -94,8 +94,8 @@ export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
 
 ```sh
 crucible provision
-crucible guest:health
-crucible snapshot:list
+crucible guest health
+crucible snapshot list
 ```
 
 The CLI generates a per-VM mTLS PKI under `artifacts/secrets/<vm>/mtls/` on first run (CA + server
