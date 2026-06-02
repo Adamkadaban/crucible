@@ -1916,6 +1916,13 @@ describe("crucible MCP tools", () => {
     })) as ToolCallText & { isError?: boolean };
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("Invalid");
+
+    const separatorsOnly = (await client.callTool({
+      name: "vm_key_press",
+      arguments: { key: "+++" },
+    })) as ToolCallText & { isError?: boolean };
+    expect(separatorsOnly.isError).toBe(true);
+    expect(separatorsOnly.content[0]?.text).toContain("Invalid");
   });
 
   it("reports unsupported VM display input tools", async () => {
@@ -1936,6 +1943,20 @@ describe("crucible MCP tools", () => {
     expect(payload.ok).toBe(false);
     expect(payload.error.kind).toBe("vm-offline");
     expect(payload.error.message).toContain("key input");
+  });
+
+  it("reports unconfigured VM adapter for display input tools", async () => {
+    const client = await harness({});
+    const result = (await client.callTool({
+      name: "vm_mouse_move",
+      arguments: { x: 10, y: 20 },
+    })) as ToolCallText;
+    const payload = parseFirstTextPayload<{ ok: boolean; error: { kind: string; message: string } }>(
+      result,
+    );
+    expect(payload.ok).toBe(false);
+    expect(payload.error.kind).toBe("vm-offline");
+    expect(payload.error.message).toContain("VM adapter is not configured");
   });
 
   it("debug_open launches a debug session via guest agent", async () => {
