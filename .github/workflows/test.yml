@@ -37,6 +37,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: E2E
+        run: pnpm e2e
+
       - name: Coverage
         run: pnpm coverage
 

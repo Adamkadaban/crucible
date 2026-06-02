@@ -10,6 +10,7 @@ export default tseslint.config(
       "references/**",
       "scripts/**",
       "eslint.config.js",
+      "vitest.e2e.config.ts",
       "vitest.config.ts",
     ],
   },
