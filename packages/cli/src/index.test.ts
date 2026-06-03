@@ -183,6 +183,13 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("guest_health");
   });
 
+  it("prints the CLI version", async () => {
+    const result = await runCrucibleCli(["version"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(CRUCIBLE_VERSION);
+  });
+
   it("reports unknown top-level commands with help", async () => {
     const result = await runCrucibleCli(["nope"], defaultRuntime);
 
@@ -266,7 +273,13 @@ describe("crucible CLI bootstrap", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+        mcp: {
+          crucible: {
+            enabled: true,
+            type: "local",
+            command: ["crucible", "mcp", "--stdio"],
+          },
+        },
       }),
     );
 
@@ -390,14 +403,56 @@ describe("crucible CLI bootstrap", () => {
     });
     const opencodeConfig = JSON.parse(
       await readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
-    ) as { mcp?: { crucible?: { command?: string; args?: string[] } } };
+    ) as { mcp?: { crucible?: { command?: string[]; enabled?: boolean; type?: string } } };
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("package update: completed");
     expect(result.stdout).toContain("Refreshed opencode config:");
-    expect(opencodeConfig.mcp?.crucible?.command).toBe("crucible");
-    expect(opencodeConfig.mcp?.crucible?.args).toEqual(["mcp", "--stdio"]);
+    expect(opencodeConfig.mcp?.crucible).toEqual({
+      enabled: true,
+      type: "local",
+      command: ["crucible", "mcp", "--stdio"],
+    });
     expect(commands).toContain("npm install -g @adamkadaban/crucible@latest");
+  });
+
+  it("skips package and MCP updates when already on the latest version", async () => {
+    const root = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    vi.stubEnv("HOME", root);
+    const commands: string[] = [];
+
+    const result = await runCrucibleCli(["update", "--yes"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: command.executable === "pnpm" ? 1 : 0,
+            stdout: command.args.includes("view") ? `${CRUCIBLE_VERSION}\n` : `${globalRoot}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("package update: already current");
+    expect(result.stdout).not.toContain("MCP config refresh:");
+    expect(commands).not.toContain("npm install -g @adamkadaban/crucible@latest");
+    await expect(
+      readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prefers pnpm update when pnpm owns the global package", async () => {
@@ -601,7 +656,7 @@ describe("crucible CLI bootstrap", () => {
               command,
               exitCode: command.executable === "pnpm" ? 1 : 0,
               stdout: command.args.includes("view")
-                ? `${CRUCIBLE_VERSION}\n`
+                ? "99.99.99\n"
                 : command.args.includes("root")
                   ? `${globalRoot}\n`
                   : "updated\n",
@@ -969,7 +1024,9 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("opencode.json");
-    expect(result.stdout).toContain('"command": "crucible"');
+    expect(result.stdout).toContain('"type": "local"');
+    expect(result.stdout).toContain('"enabled": true');
+    expect(result.stdout).toContain('"command": [');
     expect(result.stdout).toContain('"mcp"');
   });
 
@@ -989,7 +1046,10 @@ describe("crucible CLI bootstrap", () => {
       const second = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
       const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
         theme: string;
-        mcp: { existing?: { command: string }; crucible?: { command: string; args: string[] } };
+        mcp: {
+          existing?: { command: string };
+          crucible?: { command: string[]; enabled: boolean; type: string };
+        };
       };
 
       expect(first.exitCode).toBe(0);
@@ -999,9 +1059,9 @@ describe("crucible CLI bootstrap", () => {
       expect(parsed.theme).toBe("dark");
       expect(parsed.mcp.existing?.command).toBe("other");
       expect(parsed.mcp.crucible).toEqual({
-        type: "stdio",
-        command: "crucible",
-        args: ["mcp", "--stdio"],
+        enabled: true,
+        type: "local",
+        command: ["crucible", "mcp", "--stdio"],
       });
     } finally {
       if (previousHome === undefined) {
@@ -1028,7 +1088,13 @@ describe("crucible CLI bootstrap", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+        mcp: {
+          crucible: {
+            command: ["crucible", "mcp", "--stdio"],
+            enabled: true,
+            type: "local",
+          },
+        },
       }),
     );
 

@@ -122,10 +122,11 @@ Example client config:
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "crucible": {
-      "command": "crucible",
-      "args": ["mcp", "--stdio"]
+      "enabled": true,
+      "type": "local",
+      "command": ["crucible", "mcp", "--stdio"]
     }
   }
 }

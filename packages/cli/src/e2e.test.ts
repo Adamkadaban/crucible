@@ -284,6 +284,7 @@ describe("Crucible CLI E2E smoke", () => {
         args: ["setup", "host", "--print"],
         expectStdout: /Host prerequisites|Install command:/,
       },
+      version: { args: ["version"], expectStdout: /\d+\.\d+\.\d+/ },
       update: { args: ["update", "--dry-run"], expectStdout: /Crucible update plan:/ },
       provision: {
         args: ["provision"],

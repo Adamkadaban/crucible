@@ -8,12 +8,15 @@ designed to keep configuration files, secrets, and snapshots intact across versi
 For global package-manager installs, use:
 
 ```sh
+crucible version
 crucible update --dry-run
 crucible update --yes
 ```
 
 The update command checks npm for the latest stable `@adamkadaban/crucible`, updates the detected
 global npm or pnpm install when needed, and refreshes supported MCP client entries such as opencode.
+When the installed version already matches npm, `crucible update --yes` exits without rewriting MCP
+client configuration.
 
 For source checkouts:
 

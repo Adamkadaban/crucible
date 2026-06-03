@@ -356,6 +356,8 @@ export async function runCrucibleCli(
       return doctorCommand(rest);
     case "setup":
       return setupCommand(rest, runtime);
+    case "version":
+      return versionCommand(rest);
     case "update":
       return updateCommand(rest, runtime);
     case "net:plan":
@@ -2285,6 +2287,10 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     actions.push("package update: already current");
   }
 
+  if (!needsPackageUpdate) {
+    return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  }
+
   const mcpResults = await refreshMcpConfigs();
   actions.push("MCP config refresh:", ...mcpResults.lines);
   return { exitCode: mcpResults.exitCode, stdout: actions.join("\n"), stderr: mcpResults.stderr };
@@ -2404,6 +2410,13 @@ async function refreshMcpConfigs(): Promise<{
 function firstLine(value: string): string {
   const line = value.split("\n").find((candidate) => candidate.trim().length > 0);
   return line ?? "no output";
+}
+
+function versionCommand(args: readonly string[]): CommandResult {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown version option: ${args[0]}` };
+  }
+  return { exitCode: 0, stdout: `${CRUCIBLE_VERSION}\n`, stderr: "" };
 }
 
 function setupFlags(args: SetupArgs): string[] {
@@ -2597,7 +2610,7 @@ async function setupJsonMcpCommand(options: {
 }
 
 function getMcpServerEntry(): JsonObject {
-  return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"] };
+  return { enabled: true, type: "local", command: ["crucible", "mcp", "--stdio"] };
 }
 
 function jsonValuesEqual(left: unknown, right: unknown): boolean {
@@ -3546,6 +3559,12 @@ const COMMANDS: readonly CommandDefinition[] = [
     summary: "Install host prerequisites or configure MCP clients.",
     usage: ["crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]"],
     examples: ["crucible setup host --print", "crucible setup opencode"],
+  },
+  {
+    canonical: "version",
+    preferred: "version",
+    summary: "Print the Crucible CLI version.",
+    usage: ["crucible version"],
   },
   {
     canonical: "update",
