@@ -1132,6 +1132,8 @@ describe("provisioning contracts", () => {
     expect(script).toContain("CRUCIBLE_STANDARD_PASSWORD");
     expect(script).toContain("CRUCIBLE_ADMIN_PASSWORD");
     expect(script).toContain("CrucibleRealism-");
+    expect(script).toContain("-replace '[\\\\/:*?\"<>|\\[\\]]', '_'");
+    expect(script).toContain("New-Item -LiteralPath $keyPath -Force");
     expect(script).toContain("-PasswordNeverExpires:$true");
     expect(script).toContain("-UserMayChangePassword:$false");
     expect(script).not.toContain(
@@ -1140,7 +1142,6 @@ describe("provisioning contracts", () => {
     expect(script).not.toContain("-PasswordNeverExpires $true");
     expect(script).not.toContain("-UserMayChangePassword $false");
     expect(script).not.toContain("New-Item -ItemType Directory -Force -LiteralPath");
-    expect(script).not.toContain("New-Item -LiteralPath");
   });
 
   it("getExampleConfigJson returns valid JSON", () => {

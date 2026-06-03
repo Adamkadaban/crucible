@@ -189,7 +189,7 @@ function Install-CommonSoftwareMarkers {
         if ($null -eq $software -or [string]::IsNullOrWhiteSpace([string]$software.name)) {
             continue
         }
-        $safeName = ([string]$software.name) -replace '[\\/:*?"<>|]', '_'
+        $safeName = ([string]$software.name) -replace '[\\/:*?"<>|\[\]]', '_'
         if ([string]::IsNullOrWhiteSpace($safeName)) {
             continue
         }
@@ -201,7 +201,7 @@ function Install-CommonSoftwareMarkers {
         )
 
         $keyPath = Join-Path $uninstallRoot "CrucibleRealism-$safeName"
-        New-Item -Path $keyPath -Force | Out-Null
+        New-Item -LiteralPath $keyPath -Force | Out-Null
         New-ItemProperty -LiteralPath $keyPath -Name "DisplayName" -PropertyType String -Value ([string]$software.name) -Force | Out-Null
         New-ItemProperty -LiteralPath $keyPath -Name "DisplayVersion" -PropertyType String -Value ([string]$software.version) -Force | Out-Null
         New-ItemProperty -LiteralPath $keyPath -Name "Publisher" -PropertyType String -Value ([string]$software.publisher) -Force | Out-Null
