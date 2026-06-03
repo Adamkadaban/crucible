@@ -65,4 +65,4 @@ recommended flow is:
 ## Schema migrations
 
 When the config schema introduces a backwards-incompatible field (none today), Crucible will ship a
-`migrate <old> <new>` subcommand and note the change in `CHANGELOG.md`.
+`migrate <old> <new>` subcommand and note the change in the GitHub release notes.
