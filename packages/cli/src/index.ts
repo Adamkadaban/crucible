@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { copyFile, mkdir, readFile, rename, rm, stat as fsStat, writeFile } from "node:fs/promises";
+import { closeSync, openSync, realpathSync } from "node:fs";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat as fsStat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir, homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -709,52 +718,64 @@ async function startVmViewBridge(
 > {
   const executable = bridgeCommand[0] ?? "socat";
   const args = bridgeCommand.slice(1);
+  let logDir: string | undefined;
+  let logFd: number | undefined;
   try {
-    const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    logDir = await mkdtemp(join(tmpdir(), "crucible-vnc-bridge-"));
+    const logPath = join(logDir, "socat.stderr.log");
+    logFd = openSync(logPath, "a");
+    const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", logFd] });
     let stderr = "";
-    const stderrListeners: Array<(chunk: Buffer) => void> = [];
-    const onStderr = (listener: (chunk: Buffer) => void) => {
-      stderrListeners.push(listener);
-      child.stderr?.on("data", listener);
+    const readStderr = async () => {
+      stderr = (await readFile(logPath, "utf8").catch(() => stderr)).slice(-64 * 1024);
+      return stderr;
     };
-    onStderr((chunk: Buffer) => {
-      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
-    });
     const started = await new Promise<
       { readonly ok: true } | { readonly ok: false; readonly error: string }
     >((resolve) => {
       let resolved = false;
-      const finish = (
+      const poll = setInterval(() => {
+        void readStderr().then((output) => {
+          if (output.includes("listening on")) void finish({ ok: true });
+        });
+      }, 25);
+      const finish = async (
         result: { readonly ok: true } | { readonly ok: false; readonly error: string },
       ) => {
         if (resolved) return;
         resolved = true;
+        clearInterval(poll);
         clearTimeout(timer);
-        for (const listener of stderrListeners) child.stderr?.off("data", listener);
+        closeDetachedChildFd(logFd);
+        logFd = undefined;
+        await rm(logDir!, { recursive: true, force: true }).catch(() => undefined);
         resolve(result);
       };
-      const timer = setTimeout(
-        () =>
+      const timer = setTimeout(() => {
+        void readStderr().then(() =>
           finish({ ok: false, error: `VNC bridge did not report listening on ${host}:${port}` }),
-        1_000,
-      );
-      onStderr(() => {
-        if (stderr.includes("listening on")) finish({ ok: true });
+        );
+      }, 1_000);
+      child.once("error", (error) => {
+        void finish({ ok: false, error: formatBridgeSpawnError(error) });
       });
-      child.once("error", (error) => finish({ ok: false, error: formatBridgeSpawnError(error) }));
-      child.once("close", (code, signal) =>
-        finish({
-          ok: false,
-          error: formatProcessEarlyExit(code, signal, "", stderr),
-        }),
-      );
+      child.once("close", (code, signal) => {
+        void readStderr().then((output) =>
+          finish({
+            ok: false,
+            error: formatProcessEarlyExit(code, signal, "", output),
+          }),
+        );
+      });
     });
     if (!started.ok) return started;
 
     child.unref();
-    unrefChildStream(child.stderr);
     return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
   } catch (error) {
+    closeDetachedChildFd(logFd);
+    if (logDir !== undefined)
+      await rm(logDir, { recursive: true, force: true }).catch(() => undefined);
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return {
         ok: false,
@@ -763,6 +784,15 @@ async function startVmViewBridge(
       };
     }
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function closeDetachedChildFd(fd: number | undefined): void {
+  if (fd === undefined) return;
+  try {
+    closeSync(fd);
+  } catch {
+    // Best-effort cleanup for startup diagnostics file descriptors.
   }
 }
 
@@ -808,17 +838,7 @@ async function launchVmViewer(
   }
 
   try {
-    const child = spawn(executable, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    const appendOutput = (current: string, chunk: Buffer): string =>
-      (current + chunk.toString("utf8")).slice(-64 * 1024);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = appendOutput(stdout, chunk);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = appendOutput(stderr, chunk);
-    });
+    const child = spawn(executable, args, { detached: true, stdio: "ignore" });
     const launched = await new Promise<
       { readonly ok: true } | { readonly ok: false; readonly error: string }
     >((resolve) => {
@@ -846,7 +866,7 @@ async function launchVmViewer(
         }
         finish({
           ok: false,
-          error: formatProcessEarlyExit(code, signal, stdout, stderr),
+          error: formatProcessEarlyExit(code, signal, "", ""),
         });
       });
     });
@@ -854,24 +874,10 @@ async function launchVmViewer(
       return launched;
     }
     child.unref();
-    unrefChildStream(child.stdout);
-    unrefChildStream(child.stderr);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-function unrefChildStream(stream: NodeJS.ReadableStream | null): void {
-  if (stream === null || !hasUnref(stream)) return;
-  stream.unref();
-}
-
-function hasUnref(stream: NodeJS.ReadableStream): stream is NodeJS.ReadableStream & {
-  readonly unref: () => void;
-} {
-  const candidate = stream as NodeJS.ReadableStream & { readonly unref?: unknown };
-  return typeof candidate.unref === "function";
 }
 
 function formatProcessEarlyExit(
