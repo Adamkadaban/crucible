@@ -216,9 +216,9 @@ $adminPassword = Require-SecretEnvironment -Name "CRUCIBLE_ADMIN_PASSWORD"
 
 Ensure-LocalAccount -Username $StandardUsername -Password $standardPassword -Administrator $false
 Ensure-LocalAccount -Username $AdminUsername -Password $adminPassword -Administrator $true
+Grant-BatchLogonRight -Usernames @($StandardUsername, $AdminUsername)
 Install-DecoyUserFiles -Username $StandardUsername
 Install-CommonSoftwareMarkers
-Grant-BatchLogonRight -Usernames @($StandardUsername, $AdminUsername)
 
 # Persist autologon beyond the initial LogonCount from Autounattend.xml so the
 # VM always boots to an interactive desktop after provisioning reboots.

@@ -187,7 +187,7 @@ describe("core bootstrap exports", () => {
     expect(first?.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
     expect(first?.decoyFiles.some((file) => file.relativePath === ".aws\\credentials")).toBe(true);
     expect(first?.softwareMarkers.map((software) => software.name)).toEqual(
-      expect.arrayContaining(["Google Chrome", "Visual Studio Code", "Git"]),
+      expect.arrayContaining(["Google Chrome", "Notepad++", "Visual Studio Code", "Git"]),
     );
   });
 

@@ -17,7 +17,7 @@ import {
   type GuestAgentExecResult,
   type RealismPersona,
 } from "@crucible/core";
-import { createCrucibleMcpServer } from "@crucible/mcp-server";
+import { BOOTSTRAP_TOOLS, createCrucibleMcpServer } from "@crucible/mcp-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { buildDefaultGuestClientFactory, buildMcpVmAdapter, runCrucibleCli } from "./index.js";
@@ -30,6 +30,9 @@ const liveConfigPath = path.join(liveRoot, "config.json");
 const liveVmName = "crucible-live-e2e";
 
 type ToolCallText = { content: ReadonlyArray<{ type: string; text: string }> };
+type ToolEnvelope<Result = unknown> =
+  | { ok: true; result: Result }
+  | { ok: false; error: { kind?: string; message: string } };
 type LiveContext = {
   readonly config: CrucibleConfig;
   readonly configPath: string;
@@ -38,6 +41,13 @@ type LiveContext = {
   readonly persona: RealismPersona;
   readonly manifest: ArtifactManifest;
   readonly provisionedThisRun: boolean;
+};
+
+type CommonSoftwareEvidence = {
+  readonly reportPresent: boolean;
+  readonly reportProvider?: string;
+  readonly realFiles: Record<string, boolean>;
+  readonly realRegistryNames: readonly string[];
 };
 
 const contexts: LiveContext[] = [];
@@ -207,11 +217,43 @@ function parsePayload<T>(result: ToolCallText): T {
   return JSON.parse(text) as T;
 }
 
-async function expectToolOk(client: Client, name: string, args: Record<string, unknown>) {
-  const payload = parsePayload<{ ok: boolean; error?: { message?: string } }>(
-    (await client.callTool({ name, arguments: args })) as ToolCallText,
+async function callToolPayload<T>(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+  options?: { readonly timeout?: number },
+): Promise<T> {
+  return parsePayload<T>(
+    (await client.callTool(
+      { name, arguments: args },
+      undefined,
+      options === undefined ? undefined : { timeout: options.timeout },
+    )) as ToolCallText,
   );
-  expect(payload.ok, payload.error?.message).toBe(true);
+}
+
+async function expectToolOk<Result = unknown>(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+  options?: { readonly timeout?: number },
+): Promise<{ ok: true; result: Result }> {
+  const payload = parsePayload<ToolEnvelope<Result>>(
+    (await client.callTool(
+      { name, arguments: args },
+      undefined,
+      options === undefined ? undefined : { timeout: options.timeout },
+    )) as ToolCallText,
+  );
+  expect(payload.ok, payload.ok ? undefined : payload.error.message).toBe(true);
+  if (!payload.ok) throw new Error(payload.error.message);
+  return payload;
+}
+
+function expectExpectedToolError(payload: ToolEnvelope, pattern: RegExp): void {
+  expect(payload.ok).toBe(false);
+  if (payload.ok) throw new Error("expected MCP tool to fail");
+  expect(payload.error.message).toMatch(pattern);
 }
 
 async function withLiveMcpClient<T>(
@@ -279,6 +321,16 @@ async function expectGuestCommand(
     );
   }
   return decode(result).trim();
+}
+
+async function expectGuestJson<T>(guest: GuestAgentClient, script: string): Promise<T> {
+  let lastOutput = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    lastOutput = await expectGuestCommand(guest, script);
+    if (lastOutput.length > 0) return JSON.parse(lastOutput) as T;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error("guest command returned empty JSON output after retries");
 }
 
 async function readJsonIfExists<T>(filePath: string): Promise<T | undefined> {
@@ -373,10 +425,10 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
       `$admin = Get-LocalUser -Name '${escapePowerShell(persona.adminUsername)}'`,
       `[pscustomobject]@{Standard=$standard.Enabled; Admin=$admin.Enabled} | ConvertTo-Json -Compress`,
     ].join("; ");
-    const accountState = JSON.parse(await expectGuestCommand(guest, accountScript)) as {
+    const accountState = await expectGuestJson<{
       Standard: boolean;
       Admin: boolean;
-    };
+    }>(guest, accountScript);
     expect(accountState).toEqual({ Standard: true, Admin: true });
 
     const sampleDecoys = persona.decoyFiles.slice(0, Math.min(persona.decoyFiles.length, 6));
@@ -389,31 +441,87 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
         `$c = Get-Content -LiteralPath $p -Raw`,
         `[pscustomobject]@{Length=$c.Length; ContainsInert=$c.Contains('INERT') -or $c.Contains('not-a-real-secret'); ContainsOwner=$c.Contains('${escapePowerShell(persona.fullName)}')} | ConvertTo-Json -Compress`,
       ].join("; ");
-      const fileState = JSON.parse(await expectGuestCommand(guest, script)) as {
+      const fileState = await expectGuestJson<{
         Length: number;
         ContainsInert: boolean;
         ContainsOwner: boolean;
-      };
+      }>(guest, script);
       expect(fileState.Length).toBeGreaterThan(0);
       if (decoy.category === "inert-secret") expect(fileState.ContainsInert).toBe(true);
       if (decoy.category === "ordinary-user") expect(fileState.ContainsOwner).toBe(true);
     }
 
-    const sampleSoftware = persona.softwareMarkers.slice(
-      0,
-      Math.min(persona.softwareMarkers.length, 6),
-    );
-    expect(sampleSoftware.length).toBeGreaterThan(0);
-    for (const marker of sampleSoftware) {
+    expect(persona.softwareMarkers.length).toBeGreaterThan(0);
+    for (const marker of persona.softwareMarkers) {
       const keyName = escapePowerShell(marker.name);
       const script = [
         `$roots = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall', 'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall')`,
-        `$hit = Get-ChildItem -Path $roots -ErrorAction SilentlyContinue | Get-ItemProperty | Where-Object { $_.DisplayName -eq '${keyName}' } | Select-Object -First 1`,
+        `$hit = Get-ChildItem -Path $roots -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -eq 'CrucibleRealism-${keyName}' } | Get-ItemProperty | Select-Object -First 1`,
         `if ($null -eq $hit) { throw 'missing software marker ${keyName}' }`,
-        `$hit.DisplayName`,
+        `$readme = Join-Path ([string]$hit.InstallLocation) 'README-crucible-realism.txt'`,
+        `if (-not (Test-Path -LiteralPath $readme)) { throw "missing marker readme $readme" }`,
+        `$text = Get-Content -LiteralPath $readme -Raw`,
+        `[pscustomobject]@{DisplayName=$hit.DisplayName; DisplayVersion=$hit.DisplayVersion; Publisher=$hit.Publisher; InstallDate=$hit.InstallDate; InstallLocationExists=(Test-Path -LiteralPath ([string]$hit.InstallLocation)); ReadmeInert=$text.Contains('inert install-presence marker')} | ConvertTo-Json -Compress`,
       ].join("; ");
-      await expect(expectGuestCommand(guest, script)).resolves.toBe(marker.name);
+      const markerState = await expectGuestJson<{
+        DisplayName: string;
+        DisplayVersion: string;
+        Publisher: string;
+        InstallDate: string;
+        InstallLocationExists: boolean;
+        ReadmeInert: boolean;
+      }>(guest, script);
+      expect(markerState).toMatchObject({
+        DisplayName: marker.name,
+        DisplayVersion: marker.version,
+        Publisher: marker.publisher,
+        InstallDate: marker.installDate,
+        InstallLocationExists: true,
+        ReadmeInert: true,
+      });
     }
+
+    const commonSoftware = await getCommonSoftwareEvidence(guest);
+    const realInstalledCount = Object.values(commonSoftware.realFiles).filter(Boolean).length;
+    if (realInstalledCount > 0) {
+      expect(realInstalledCount).toBeGreaterThanOrEqual(5);
+      expect(commonSoftware.realFiles["7-Zip"]).toBe(true);
+      expect(commonSoftware.realFiles["Notepad++"]).toBe(true);
+      expect(commonSoftware.realFiles.VLC).toBe(true);
+      expect(commonSoftware.realFiles.Firefox).toBe(true);
+      expect(commonSoftware.realFiles.Chrome).toBe(true);
+      expect(commonSoftware.realRegistryNames.some((name) => name.startsWith("7-Zip"))).toBe(true);
+      expect(commonSoftware.realRegistryNames.some((name) => name.startsWith("Notepad++"))).toBe(
+        true,
+      );
+      expect(commonSoftware.realRegistryNames).toContain("VLC media player");
+      expect(commonSoftware.realRegistryNames.some((name) => name.includes("Firefox"))).toBe(true);
+      expect(commonSoftware.realRegistryNames).toContain("Google Chrome");
+    } else if (commonSoftware.reportPresent) {
+      expect(commonSoftware.reportProvider).toBe("ninite-free");
+    }
+
+    const installedTools = JSON.parse(
+      await expectGuestCommand(
+        guest,
+        [
+          `$paths = [ordered]@{ Cdb='C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe'; WinDbg='C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\windbg.exe'; Handle='C:\\Tools\\Sysinternals\\handle64.exe'; Strings='C:\\Tools\\Sysinternals\\strings64.exe'; ListDlls='C:\\Tools\\Sysinternals\\Listdlls64.exe'; Sigcheck='C:\\Tools\\Sysinternals\\sigcheck64.exe' }`,
+          `$result = [ordered]@{}`,
+          `foreach ($entry in $paths.GetEnumerator()) { $result[$entry.Key] = Test-Path -LiteralPath $entry.Value -PathType Leaf }`,
+          `$result['QemuGaRunning'] = (Get-Service -Name qemu-ga).Status.ToString() -eq 'Running'`,
+          `$result['CrucibleGuestAgentRunning'] = (Get-Service -Name CrucibleGuestAgent).Status.ToString() -eq 'Running'`,
+          `$result | ConvertTo-Json -Compress`,
+        ].join("; "),
+      ),
+    ) as Record<string, boolean>;
+    expect(installedTools.Cdb).toBe(true);
+    expect(installedTools.WinDbg).toBe(true);
+    expect(installedTools.Handle).toBe(true);
+    expect(installedTools.Strings).toBe(true);
+    expect(installedTools.ListDlls).toBe(true);
+    expect(installedTools.Sigcheck).toBe(true);
+    expect(installedTools.QemuGaRunning).toBe(true);
+    expect(installedTools.CrucibleGuestAgentRunning).toBe(true);
 
     const contract = buildProvisioningSecretStorageContract(
       config.vm.name,
@@ -611,9 +719,8 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
     });
   });
 
-  it("moves, clicks, double-clicks, right-clicks, types text, and verifies the GUI result", async () => {
+  it("moves, clicks, double-clicks, right-clicks, types text, and verifies Windows UI state", async () => {
     const live = context();
-    const marker = `cruciblelivee2e${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
     await withLiveMcpClient(live, "crucible-live-input", async (client) => {
       await expectToolOk(client, "vm_key_press", { key: "esc" }).catch(() => undefined);
@@ -622,14 +729,18 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       const beforeTyping = await captureScreenshot(client, live.tempDir, "before-typing");
       await expectToolOk(client, "vm_type_text", {
-        text: marker,
+        text: "notepad",
         delayMs: 15,
       });
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       const afterTyping = await captureScreenshot(client, live.tempDir, "after-typing");
       expect(countSampledPixelByteDifferences(beforeTyping, afterTyping)).toBeGreaterThan(100);
 
-      await expectToolOk(client, "vm_key_press", { key: "esc" }).catch(() => undefined);
+      await expectToolOk(client, "vm_key_press", { key: "enter" });
+      await waitForGuestProcess(live.guest, "notepad", true, 60_000);
+
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await expectToolOk(client, "vm_key_press", { key: "meta_l-up" }).catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       await expectToolOk(client, "vm_mouse_move", { x: 24_000, y: 12_000 });
       await expectToolOk(client, "vm_mouse_click", { x: 24_000, y: 12_000, button: "left" });
@@ -640,7 +751,245 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
       });
       await expectToolOk(client, "vm_mouse_click", { x: 28_000, y: 12_000, button: "right" });
       await expectToolOk(client, "vm_key_press", { key: "esc" }).catch(() => undefined);
+
+      const beforeClose = await captureScreenshot(client, live.tempDir, "before-close");
+      await expectToolOk(client, "vm_mouse_click", { x: 32_200, y: 400, button: "left" });
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      if (await isGuestProcessRunning(live.guest, "notepad")) {
+        await expectToolOk(client, "vm_key_press", { key: "alt-f4" });
+      }
+      await waitForGuestProcess(live.guest, "notepad", false, 30_000);
+      const afterClose = await captureScreenshot(client, live.tempDir, "after-close");
+      expect(countSampledPixelByteDifferences(beforeClose, afterClose)).toBeGreaterThan(100);
     });
+  });
+
+  it("calls every registered MCP tool against the live environment", async () => {
+    const live = context();
+    const marker = `all-tools-${randomUUID()}`;
+    const hostUploadPath = path.join(live.tempDir, `${marker}.txt`);
+    const hostDownloadPath = `artifacts/downloads/${marker}.txt`;
+    const pcapPath = path.join(live.tempDir, `${marker}.pcap`);
+    const guestPath = `C:\\ProgramData\\Crucible\\staging\\${marker}.txt`;
+    const calls = new Set<string>();
+    let scratchPid: number | undefined;
+
+    await writeFile(hostUploadPath, `${marker}\n`, "utf8");
+    await writeFile(pcapPath, minimalPcapFile(), "binary");
+
+    await withLiveMcpClient(live, "crucible-live-all-tools", async (client) => {
+      const call = async <Result = unknown>(
+        name: string,
+        args: Record<string, unknown> = {},
+        options?: { readonly timeout?: number },
+      ) => {
+        calls.add(name);
+        try {
+          return await callToolPayload<ToolEnvelope<Result>>(client, name, args, options);
+        } catch (error) {
+          throw new Error(
+            `MCP tool ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
+      const callOk = async <Result = unknown>(
+        name: string,
+        args: Record<string, unknown> = {},
+        options?: { readonly timeout?: number },
+      ) => {
+        calls.add(name);
+        try {
+          return await expectToolOk<Result>(client, name, args, options);
+        } catch (error) {
+          throw new Error(
+            `MCP tool ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
+
+      await callOk("host_check");
+      await callOk("vm_status");
+      await callOk("vm_display_info");
+      await callOk("vm_screenshot", { outputPath: path.join(live.tempDir, `${marker}.ppm`) });
+      await callOk("vm_mouse_move", { x: 18_000, y: 18_000 });
+      await callOk("vm_mouse_click", { x: 18_000, y: 18_000, button: "left" });
+      await callOk("vm_mouse_double_click", { x: 18_500, y: 18_500, button: "left" });
+      await callOk("vm_mouse_drag", {
+        fromX: 18_000,
+        fromY: 18_000,
+        toX: 19_000,
+        toY: 19_000,
+        button: "left",
+      });
+      await callOk("vm_key_press", { key: "esc" });
+      await callOk("vm_type_text", { text: "abc", delayMs: 1 });
+
+      await callOk("network_status");
+      await callOk("network_set_mode", { mode: "isolated" });
+      await callOk("network_active_status");
+      await callOk("network_pcap_info");
+      const tshark = await call("tshark_summary", { pcapPath });
+      if (!tshark.ok) expectExpectedToolError(tshark, /tshark|pcap|empty|No such file/i);
+
+      await callOk("snapshot_list");
+      await callOk("guest_health");
+      await callOk("guest_exec", {
+        executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        arguments: ["-NoProfile", "-Command", "Write-Output all-tools-service"],
+        timeoutMs: 30_000,
+      });
+      const adminExec = await callOk<{ exitCode: number; stdoutBase64?: string }>(
+        "guest_exec_admin",
+        {
+          executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          arguments: [
+            "-NoProfile",
+            "-Command",
+            "$p=Start-Process -FilePath 'C:\\Windows\\System32\\notepad.exe' -PassThru; [pscustomobject]@{Pid=$p.Id} | ConvertTo-Json -Compress",
+          ],
+          timeoutMs: 30_000,
+        },
+      );
+      expect(adminExec.result.exitCode).toBe(0);
+      const scratchProcess = JSON.parse(
+        Buffer.from(adminExec.result.stdoutBase64 ?? "", "base64").toString("utf8"),
+      ) as { Pid?: unknown };
+      scratchPid = typeof scratchProcess.Pid === "number" ? scratchProcess.Pid : undefined;
+      expect(scratchPid).toBeGreaterThan(0);
+
+      await callOk("guest_upload_file", { hostPath: hostUploadPath, guestPath });
+      await callOk("guest_read_file", { sourcePath: guestPath });
+      await callOk("guest_download_file", { guestPath, hostPath: hostDownloadPath });
+
+      const debugOpen = await call<{ id?: string }>(
+        "debug_open",
+        {
+          mode: "launch",
+          executable: "C:\\Windows\\System32\\notepad.exe",
+          initialCommands: ["vertarget"],
+        },
+        { timeout: 180_000 },
+      );
+      let debugSessionId: string | undefined;
+      if (debugOpen.ok) {
+        debugSessionId = debugOpen.result.id;
+        expect(debugSessionId).toBeTruthy();
+        await callOk(
+          "debug_command",
+          { sessionId: debugSessionId, commands: ["vertarget"] },
+          { timeout: 180_000 },
+        );
+        await callOk(
+          "debug_dump",
+          {
+            sessionId: debugSessionId,
+            outputGuestPath: `C:\\ProgramData\\Crucible\\staging\\${marker}-debug.dmp`,
+            minidump: true,
+          },
+          { timeout: 180_000 },
+        );
+      } else {
+        expectExpectedToolError(debugOpen, /cdb|debug|WinDbg|not found|failed/i);
+      }
+      await callOk(
+        "debug_run_script",
+        {
+          target: { mode: "launch", executable: "C:\\Windows\\System32\\notepad.exe" },
+          script: "q",
+          timeoutMs: 5_000,
+        },
+        { timeout: 180_000 },
+      );
+      await call(
+        "debug_close",
+        { sessionId: debugSessionId ?? "missing-live-debug-session" },
+        { timeout: 180_000 },
+      );
+
+      const dump = await call(
+        "dump_process",
+        {
+          pid: scratchPid,
+          outputGuestPath: `C:\\ProgramData\\Crucible\\staging\\${marker}-process.dmp`,
+          method: "minidumpwritedump",
+          dumpType: "mini",
+          suspend: false,
+        },
+        { timeout: 180_000 },
+      );
+      if (!dump.ok) expectExpectedToolError(dump, /minidumpwritedump|dump|process/i);
+
+      await callOk("process_monitor_status");
+      const monitorStart = await call<{ monitorId?: string }>(
+        "process_monitor_start",
+        {
+          targetPid: scratchPid,
+        },
+        { timeout: 180_000 },
+      );
+      const monitorId = monitorStart.ok ? monitorStart.result.monitorId : undefined;
+      if (!monitorStart.ok) expectExpectedToolError(monitorStart, /ProcMon|not installed/i);
+      const monitorStop = await call(
+        "process_monitor_stop",
+        {
+          monitorId: monitorId ?? "missing-live-monitor",
+          targetPid: scratchPid,
+        },
+        { timeout: 180_000 },
+      );
+      if (!monitorStop.ok)
+        expectExpectedToolError(monitorStop, /ProcMon|not installed|backing file/i);
+
+      const scan = await call<{ matches?: Array<{ address?: string }> }>(
+        "memory_scan",
+        {
+          pid: 999_999,
+          patterns: ["ascii:crucible-live"],
+          regions: "image",
+          maxMatches: 1,
+        },
+        { timeout: 180_000 },
+      );
+      if (scan.ok) {
+        expect(scan.result.matches ?? []).toEqual([]);
+      } else {
+        expectExpectedToolError(scan, /memory|OpenProcess|ReadProcessMemory|failed|aborted/i);
+      }
+      const dumpRegion = await call(
+        "memory_dump_region",
+        {
+          pid: 999_999,
+          baseAddress: "0x0",
+          size: 64,
+          outputGuestPath: `C:\\ProgramData\\Crucible\\staging\\${marker}-region.bin`,
+        },
+        { timeout: 180_000 },
+      );
+      expectExpectedToolError(dumpRegion, /memory|OpenProcess|ReadProcessMemory|failed|aborted/i);
+
+      if (scratchPid !== undefined) {
+        await callOk("guest_exec_admin", {
+          executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          arguments: ["-NoProfile", "-Command", `Stop-Process -Id ${scratchPid} -Force`],
+          timeoutMs: 30_000,
+        });
+      }
+
+      await callOk("vm_stop", {}, { timeout: 180_000 });
+      await callOk("snapshot_restore", { snapshotName: "clean-base" }, { timeout: 180_000 });
+      await callOk("vm_start", {}, { timeout: 180_000 });
+    });
+
+    const guestFactory = buildDefaultGuestClientFactory(live.config);
+    if (guestFactory === undefined) throw new Error("missing guest factory after live VM restart");
+    const restartedGuest = (await guestFactory()) as GuestAgentClient;
+    try {
+      await waitForGuestHealth(restartedGuest);
+    } finally {
+      await restartedGuest.close().catch(() => undefined);
+    }
+
+    expect(Array.from(calls).sort()).toEqual(BOOTSTRAP_TOOLS.map((tool) => tool.name).sort());
   });
 });
 
@@ -671,6 +1020,71 @@ function countSampledPixelByteDifferences(left: Buffer, right: Buffer): number {
     if (leftPixels[offset] !== rightPixels[offset]) differences += 1;
   }
   return differences;
+}
+
+function minimalPcapFile(): Buffer {
+  return Buffer.from([
+    0xd4, 0xc3, 0xb2, 0xa1, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0xff, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+  ]);
+}
+
+async function waitForGuestProcess(
+  guest: GuestAgentClient,
+  processName: string,
+  expectedRunning: boolean,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let running = false;
+  while (Date.now() < deadline) {
+    running = await isGuestProcessRunning(guest, processName);
+    if (running === expectedRunning) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(
+    `timed out waiting for ${processName} running=${expectedRunning}; last running=${running}`,
+  );
+}
+
+async function isGuestProcessRunning(
+  guest: GuestAgentClient,
+  processName: string,
+): Promise<boolean> {
+  const output = await expectGuestCommand(
+    guest,
+    `$p = Get-Process -Name '${escapePowerShell(processName)}' -ErrorAction SilentlyContinue | Select-Object -First 1; [bool]$p`,
+    30_000,
+  );
+  return output.toLowerCase() === "true";
+}
+
+async function getCommonSoftwareEvidence(guest: GuestAgentClient): Promise<CommonSoftwareEvidence> {
+  const script = [
+    `$reportPath = 'C:\\ProgramData\\Crucible\\realism-software-report.json'`,
+    `$report = if (Test-Path -LiteralPath $reportPath) { Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json } else { $null }`,
+    `$paths = [ordered]@{ '7-Zip'='C:\\Program Files\\7-Zip\\7zFM.exe'; 'Notepad++'='C:\\Program Files\\Notepad++\\notepad++.exe'; VLC='C:\\Program Files\\VideoLAN\\VLC\\vlc.exe'; Firefox='C:\\Program Files\\Mozilla Firefox\\firefox.exe'; Chrome='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }`,
+    `$files = [ordered]@{}`,
+    `foreach ($entry in $paths.GetEnumerator()) { $files[$entry.Key] = Test-Path -LiteralPath $entry.Value -PathType Leaf }`,
+    `$roots = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', 'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')`,
+    `$registryNames = @(Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -notlike 'CrucibleRealism-*' -and $_.DisplayName -match '7-Zip|Notepad\\+\\+|VLC media player|Mozilla Firefox|Google Chrome' } | Sort-Object DisplayName -Unique | ForEach-Object { $_.DisplayName })`,
+    `[pscustomobject]@{ ReportPresent=($null -ne $report); ReportProvider=if ($null -ne $report) { $report.provider } else { $null }; RealFiles=$files; RealRegistryNames=$registryNames } | ConvertTo-Json -Depth 8 -Compress`,
+  ].join("; ");
+  const result = JSON.parse(await expectGuestCommand(guest, script)) as {
+    ReportPresent: boolean;
+    ReportProvider?: string;
+    RealFiles: Record<string, boolean>;
+    RealRegistryNames?: string[] | string;
+  };
+  return {
+    reportPresent: result.ReportPresent,
+    reportProvider: result.ReportProvider,
+    realFiles: result.RealFiles,
+    realRegistryNames:
+      typeof result.RealRegistryNames === "string"
+        ? [result.RealRegistryNames]
+        : (result.RealRegistryNames ?? []),
+  };
 }
 
 function escapePowerShell(value: string): string {

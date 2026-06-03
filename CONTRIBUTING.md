@@ -10,12 +10,17 @@ pnpm install --frozen-lockfile
 pnpm format:check
 pnpm lint
 pnpm typecheck
+pnpm e2e
 pnpm test
+pnpm coverage
 pnpm build
 cd guest-agent && go test ./... && go build ./...
 ```
 
-Format check, lint, typecheck, tests, and build must pass before opening a PR.
+Format check, lint, typecheck, tests, and build must pass before opening a PR. Run `pnpm e2e:live`
+as well for VM lifecycle, provisioning, MCP, screenshot, GUI-input, debugger, guest-agent, or
+realism changes. The live suite is opt-in because it requires local Windows/virtio media and a
+KVM-capable host.
 
 ## Code Style
 

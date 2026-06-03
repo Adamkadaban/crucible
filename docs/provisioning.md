@@ -179,7 +179,15 @@ Provisioning uses the persona in these places:
   wallet-looking paths. These are honeytoken-style placeholders, not real secrets.
 - If `installCommonSoftware` is true, provisioning creates inert install-presence markers and
   uninstall-registry entries for common applications such as Chrome, Firefox, 7-Zip, Acrobat Reader,
-  VLC, and profile-specific apps. It does not download or run third-party installers.
+  Notepad++, VLC, and profile-specific apps. It does not download or run third-party installers. The
+  markers use `CrucibleRealism-*` uninstall keys and include a README that identifies them as inert
+  presence markers.
+
+Live validation can detect real common-user applications installed outside provisioning. A
+NAT-enabled manual trial showed that the free Ninite bundle for `7zip`, `notepadplusplus`, `vlc`,
+`firefox`, and `chrome` works when launched interactively as the provisioned admin user, while
+`/silent` is not reliable for the free installer. Do not document those installs as part of
+provisioning unless a future dedicated post-agent stage implements and tests that path.
 
 Never use real personal data, synced browser profiles, credentials, SSH keys, API tokens, cloud
 accounts, or operator home directories as realism sources.
@@ -253,3 +261,23 @@ pnpm crucible provision && \
 
 This must be run on a Linux/KVM host with Windows media, virtio media, QEMU Guest Agent readiness,
 and the guest-service adapter available. It is intentionally not part of CI.
+
+## E2E Coverage
+
+`pnpm e2e` is CI-safe and uses fake lifecycle, snapshot, process, and guest-agent adapters. It
+covers every registered CLI command with safe arguments and asserts that the matrix matches the
+exported command registry.
+
+`pnpm e2e:live` is opt-in and uses `/home/<user>/.config/crucible-live-e2e` by default. It
+provisions or reuses a real Windows baseline, restores `clean-base` between stateful checks, and
+exercises:
+
+- randomized persona hostname, standard/admin users, decoy files, inert secret markers, and software
+  marker registry/readme entries;
+- real debugger and Sysinternals file/service evidence;
+- every registered MCP bootstrap tool, with expected-error allowances only for optional host/guest
+  dependencies such as missing `tshark` or ProcMon;
+- screenshots by reading PPM bytes, parsing dimensions, rejecting flat images, and comparing pixel
+  changes after UI actions;
+- keyboard input, text typing, mouse move, left click, double-click, drag, right-click, and a real
+  Notepad close-button click verified by process exit.

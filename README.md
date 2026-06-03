@@ -92,7 +92,9 @@ snapshot. Restore it before each new analysis session:
 Optional `realism.enabled` provisioning generates a seeded, reproducible guest persona with less
 obvious default usernames/hostnames, benign user files across common folders, inert stealer-target
 honeytoken files, and optional common-software presence markers. It does not make QEMU/KVM
-undetectable and must never use real personal data or credentials.
+undetectable, does not install real third-party persona applications during provisioning, and must
+never use real personal data or credentials. Live validation also detects real common-user software
+when an operator installs it manually for a persona baseline.
 
 ```sh
 pnpm crucible snapshot restore clean-base
@@ -143,6 +145,12 @@ separators.
 
 User-mode CDB automation is supported. KD/KDNET tooling is installed and reported in health output,
 but kernel-debugging workflows are not implemented yet.
+
+The live E2E suite exercises every registered MCP bootstrap tool against an isolated Windows VM. It
+also validates screenshots by reading the captured PPM bytes, parsing the image header, checking for
+non-flat pixel data, and comparing pixel changes after GUI input. GUI coverage includes mouse move,
+left click, double-click, drag, right-click, key input, text input, and clicking a real Notepad
+close button while verifying the guest process exits.
 
 If your MCP client does not inherit the shell environment, point it at `scripts/opencode-mcp.sh` or
 an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucible mcp --stdio`.
@@ -197,10 +205,19 @@ See [`SECURITY.md`](./SECURITY.md) for reporting and containment guidance.
 ```sh
 pnpm check
 
+pnpm e2e
+pnpm e2e:live  # opt-in; requires local Windows media and the live E2E VM config
+
 cd guest-agent
 go test ./...
 go build ./...
 ```
+
+CI-safe E2E covers every registered CLI command with safe arguments and fails if a new command lacks
+a matrix entry. Live E2E is intentionally separate from `pnpm check` because it provisions or reuses
+a real Windows VM and exercises QMP, QGA, the guest agent, MCP tools, screenshots, GUI input,
+debugger automation, process/memory helpers, randomized persona state, decoy files, and software
+evidence.
 
 ## License
 

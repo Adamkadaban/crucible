@@ -15,6 +15,7 @@ import {
   buildGuestHealthReport,
   buildMediaCachePlan,
   buildQemuCommandPlan,
+  buildProvisioningSecretStorageContract,
   CrucibleError,
   CRUCIBLE_VERSION,
   DebuggerSessionManager,
@@ -122,6 +123,8 @@ type GuestPolicyHealth = {
   readonly sysinternals?: Readonly<Record<string, string | null>>;
   readonly crucibleAdminPresent: boolean;
   readonly crucibleUserPresent: boolean;
+  readonly adminUsername?: string;
+  readonly standardUsername?: string;
   readonly qemuAgentStatus: string;
   readonly crucibleAgentStatus: string;
   readonly defenderRealTimeProtectionEnabled: boolean | null;
@@ -1517,7 +1520,7 @@ async function runGuestHealthCommand(
       const client = await guestClientFactory();
       try {
         const health = await client.health();
-        const policyHealth = await readGuestPolicyHealth(client);
+        const policyHealth = await readGuestPolicyHealth(client, config);
         const healthy = health.status === "ok" && policyHealth.healthy;
         return {
           exitCode: healthy ? 0 : 1,
@@ -1829,8 +1832,8 @@ function renderGuestAgentHealth(
       `- symbol cache: ${policyHealth.symbolCachePath ?? "missing"}`,
       `- symbol cache writable: ${formatBoolean(policyHealth.symbolCacheWritable)}`,
       `- Sysinternals: ${formatToolMap(policyHealth.sysinternals)}`,
-      `- CrucibleAdmin present: ${policyHealth.crucibleAdminPresent ? "yes" : "no"}`,
-      `- CrucibleUser present: ${policyHealth.crucibleUserPresent ? "yes" : "no"}`,
+      `- ${policyHealth.adminUsername ?? "CrucibleAdmin"} present: ${policyHealth.crucibleAdminPresent ? "yes" : "no"}`,
+      `- ${policyHealth.standardUsername ?? "CrucibleUser"} present: ${policyHealth.crucibleUserPresent ? "yes" : "no"}`,
       `- qemu-ga service: ${policyHealth.qemuAgentStatus ?? "unknown"}`,
       `- CrucibleGuestAgent service: ${policyHealth.crucibleAgentStatus ?? "unknown"}`,
       `- Defender real-time protection: ${formatBoolean(policyHealth.defenderRealTimeProtectionEnabled)}`,
@@ -1925,8 +1928,11 @@ function formatRecordedBoolean(value: boolean, recorded: boolean): string {
   return recorded ? formatBoolean(value) : "unknown";
 }
 
-async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<GuestPolicyHealth> {
-  const command = buildGuestPolicyHealthCommand();
+async function readGuestPolicyHealth(
+  client: CliGuestHealthClient,
+  config: CrucibleConfig,
+): Promise<GuestPolicyHealth> {
+  const command = buildGuestPolicyHealthCommand(await readConfiguredWindowsAccountNames(config));
   const result = await client.exec({
     executable: "powershell.exe",
     arguments: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
@@ -1946,7 +1952,40 @@ async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<Gues
   return JSON.parse(stdout) as GuestPolicyHealth;
 }
 
-function buildGuestPolicyHealthCommand(): string {
+async function readConfiguredWindowsAccountNames(config: CrucibleConfig): Promise<{
+  readonly standardUsername: string;
+  readonly adminUsername: string;
+}> {
+  const contract = buildProvisioningSecretStorageContract(
+    config.vm.name,
+    config.artifacts.secretsDirectory,
+  );
+  const readUsername = async (principal: "standard" | "admin", fallback: string) => {
+    const ref = contract.secretRefs.find((secret) => secret.principal === principal);
+    if (ref === undefined) return fallback;
+    try {
+      const parsed = JSON.parse(await readFile(ref.path, "utf8")) as { username?: unknown };
+      return typeof parsed.username === "string" && parsed.username.length > 0
+        ? parsed.username
+        : fallback;
+    } catch (error) {
+      if (isMissingPathError(error)) return fallback;
+      throw error;
+    }
+  };
+
+  return {
+    standardUsername: await readUsername("standard", "CrucibleUser"),
+    adminUsername: await readUsername("admin", "CrucibleAdmin"),
+  };
+}
+
+function buildGuestPolicyHealthCommand(accountNames: {
+  readonly standardUsername: string;
+  readonly adminUsername: string;
+}): string {
+  const standardUsername = powerShellSingleQuoted(accountNames.standardUsername);
+  const adminUsername = powerShellSingleQuoted(accountNames.adminUsername);
   return String.raw`$ErrorActionPreference='Stop';
 function Find-Dbg([string[]]$Names){
   foreach($name in $Names){$cmd=Get-Command $name -ErrorAction SilentlyContinue; if($null -ne $cmd){return $cmd.Source}}
@@ -1963,8 +2002,12 @@ function DefenderRtp(){try{$s=Get-MpComputerStatus -ErrorAction Stop; return [bo
 function DwordValue([string]$Path,[string]$Name){try{$i=Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop; return [int]($i.$Name)}catch{return $null}}
 function CodeIntegrityBootOptions(){try{$b=& bcdedit /enum 2>$null; if($LASTEXITCODE -ne 0){return @()}; $o=@(); if($b | Select-String -Pattern '^\s*nointegritychecks\s+Yes\s*$' -Quiet){$o += 'nointegritychecks'}; if($b | Select-String -Pattern '^\s*testsigning\s+Yes\s*$' -Quiet){$o += 'testsigning'}; return @($o)}catch{return @()}}
 function TestSigning(){try{$b=& bcdedit /enum '{current}' 2>$null; if($LASTEXITCODE -ne 0){return $null}; return [bool]($b | Select-String -Pattern 'testsigning\s+Yes' -Quiet)}catch{return $null}}
-$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $kd=Find-Dbg @('kd.exe'); $kdnet=Find-Dbg @('kdnet.exe'); $gflags=Find-Dbg @('gflags.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $symbolCache=[Environment]::GetEnvironmentVariable('_NT_ALT_SYMBOL_PATH','Machine'); $symbolWritable=$false; if(-not [string]::IsNullOrWhiteSpace($symbolCache)){try{New-Item -ItemType Directory -Force -Path $symbolCache|Out-Null; $probe=Join-Path $symbolCache 'crucible-symbol-cache.probe'; Set-Content -LiteralPath $probe -Value ok -Force; Remove-Item -LiteralPath $probe -Force; $symbolWritable=$true}catch{$symbolWritable=$false}}; $sys=[ordered]@{handle=Find-Tool @('handle64.exe','handle.exe'); strings=Find-Tool @('strings64.exe','strings.exe'); tcpview=Find-Tool @('Tcpview.exe','Tcpview64.exe'); tcpvcon=Find-Tool @('tcpvcon64.exe','tcpvcon.exe'); procdump=Find-Tool @('procdump64.exe','procdump.exe'); procmon=Find-Tool @('Procmon64.exe','Procmon.exe','procmon64.exe','procmon.exe'); listdlls=Find-Tool @('Listdlls64.exe','Listdlls.exe'); autorunsc=Find-Tool @('autorunsc64.exe','autorunsc.exe'); sigcheck=Find-Tool @('sigcheck64.exe','sigcheck.exe')}; $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
-[ordered]@{cdbPath=$cdb; windbgPath=$windbg; kdPath=$kd; kdnetPath=$kdnet; gflagsPath=$gflags; symbolPath=$symbol; symbolCachePath=$symbolCache; symbolCacheWritable=$symbolWritable; sysinternals=$sys; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false -and $null -ne $cdb -and $null -ne $windbg -and $null -ne $kd -and $null -ne $kdnet -and $null -ne $gflags -and $symbolWritable)} | ConvertTo-Json -Compress`;
+$adminUsername=${adminUsername}; $standardUsername=${standardUsername}; $cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $kd=Find-Dbg @('kd.exe'); $kdnet=Find-Dbg @('kdnet.exe'); $gflags=Find-Dbg @('gflags.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $symbolCache=[Environment]::GetEnvironmentVariable('_NT_ALT_SYMBOL_PATH','Machine'); $symbolWritable=$false; if(-not [string]::IsNullOrWhiteSpace($symbolCache)){try{New-Item -ItemType Directory -Force -Path $symbolCache|Out-Null; $probe=Join-Path $symbolCache 'crucible-symbol-cache.probe'; Set-Content -LiteralPath $probe -Value ok -Force; Remove-Item -LiteralPath $probe -Force; $symbolWritable=$true}catch{$symbolWritable=$false}}; $sys=[ordered]@{handle=Find-Tool @('handle64.exe','handle.exe'); strings=Find-Tool @('strings64.exe','strings.exe'); tcpview=Find-Tool @('Tcpview.exe','Tcpview64.exe'); tcpvcon=Find-Tool @('tcpvcon64.exe','tcpvcon.exe'); procdump=Find-Tool @('procdump64.exe','procdump.exe'); procmon=Find-Tool @('Procmon64.exe','Procmon.exe','procmon64.exe','procmon.exe'); listdlls=Find-Tool @('Listdlls64.exe','Listdlls.exe'); autorunsc=Find-Tool @('autorunsc64.exe','autorunsc.exe'); sigcheck=Find-Tool @('sigcheck64.exe','sigcheck.exe')}; $admin=Test-User $adminUsername; $user=Test-User $standardUsername; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
+[ordered]@{cdbPath=$cdb; windbgPath=$windbg; kdPath=$kd; kdnetPath=$kdnet; gflagsPath=$gflags; symbolPath=$symbol; symbolCachePath=$symbolCache; symbolCacheWritable=$symbolWritable; sysinternals=$sys; adminUsername=$adminUsername; standardUsername=$standardUsername; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false -and $null -ne $cdb -and $null -ne $windbg -and $null -ne $kd -and $null -ne $kdnet -and $null -ne $gflags -and $symbolWritable)} | ConvertTo-Json -Compress`;
+}
+
+function powerShellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
@@ -3680,6 +3723,8 @@ const COMMANDS: readonly CommandDefinition[] = [
     usage: ["crucible scenario malware-dry-run"],
   },
 ];
+
+export const CLI_COMMANDS: readonly CommandDefinition[] = COMMANDS;
 
 function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
   const separatorIndex = args.indexOf("--");

@@ -266,6 +266,7 @@ export function buildRealismSoftwareMarkers(
     { name: "Google Chrome", publisher: "Google LLC" },
     { name: "Mozilla Firefox", publisher: "Mozilla" },
     { name: "7-Zip", publisher: "Igor Pavlov" },
+    { name: "Notepad++", publisher: "Notepad++ Team" },
     { name: "Adobe Acrobat Reader", publisher: "Adobe" },
     { name: "VLC media player", publisher: "VideoLAN" },
   ];
@@ -273,7 +274,7 @@ export function buildRealismSoftwareMarkers(
     RealismProfileName,
     readonly { name: string; publisher: string }[]
   > = {
-    minimal: [{ name: "Notepad++", publisher: "Notepad++ Team" }],
+    minimal: [],
     "office-user": [
       { name: "Microsoft Teams", publisher: "Microsoft Corporation" },
       { name: "LibreOffice", publisher: "The Document Foundation" },

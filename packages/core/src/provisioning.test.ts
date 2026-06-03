@@ -899,7 +899,7 @@ describe("provisioning contracts", () => {
     expect(persona.decoyFiles.some((file) => file.relativePath.startsWith("Videos\\"))).toBe(true);
     expect(persona.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
     expect(persona.softwareMarkers.map((software) => software.name)).toEqual(
-      expect.arrayContaining(["Google Chrome", "Visual Studio Code"]),
+      expect.arrayContaining(["Google Chrome", "Notepad++", "Visual Studio Code"]),
     );
     expect(commands.at(-1)?.args).toContain(
       `/realism/persona.json=${join(root, "artifacts", "boot", "realism-persona.json")}`,
@@ -1131,6 +1131,7 @@ describe("provisioning contracts", () => {
 
     expect(script).toContain("CRUCIBLE_STANDARD_PASSWORD");
     expect(script).toContain("CRUCIBLE_ADMIN_PASSWORD");
+    expect(script).toContain("CrucibleRealism-");
     expect(script).toContain("-PasswordNeverExpires:$true");
     expect(script).toContain("-UserMayChangePassword:$false");
     expect(script).not.toContain(
