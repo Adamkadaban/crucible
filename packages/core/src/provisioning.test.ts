@@ -893,9 +893,15 @@ describe("provisioning contracts", () => {
     const persona = JSON.parse(
       await readFile(join(root, "artifacts", "boot", "realism-persona.json"), "utf8"),
     ) as {
+      adminUsername: string;
+      userUsername: string;
+      fullName: string;
       decoyFiles: { relativePath: string; category: string }[];
       softwareMarkers: { name: string }[];
     };
+    expect(persona.adminUsername).toBe("localadmin");
+    expect(persona.userUsername).toBe("devuser");
+    expect(persona.fullName).toBe("Dev User");
     expect(persona.decoyFiles.some((file) => file.relativePath.startsWith("Videos\\"))).toBe(true);
     expect(persona.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
     expect(persona.softwareMarkers.map((software) => software.name)).toEqual(
@@ -910,12 +916,21 @@ describe("provisioning contracts", () => {
       artifacts: {
         kind: string;
         name: string;
-        metadata?: { hostname?: string; decoyFiles?: { content?: string }[] };
+        metadata?: {
+          hostname?: string;
+          adminUsername?: string;
+          userUsername?: string;
+          fullName?: string;
+          decoyFiles?: { content?: string }[];
+        };
       }[];
     };
     const personaRecord = manifest.artifacts.find((artifact) => artifact.kind === "persona");
     expect(personaRecord?.name).toBe("realism persona");
     expect(personaRecord?.metadata?.hostname).toBe("DESKTOP-LAB42");
+    expect(personaRecord?.metadata?.adminUsername).toBeUndefined();
+    expect(personaRecord?.metadata?.userUsername).toBeUndefined();
+    expect(personaRecord?.metadata?.fullName).toBeUndefined();
     expect(personaRecord?.metadata?.decoyFiles?.some((file) => "content" in file)).toBe(false);
     expect(plan.realismPersona?.userUsername).toBe("devuser");
   });

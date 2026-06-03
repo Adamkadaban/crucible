@@ -889,7 +889,12 @@ async function writeRealismPersonaFile(filePath: string, persona: RealismPersona
   await chmod(filePath, 0o600);
 }
 
-function redactRealismPersonaForManifest(persona: RealismPersona): Record<string, unknown> {
+function redactRealismPersonaForManifest({
+  adminUsername: _adminUsername,
+  userUsername: _userUsername,
+  fullName: _fullName,
+  ...persona
+}: RealismPersona): Record<string, unknown> {
   return {
     ...persona,
     decoyFiles: persona.decoyFiles.map((file) => ({
