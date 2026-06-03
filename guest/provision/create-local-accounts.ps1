@@ -149,7 +149,7 @@ function Install-DecoyUserFiles {
     }
 
     $profileRoot = Join-Path "C:\Users" $Username
-    New-Item -ItemType Directory -Force -LiteralPath $profileRoot | Out-Null
+    [System.IO.Directory]::CreateDirectory($profileRoot) | Out-Null
     foreach ($file in @($persona.decoyFiles)) {
         $relativePath = [string]$file.relativePath
         if (
@@ -162,7 +162,7 @@ function Install-DecoyUserFiles {
         }
 
         $targetPath = Join-Path $profileRoot $relativePath
-        New-Item -ItemType Directory -Force -LiteralPath (Split-Path -Parent $targetPath) | Out-Null
+        [System.IO.Directory]::CreateDirectory((Split-Path -Parent $targetPath)) | Out-Null
         Set-Content -LiteralPath $targetPath -Value ([string]$file.content) -Encoding UTF8
         if ($file.lastWriteTimeUtc) {
             try {
@@ -180,7 +180,11 @@ function Install-CommonSoftwareMarkers {
     }
 
     $uninstallRoot = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
-    $programFiles = ${env:ProgramFiles}
+    $programFiles = [Environment]::GetFolderPath("ProgramFiles")
+    if ([string]::IsNullOrWhiteSpace($programFiles)) {
+        $programFiles = Join-Path $env:SystemDrive "Program Files"
+    }
+    [System.IO.Directory]::CreateDirectory($programFiles) | Out-Null
     foreach ($software in @($persona.softwareMarkers)) {
         if ($null -eq $software -or [string]::IsNullOrWhiteSpace([string]$software.name)) {
             continue
@@ -190,14 +194,14 @@ function Install-CommonSoftwareMarkers {
             continue
         }
         $installLocation = Join-Path $programFiles $safeName
-        New-Item -ItemType Directory -Force -LiteralPath $installLocation | Out-Null
+        [System.IO.Directory]::CreateDirectory($installLocation) | Out-Null
         Set-Content -LiteralPath (Join-Path $installLocation "README-crucible-realism.txt") -Encoding UTF8 -Value @(
             "Crucible realism marker for $($software.name).",
             "This is an inert install-presence marker, not a bundled third-party application."
         )
 
         $keyPath = Join-Path $uninstallRoot "CrucibleRealism-$safeName"
-        New-Item -LiteralPath $keyPath -Force | Out-Null
+        New-Item -Path $keyPath -Force | Out-Null
         New-ItemProperty -LiteralPath $keyPath -Name "DisplayName" -PropertyType String -Value ([string]$software.name) -Force | Out-Null
         New-ItemProperty -LiteralPath $keyPath -Name "DisplayVersion" -PropertyType String -Value ([string]$software.version) -Force | Out-Null
         New-ItemProperty -LiteralPath $keyPath -Name "Publisher" -PropertyType String -Value ([string]$software.publisher) -Force | Out-Null

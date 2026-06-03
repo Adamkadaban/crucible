@@ -1538,6 +1538,10 @@ function buildProvisioningStageContracts(
           "192.0.2.1",
           "-ControlPort",
           String(options.controlPort),
+          ...(options.standardUsername === undefined
+            ? []
+            : ["-StandardUsername", options.standardUsername]),
+          ...(options.adminUsername === undefined ? [] : ["-AdminUsername", options.adminUsername]),
         ],
         timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
         elevated: true,
@@ -1604,7 +1608,16 @@ function buildProvisioningStageContracts(
         "guest-agent-powershell",
         "guest/provision/test-health.ps1",
         {
-          scriptArguments: ["-AllowMissingWinDbg", "-AllowDefenderEnabled"],
+          scriptArguments: [
+            "-AllowMissingWinDbg",
+            "-AllowDefenderEnabled",
+            ...(options.standardUsername === undefined
+              ? []
+              : ["-StandardUsername", options.standardUsername]),
+            ...(options.adminUsername === undefined
+              ? []
+              : ["-AdminUsername", options.adminUsername]),
+          ],
         },
       ),
       producesSecrets: [],

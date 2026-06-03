@@ -11,6 +11,7 @@ export default tseslint.config(
       "scripts/**",
       "eslint.config.js",
       "vitest.e2e.config.ts",
+      "vitest.live-e2e.config.ts",
       "vitest.config.ts",
     ],
   },

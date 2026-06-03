@@ -260,7 +260,9 @@ describe("Crucible MCP protocol E2E", () => {
           arguments: { sourcePath: "C:\\payload.txt" },
         })) as ToolCallText,
       );
-      const download = parsePayload<{ ok: boolean; result: { sizeBytes: number } }>(
+      const download = parsePayload<
+        { ok: true; result: { sizeBytes: number } } | { ok: false; error: { message: string } }
+      >(
         (await client.callTool({
           name: "guest_download_file",
           arguments: { guestPath: "C:\\payload.txt", hostPath: hostDownload },
@@ -320,6 +322,8 @@ describe("Crucible MCP protocol E2E", () => {
       expect(Buffer.from(exec.result.stdoutBase64, "base64").toString()).toContain("service");
       expect(adminExec.ok).toBe(true);
       expect(read.result).toMatchObject({ inline: true, contents: "mcp-e2e\n" });
+      expect(download.ok, download.ok ? undefined : download.error.message).toBe(true);
+      if (!download.ok) throw new Error(download.error.message);
       expect(download.result.sizeBytes).toBe(8);
       expect(network.result.requestedMode).toBe("nat");
       expect(dump.result.outputGuestPath).toBe("C:\\proc.dmp");

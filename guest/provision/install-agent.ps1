@@ -16,7 +16,13 @@ param(
     [string]$HostOnlySourceAddress,
 
     [Parameter(Mandatory = $true)]
-    [int]$ControlPort
+    [int]$ControlPort,
+
+    [Parameter()]
+    [string]$StandardUsername = "CrucibleUser",
+
+    [Parameter()]
+    [string]$AdminUsername = "CrucibleAdmin"
 )
 
 $ErrorActionPreference = "Stop"
@@ -161,8 +167,8 @@ New-Item -ItemType Directory -Force -Path $execDirectory | Out-Null
 $standardExecDirectory = Join-Path $execDirectory "standard"
 $adminExecDirectory = Join-Path $execDirectory "admin"
 New-Item -ItemType Directory -Force -Path $standardExecDirectory, $adminExecDirectory | Out-Null
-Grant-IdentityModifyAcl -Path $standardExecDirectory -Identity "CrucibleUser"
-Grant-IdentityModifyAcl -Path $adminExecDirectory -Identity "CrucibleAdmin"
+Grant-IdentityModifyAcl -Path $standardExecDirectory -Identity $StandardUsername
+Grant-IdentityModifyAcl -Path $adminExecDirectory -Identity $AdminUsername
 
 # Stop a previous-run agent service / process FIRST so it releases its
 # handle to $AgentPath before Copy-Item tries to overwrite. Without
@@ -247,11 +253,11 @@ Copy-Item -LiteralPath $payloadServerKey -Destination $serverPrivateKey -Force
 $credentialsPath = "C:\ProgramData\Crucible\Agent\credentials.json"
 $credentials = [ordered]@{
     standard = [ordered]@{
-        username = "CrucibleUser"
+        username = $StandardUsername
         password = (Require-SecretEnvironment -Name "CRUCIBLE_STANDARD_PASSWORD")
     }
     admin = [ordered]@{
-        username = "CrucibleAdmin"
+        username = $AdminUsername
         password = (Require-SecretEnvironment -Name "CRUCIBLE_ADMIN_PASSWORD")
     }
 }

@@ -102,4 +102,25 @@ describe("WinDbg provisioning scripts", () => {
     expect(script).not.toContain("Ghidra");
     expect(script).not.toContain("cutter.exe");
   });
+
+  it("does not require local accounts during the QGA readiness probe", () => {
+    const script = readProvisionScript("probe-qga.ps1");
+
+    expect(script).toContain("qemuAgentStatus");
+    expect(script).toContain('$psMajor -ge 5 -and $qemuAgentStatus -eq "Running"');
+    expect(script).not.toContain("CrucibleAdmin");
+    expect(script).not.toContain("CrucibleUser");
+    expect(script).not.toContain("Get-LocalUser");
+  });
+
+  it("uses configured account names in the final health check", () => {
+    const script = readProvisionScript("test-health.ps1");
+
+    expect(script).toContain('[string]$StandardUsername = "CrucibleUser"');
+    expect(script).toContain('[string]$AdminUsername = "CrucibleAdmin"');
+    expect(script).toContain("Test-AccountExists -Name $AdminUsername");
+    expect(script).toContain("Test-AccountExists -Name $StandardUsername");
+    expect(script).not.toContain('Test-AccountExists -Name "CrucibleAdmin"');
+    expect(script).not.toContain('Test-AccountExists -Name "CrucibleUser"');
+  });
 });

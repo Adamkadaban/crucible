@@ -58,6 +58,7 @@
     "coverage": "vitest run --coverage",
     "crucible": "tsx --conditions=development packages/cli/src/index.ts",
     "e2e": "vitest run --config vitest.e2e.config.ts",
+    "e2e:live": "CRUCIBLE_E2E_LIVE=1 vitest run --config vitest.live-e2e.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:version": "node scripts/generate-version.mjs",

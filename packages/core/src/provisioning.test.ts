@@ -289,6 +289,14 @@ describe("provisioning contracts", () => {
     expect(localAccounts?.script?.arguments).toEqual(
       expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
     );
+    const guestAgent = plan.stages.find((stage) => stage.id === "guest-agent-installed");
+    expect(guestAgent?.script?.arguments).toEqual(
+      expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
+    );
+    const health = plan.stages.find((stage) => stage.id === "health-checked");
+    expect(health?.script?.arguments).toEqual(
+      expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
+    );
   });
 
   it("defines host-only secret references for Windows credentials and mTLS material", () => {
@@ -1130,6 +1138,8 @@ describe("provisioning contracts", () => {
     );
     expect(script).not.toContain("-PasswordNeverExpires $true");
     expect(script).not.toContain("-UserMayChangePassword $false");
+    expect(script).not.toContain("New-Item -ItemType Directory -Force -LiteralPath");
+    expect(script).not.toContain("New-Item -LiteralPath");
   });
 
   it("getExampleConfigJson returns valid JSON", () => {
@@ -1167,7 +1177,13 @@ describe("provisioning contracts", () => {
     expect(script).toContain("[System.Net.IPAddress]::IPv6Any");
     expect(script).toContain("-RemoteAddress $HostOnlySourceAddress");
     expect(script).toContain("opensshBootstrapOnly = $true");
+    expect(script).toContain('[string]$StandardUsername = "CrucibleUser"');
+    expect(script).toContain('[string]$AdminUsername = "CrucibleAdmin"');
+    expect(script).toContain("-Identity $StandardUsername");
+    expect(script).toContain("-Identity $AdminUsername");
     expect(script).not.toContain("-RemoteAddress Any");
+    expect(script).not.toContain('-Identity "CrucibleUser"');
+    expect(script).not.toContain('-Identity "CrucibleAdmin"');
   });
 });
 

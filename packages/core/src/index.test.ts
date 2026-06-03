@@ -678,6 +678,17 @@ describe("core bootstrap exports", () => {
     ]);
   });
 
+  it("adds absolute pointer input for GUI-capable QEMU displays", () => {
+    const plan = buildQemuCommandPlan({
+      config: parseCrucibleConfig({
+        vm: { name: "gui-test", display: { mode: "vnc", vncSocketPath: "artifacts/vnc.sock" } },
+      }),
+    });
+
+    expect(plan.args).toContain("-usb");
+    expect(plan.args).toContain("usb-tablet");
+  });
+
   it("derives the default qcow2 path from configured artifact and VM names", () => {
     const config = parseCrucibleConfig({
       vm: { name: "analysis-one" },
@@ -717,6 +728,7 @@ describe("core bootstrap exports", () => {
     const plan = buildQemuCommandPlan({ config, diskPath: "/var/lib/crucible/custom.qcow2" });
 
     expect(plan.args).toContain("custom lab");
+    expect(plan.args).not.toContain("usb-tablet");
     expect(plan.args).toContain("virtio-blk-pci,drive=crucible-disk0,bootindex=10");
     expect(plan.args).not.toContain("virtio-scsi-pci,id=scsi0");
     expect(plan.args).not.toContain("virtio-balloon-pci");

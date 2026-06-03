@@ -214,7 +214,7 @@ export class VmLifecycleManager {
       return { executable: this.#plan.executable, args: this.#plan.args };
     }
     if (recorded !== undefined && !looksLikeBareDefaultArgs(recorded.args)) {
-      return recorded;
+      return mergeCurrentRuntimeQemuArgs(recorded, this.#plan.args);
     }
     const bootDirectory = path.join(this.#config.artifacts.directory, "boot");
     const recovered = buildQemuCommandPlan({
@@ -235,7 +235,9 @@ export class VmLifecycleManager {
     ) {
       return { executable: recovered.executable, args: recovered.args };
     }
-    return recorded ?? { executable: this.#plan.executable, args: this.#plan.args };
+    return recorded !== undefined
+      ? mergeCurrentRuntimeQemuArgs(recorded, this.#plan.args)
+      : { executable: this.#plan.executable, args: this.#plan.args };
   }
 
   async stop(): Promise<VmStopResult> {
@@ -616,6 +618,61 @@ async function removeIfExists(filePath: string): Promise<boolean> {
     }
     throw error;
   }
+}
+
+function mergeCurrentRuntimeQemuArgs(
+  recorded: VmLifecycleStateManifest["qemu"],
+  currentArgs: readonly string[],
+): VmLifecycleStateManifest["qemu"] {
+  let args = refreshRecordedNetworkArgs(recorded.args, currentArgs);
+
+  if (currentArgs.includes("usb-tablet") && !args.includes("usb-tablet")) {
+    args = [...args, ...(args.includes("-usb") ? [] : ["-usb"]), "-device", "usb-tablet"];
+  }
+
+  return args === recorded.args ? recorded : { executable: recorded.executable, args };
+}
+
+function refreshRecordedNetworkArgs(
+  recordedArgs: readonly string[],
+  currentArgs: readonly string[],
+): readonly string[] {
+  const currentNetdev = qemuOptionValues(currentArgs, "-netdev").find((value) =>
+    value.includes("id=crucible-"),
+  );
+  if (currentNetdev === undefined) return recordedArgs;
+
+  const id = qemuSuboption(currentNetdev, "id");
+  if (id === undefined) return recordedArgs;
+
+  const args = [...recordedArgs];
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if (args[index] !== "-netdev") continue;
+    const value = args[index + 1];
+    if (value === undefined) continue;
+    if (qemuSuboption(value, "id") === id && value !== currentNetdev) {
+      args[index + 1] = currentNetdev;
+      return args;
+    }
+  }
+
+  return recordedArgs;
+}
+
+function qemuOptionValues(args: readonly string[], option: string): readonly string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length - 1; index += 1) {
+    const value = args[index + 1];
+    if (args[index] === option && value !== undefined) values.push(value);
+  }
+  return values;
+}
+
+function qemuSuboption(value: string, key: string): string | undefined {
+  return value
+    .split(",")
+    .find((part) => part.startsWith(`${key}=`))
+    ?.slice(key.length + 1);
 }
 
 function deriveRuntimeStatus(

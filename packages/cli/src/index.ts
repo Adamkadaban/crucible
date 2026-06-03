@@ -3443,7 +3443,7 @@ function buildEnvGuestClientFactory():
   );
 }
 
-function buildDefaultGuestClientFactory(
+export function buildDefaultGuestClientFactory(
   config: CrucibleConfig,
 ): (() => Promise<CliGuestHealthClient>) | undefined {
   const envFactory = buildEnvGuestClientFactory();
