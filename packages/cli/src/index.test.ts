@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -1972,34 +1972,26 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VM view dry run:");
+    expect(result.stdout).toContain("VNC socket:");
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
-    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(result.stdout).toContain("socat 'TCP-LISTEN:5901,bind=127.0.0.1");
     expect(result.stdout).toContain("remote-viewer vnc://127.0.0.1:5901");
   });
 
-  it("enables vm view over QMP and launches the viewer", async () => {
-    const qmpCommands: string[] = [];
+  it("bridges vm view over loopback and launches the viewer", async () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view", "--viewer", "vncviewer"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: (command: string, args?: Readonly<Record<string, unknown>>) => {
-          qmpCommands.push(`${command}:${JSON.stringify(args)}`);
-          return Promise.resolve({ id: "test", returnValue: {}, events: [] });
-        },
-        close: () => undefined,
-      }),
       processRunner: {
         run(command) {
           processCommands.push(`${command.executable} ${command.args.join(" ")}`);
           return Promise.resolve({
             command,
-            exitCode: 0,
+            exitCode: command.executable === "socat" ? 1 : 0,
             stdout: "",
             stderr: "",
             durationMs: 1,
-            timedOut: false,
+            timedOut: command.executable === "socat",
             signal: null,
           });
         },
@@ -2007,10 +1999,10 @@ describe("crucible CLI bootstrap", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(qmpCommands).toEqual([
-      'human-monitor-command:{"command-line":"change vnc 127.0.0.1:1"}',
+    expect(processCommands).toEqual([
+      "socat TCP-LISTEN:5901,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:artifacts/vnc.sock",
+      "vncviewer 127.0.0.1:1",
     ]);
-    expect(processCommands).toEqual(["vncviewer 127.0.0.1:1"]);
     expect(result.stdout).toContain("viewer: launched");
   });
 
@@ -2029,53 +2021,80 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reports missing vm view viewer executables", async () => {
-    const emptyPath = await createTempDir("crucible-empty-path-");
-    vi.stubEnv("PATH", emptyPath);
     const result = await runCrucibleCli(["vm", "view"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
-        close: () => undefined,
-      }),
+      processRunner: {
+        run(command) {
+          if (command.executable === "socat") {
+            return Promise.resolve({
+              command,
+              exitCode: 1,
+              stdout: "",
+              stderr: "",
+              durationMs: 1,
+              timedOut: true,
+              signal: null,
+            });
+          }
+          return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+        },
+      },
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain("spawn remote-viewer ENOENT");
   });
 
-  it("reports vm view viewer processes that exit immediately", async () => {
-    const binDir = await createTempDir("crucible-viewer-bin-");
-    const viewerPath = path.join(binDir, "remote-viewer");
-    await writeFile(viewerPath, "#!/bin/sh\necho viewer failed >&2\nexit 7\n", "utf8");
-    await chmod(viewerPath, 0o755);
-    vi.stubEnv("PATH", binDir);
-
+  it("reports vm view viewer command failures", async () => {
     const result = await runCrucibleCli(["vm", "view"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
-        close: () => undefined,
-      }),
+      processRunner: {
+        run(command) {
+          if (command.executable === "socat") {
+            return Promise.resolve({
+              command,
+              exitCode: 1,
+              stdout: "",
+              stderr: "",
+              durationMs: 1,
+              timedOut: true,
+              signal: null,
+            });
+          }
+          return Promise.resolve({
+            command,
+            exitCode: 7,
+            stdout: "",
+            stderr: "viewer failed",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
     });
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("viewer command: remote-viewer vnc://127.0.0.1:5901");
-    expect(result.stderr).toContain("viewer exited before it connected (exit code 7)");
     expect(result.stderr).toContain("viewer failed");
   });
 
   it("reports vm view injected viewer runner failures", async () => {
     const result = await runCrucibleCli(["vm", "view"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
-        close: () => undefined,
-      }),
       processRunner: {
-        run() {
+        run(command) {
+          if (command.executable === "socat") {
+            return Promise.resolve({
+              command,
+              exitCode: 1,
+              stdout: "",
+              stderr: "",
+              durationMs: 1,
+              timedOut: true,
+              signal: null,
+            });
+          }
           return Promise.reject(new Error("spawn remote-viewer ENOENT"));
         },
       },
@@ -2100,26 +2119,21 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
-    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(result.stdout).toContain("socat 'TCP-LISTEN:5901,bind=127.0.0.1");
   });
 
-  it("reports vm view QMP failures without launching viewer", async () => {
+  it("reports vm view bridge failures without launching viewer", async () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.reject(new Error("change vnc unsupported")),
-        close: () => undefined,
-      }),
       processRunner: {
         run(command) {
           processCommands.push(command.executable);
           return Promise.resolve({
             command,
-            exitCode: 0,
+            exitCode: 1,
             stdout: "",
-            stderr: "",
+            stderr: "socat failed",
             durationMs: 1,
             timedOut: false,
             signal: null,
@@ -2129,9 +2143,9 @@ describe("crucible CLI bootstrap", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Unable to enable a live VNC view");
-    expect(result.stderr).toContain("change vnc unsupported");
-    expect(processCommands).toEqual([]);
+    expect(result.stderr).toContain("Unable to expose the VM VNC socket");
+    expect(result.stderr).toContain("socat failed");
+    expect(processCommands).toEqual(["socat"]);
   });
 
   it("rejects vm view when the VM was started without VNC display support", async () => {

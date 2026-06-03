@@ -6,6 +6,7 @@ import { copyFile, mkdir, readFile, rename, rm, stat as fsStat, writeFile } from
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import net from "node:net";
 
 import {
   buildNetworkPlan,
@@ -534,22 +535,27 @@ async function runVmViewCommand(
     return { exitCode: 2, stdout: "", stderr: parsed.message };
   }
 
-  const endpoint = `${parsed.args.host}:${parsed.args.display}`;
+  const config = getRuntimeConfig(runtime);
   const port = 5900 + parsed.args.display;
+  const bridgeCommand = buildVmViewBridgeCommand(
+    parsed.args,
+    port,
+    config.vm.display.vncSocketPath,
+  );
   const viewerCommand = buildVmViewCommand(parsed.args, port);
   const lines = [
     "VM view:",
+    `VNC socket: ${config.vm.display.vncSocketPath}`,
     `VNC endpoint: ${parsed.args.host}:${port}`,
-    `QMP command: change vnc ${endpoint}`,
+    `bridge command: ${formatCommand(bridgeCommand)}`,
     `viewer command: ${formatCommand(viewerCommand)}`,
-    "Safety: binds display to loopback only; does not restart or reconfigure the VM beyond the live VNC endpoint.",
+    "Safety: binds the VNC bridge to loopback only; does not restart or reconfigure the VM.",
   ];
 
   if (parsed.args.dryRun) {
     return { exitCode: 0, stdout: ["VM view dry run:", ...lines.slice(1)].join("\n"), stderr: "" };
   }
 
-  const config = getRuntimeConfig(runtime);
   if (config.vm.display.mode !== "vnc") {
     return {
       exitCode: 1,
@@ -560,28 +566,23 @@ async function runVmViewCommand(
       ].join("\n"),
     };
   }
-  const qmp =
-    runtime.qmpClientFactory?.() ??
-    new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
-  try {
-    await qmp.connect();
-    await qmp.execute(
-      "human-monitor-command",
-      { "command-line": `change vnc ${endpoint}` },
-      { timeoutMs: config.qmp.timeoutMs },
-    );
-  } catch (error) {
+
+  const bridgeResult = await ensureVmViewBridge(
+    bridgeCommand,
+    parsed.args.host,
+    port,
+    runtime.processRunner,
+  );
+  if (!bridgeResult.ok) {
     return {
       exitCode: 1,
-      stdout: "",
+      stdout: lines.join("\n"),
       stderr: [
-        "Unable to enable a live VNC view for the running VM.",
-        error instanceof Error ? error.message : String(error),
-        "Try `crucible vm view --dry-run` to inspect the planned endpoint, or restart later with display support once available.",
+        "Unable to expose the VM VNC socket on a loopback TCP bridge.",
+        bridgeResult.error,
+        "Try `crucible vm view --dry-run` to inspect the planned bridge command.",
       ].join("\n"),
     };
-  } finally {
-    qmp.close();
   }
 
   const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
@@ -594,6 +595,103 @@ async function runVmViewCommand(
   }
 
   return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
+}
+
+function buildVmViewBridgeCommand(
+  args: VmViewArgs,
+  port: number,
+  vncSocketPath: string,
+): readonly string[] {
+  return [
+    "socat",
+    `TCP-LISTEN:${port},bind=${args.host},reuseaddr,fork`,
+    `UNIX-CONNECT:${vncSocketPath}`,
+  ];
+}
+
+async function ensureVmViewBridge(
+  bridgeCommand: readonly string[],
+  host: string,
+  port: number,
+  runner: ProcessRunner | undefined,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
+  if (await isTcpPortOpen(host, port)) return { ok: true };
+
+  const executable = bridgeCommand[0] ?? "socat";
+  const args = bridgeCommand.slice(1);
+  if (runner !== undefined) {
+    let result: ProcessResult;
+    try {
+      result = await runner.run({ executable, args, timeoutMs: 1_000, maxOutputBytes: 64 * 1024 });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    if (result.exitCode !== 0 && !result.timedOut) {
+      return { ok: false, error: result.stderr || "VNC bridge command failed" };
+    }
+    return { ok: true };
+  }
+
+  try {
+    const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
+    });
+    const started = await new Promise<
+      { readonly ok: true } | { readonly ok: false; readonly error: string }
+    >((resolve) => {
+      let resolved = false;
+      const finish = (
+        result: { readonly ok: true } | { readonly ok: false; readonly error: string },
+      ) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish({ ok: true }), 250);
+      child.once("error", (error) => finish({ ok: false, error: error.message }));
+      child.once("close", (code, signal) =>
+        finish({
+          ok: false,
+          error: formatViewerEarlyExit(code, signal, "", stderr),
+        }),
+      );
+    });
+    if (!started.ok) return started;
+
+    child.unref();
+    unrefChildStream(child.stderr);
+    return (await waitForTcpPort(host, port, 1_000))
+      ? { ok: true }
+      : { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function isTcpPortOpen(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    const finish = (open: boolean) => {
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(200);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function waitForTcpPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await isTcpPortOpen(host, port)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  return false;
 }
 
 async function launchVmViewer(

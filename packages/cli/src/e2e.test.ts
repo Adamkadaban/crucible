@@ -205,7 +205,7 @@ describe("Crucible CLI E2E smoke", () => {
     expect(provision.stdout).toContain("Provisioning status: complete");
     expect(status.stdout).toContain("status: running");
     expect(logs.stdout).toContain("e2e stdout");
-    expect(view.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(view.stdout).toContain("bridge command: socat");
     expect(network.stdout).toContain("Network status:");
     expect(snapshots.stdout).toContain("clean-base");
     expect(restore.stdout).toContain("Snapshot restored: clean-base");
