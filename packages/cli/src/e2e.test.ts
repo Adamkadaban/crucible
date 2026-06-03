@@ -210,7 +210,7 @@ describe("Crucible CLI E2E smoke", () => {
     expect(snapshots.stdout).toContain("clean-base");
     expect(restore.stdout).toContain("Snapshot restored: clean-base");
     expect(guestExec.stdout).toContain("nt authority\\system");
-    expect(update.stdout).toContain("current version: 1.1.0");
+    expect(update.stdout).toContain(`current version: ${CRUCIBLE_VERSION}`);
   });
 
   it("covers every registered CLI command with safe arguments", async () => {
