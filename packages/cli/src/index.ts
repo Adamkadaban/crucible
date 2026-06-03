@@ -671,7 +671,9 @@ async function readWindowsAccountSecret(
     return { username: parsed.username, password: parsed.password };
   } catch (error) {
     if (isMissingPathError(error)) return undefined;
-    throw error;
+    throw new Error(
+      `Unable to read VM credential secret ${ref.path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

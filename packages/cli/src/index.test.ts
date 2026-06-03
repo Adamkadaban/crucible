@@ -37,6 +37,20 @@ async function createTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
+async function listenOnLoopbackDisplay(): Promise<{
+  readonly server: Server;
+  readonly display: number;
+}> {
+  for (let display = 99; display >= 1; display -= 1) {
+    try {
+      return { server: await listenOnLoopback(5900 + display), display };
+    } catch (error) {
+      if (!isAddressInUseError(error)) throw error;
+    }
+  }
+  throw new Error("No free loopback VNC display port found");
+}
+
 async function listenOnLoopback(port: number): Promise<Server> {
   const server = createServer((socket) => socket.end());
   await new Promise<void>((resolve, reject) => {
@@ -47,6 +61,10 @@ async function listenOnLoopback(port: number): Promise<Server> {
     });
   });
   return server;
+}
+
+function isAddressInUseError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -2039,6 +2057,28 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("crucible provision");
   });
 
+  it("reports malformed VM credential file paths", async () => {
+    const root = await createTempDir("crucible-cli-");
+    const secretsDirectory = path.join(root, "secrets");
+    const standardPath = path.join(secretsDirectory, "test-win", "windows", "standard-user.json");
+    await mkdir(path.dirname(standardPath), { recursive: true });
+    await writeFile(standardPath, "{invalid", "utf8");
+    await writeFile(
+      path.join(secretsDirectory, "test-win", "windows", "admin-user.json"),
+      JSON.stringify({ username: "CrucibleAdmin", password: "admin-secret" }),
+      "utf8",
+    );
+
+    await expect(
+      runCrucibleCli(["vm", "credentials"], {
+        config: parseCrucibleConfig({
+          vm: { name: "test-win" },
+          artifacts: { secretsDirectory },
+        }),
+      }),
+    ).rejects.toThrow(`Unable to read VM credential secret ${standardPath}`);
+  });
+
   it("prints vm view dry-run without touching QMP", async () => {
     const result = await runCrucibleCli(["vm", "view", "--dry-run"], defaultRuntime);
 
@@ -2051,11 +2091,12 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("bridges vm view over loopback and launches the viewer", async () => {
-    const server = await listenOnLoopback(5998);
+    const { server, display } = await listenOnLoopbackDisplay();
+    const port = 5900 + display;
     const processCommands: string[] = [];
     try {
       const result = await runCrucibleCli(
-        ["vm", "view", "--viewer", "vncviewer", "--display", "98"],
+        ["vm", "view", "--viewer", "vncviewer", "--display", String(display)],
         {
           config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
           processRunner: {
@@ -2077,8 +2118,8 @@ describe("crucible CLI bootstrap", () => {
 
       expect(result.exitCode).toBe(0);
       expect(processCommands).toEqual([
-        "socat TCP-LISTEN:5998,bind=127.0.0.1,reuseaddr UNIX-CONNECT:artifacts/vnc.sock",
-        "vncviewer 127.0.0.1:98",
+        `socat TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr UNIX-CONNECT:artifacts/vnc.sock`,
+        `vncviewer 127.0.0.1:${display}`,
       ]);
       expect(result.stdout).toContain("viewer: launched");
     } finally {
@@ -2101,9 +2142,9 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reports missing vm view viewer executables", async () => {
-    const server = await listenOnLoopback(5998);
+    const { server, display } = await listenOnLoopbackDisplay();
     try {
-      const result = await runCrucibleCli(["vm", "view", "--display", "98"], {
+      const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
         processRunner: {
           run(command) {
@@ -2131,9 +2172,10 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reports vm view viewer command failures", async () => {
-    const server = await listenOnLoopback(5998);
+    const { server, display } = await listenOnLoopbackDisplay();
+    const port = 5900 + display;
     try {
-      const result = await runCrucibleCli(["vm", "view", "--display", "98"], {
+      const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
         processRunner: {
           run(command) {
@@ -2162,7 +2204,7 @@ describe("crucible CLI bootstrap", () => {
       });
 
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toContain("viewer command: remote-viewer vnc://127.0.0.1:5998");
+      expect(result.stdout).toContain(`viewer command: remote-viewer vnc://127.0.0.1:${port}`);
       expect(result.stderr).toContain("viewer failed");
     } finally {
       await closeServer(server);
@@ -2170,9 +2212,9 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reports vm view injected viewer runner failures", async () => {
-    const server = await listenOnLoopback(5998);
+    const { server, display } = await listenOnLoopbackDisplay();
     try {
-      const result = await runCrucibleCli(["vm", "view", "--display", "98"], {
+      const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
         processRunner: {
           run(command) {

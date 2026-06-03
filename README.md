@@ -179,7 +179,8 @@ The older colon spellings such as `crucible vm:status` still work for compatibil
 the space-separated command style.
 
 `crucible vm credentials` prints the generated Windows standard and admin account credentials from
-the host-only secret files created during provisioning.
+the host-only secret files created during provisioning. Treat this output as sensitive: do not paste
+it into public issues, CI logs, chat transcripts, or committed files.
 
 ## Safety Notes
 
