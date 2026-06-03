@@ -118,14 +118,15 @@ crucible setup codex --print
 crucible setup copilot --print
 ```
 
-Example client config:
+Example opencode client config:
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "crucible": {
-      "command": "crucible",
-      "args": ["mcp", "--stdio"]
+      "enabled": true,
+      "type": "local",
+      "command": ["crucible", "mcp", "--stdio"]
     }
   }
 }
@@ -154,6 +155,8 @@ close button while verifying the guest process exits.
 
 If your MCP client does not inherit the shell environment, point it at `scripts/opencode-mcp.sh` or
 an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucible mcp --stdio`.
+Other clients use different MCP config schemas; run the matching `crucible setup ... --print` helper
+for Claude Code, Codex, or Copilot before editing their config files manually.
 
 ## Common Commands
 
@@ -163,6 +166,7 @@ crucible --help
 pnpm crucible media plan --manual
 pnpm crucible vm start --dry-run
 pnpm crucible vm status
+pnpm crucible vm credentials
 pnpm crucible vm view --dry-run
 pnpm crucible vm logs
 pnpm crucible vm stop
@@ -173,6 +177,10 @@ crucible update --dry-run
 
 The older colon spellings such as `crucible vm:status` still work for compatibility, but docs prefer
 the space-separated command style.
+
+`crucible vm credentials` prints the generated Windows standard and admin account credentials from
+the host-only secret files created during provisioning. Treat this output as sensitive: do not paste
+it into public issues, CI logs, chat transcripts, or committed files.
 
 ## Safety Notes
 

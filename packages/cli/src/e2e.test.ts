@@ -205,12 +205,12 @@ describe("Crucible CLI E2E smoke", () => {
     expect(provision.stdout).toContain("Provisioning status: complete");
     expect(status.stdout).toContain("status: running");
     expect(logs.stdout).toContain("e2e stdout");
-    expect(view.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(view.stdout).toContain("bridge command: socat");
     expect(network.stdout).toContain("Network status:");
     expect(snapshots.stdout).toContain("clean-base");
     expect(restore.stdout).toContain("Snapshot restored: clean-base");
     expect(guestExec.stdout).toContain("nt authority\\system");
-    expect(update.stdout).toContain("current version: 1.1.0");
+    expect(update.stdout).toContain(`current version: ${CRUCIBLE_VERSION}`);
   });
 
   it("covers every registered CLI command with safe arguments", async () => {
@@ -284,6 +284,7 @@ describe("Crucible CLI E2E smoke", () => {
         args: ["setup", "host", "--print"],
         expectStdout: /Host prerequisites|Install command:/,
       },
+      version: { args: ["version"], expectStdout: /\d+\.\d+\.\d+/ },
       update: { args: ["update", "--dry-run"], expectStdout: /Crucible update plan:/ },
       provision: {
         args: ["provision"],
@@ -301,9 +302,14 @@ describe("Crucible CLI E2E smoke", () => {
       "vm:start": { args: ["vm", "start", "--dry-run"], expectStdout: /VM start dry run:/ },
       "vm:stop": { args: ["vm", "stop"], expectStdout: /VM stop requested/ },
       "vm:status": { args: ["vm", "status"], expectStdout: /status: running/ },
+      "vm:credentials": {
+        args: ["vm", "credentials"],
+        expectExitCode: 1,
+        expectStdout: undefined,
+      },
       "vm:view": {
         args: ["vm", "view", "--dry-run"],
-        expectStdout: /remote-viewer|vncviewer|change vnc/,
+        expectStdout: /bridge command: socat/,
       },
       "vm:logs": { args: ["vm", "logs"], expectStdout: /surface stdout/ },
       "snapshot:create": {

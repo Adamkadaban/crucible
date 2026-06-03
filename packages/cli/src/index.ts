@@ -1,11 +1,21 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { copyFile, mkdir, readFile, rename, rm, stat as fsStat, writeFile } from "node:fs/promises";
+import { closeSync, openSync, realpathSync } from "node:fs";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat as fsStat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir, homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { ChildProcess } from "node:child_process";
 
 import {
   buildNetworkPlan,
@@ -145,10 +155,20 @@ type CliRuntime = {
   readonly snapshotManager?: CliSnapshotManager;
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
+  readonly vmViewBridgeStarter?: VmViewBridgeStarter;
   readonly qmpClientFactory?: () => CliQmpClient;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
 };
+
+type VmViewBridgeStarter = (
+  bridgeCommand: readonly string[],
+  host: string,
+  port: number,
+) => Promise<
+  | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
+  | { readonly ok: false; readonly error: string }
+>;
 
 type CliQmpClient = {
   readonly connect: () => Promise<unknown>;
@@ -356,6 +376,8 @@ export async function runCrucibleCli(
       return doctorCommand(rest);
     case "setup":
       return setupCommand(rest, runtime);
+    case "version":
+      return versionCommand(rest);
     case "update":
       return updateCommand(rest, runtime);
     case "net:plan":
@@ -374,6 +396,8 @@ export async function runCrucibleCli(
       return runVmStopCommand(rest, runtime);
     case "vm:status":
       return runVmStatusCommand(rest, runtime);
+    case "vm:credentials":
+      return runVmCredentialsCommand(rest, runtime);
     case "vm:view":
       return runVmViewCommand(rest, runtime);
     case "vm:logs":
@@ -532,48 +556,58 @@ async function runVmViewCommand(
     return { exitCode: 2, stdout: "", stderr: parsed.message };
   }
 
-  const endpoint = `${parsed.args.host}:${parsed.args.display}`;
+  const config = getRuntimeConfig(runtime);
   const port = 5900 + parsed.args.display;
+  const bridgeCommand = buildVmViewBridgeCommand(
+    parsed.args,
+    port,
+    config.vm.display.vncSocketPath,
+  );
   const viewerCommand = buildVmViewCommand(parsed.args, port);
   const lines = [
     "VM view:",
+    `VNC socket: ${config.vm.display.vncSocketPath}`,
     `VNC endpoint: ${parsed.args.host}:${port}`,
-    `QMP command: change vnc ${endpoint}`,
+    `bridge command: ${formatCommand(bridgeCommand)}`,
     `viewer command: ${formatCommand(viewerCommand)}`,
-    "Safety: binds display to loopback only; does not restart or reconfigure the VM beyond the live VNC endpoint.",
+    "Safety: binds the VNC bridge to loopback only; does not restart or reconfigure the VM.",
   ];
 
   if (parsed.args.dryRun) {
     return { exitCode: 0, stdout: ["VM view dry run:", ...lines.slice(1)].join("\n"), stderr: "" };
   }
 
-  const config = getRuntimeConfig(runtime);
-  const qmp =
-    runtime.qmpClientFactory?.() ??
-    new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
-  try {
-    await qmp.connect();
-    await qmp.execute(
-      "human-monitor-command",
-      { "command-line": `change vnc ${endpoint}` },
-      { timeoutMs: config.qmp.timeoutMs },
-    );
-  } catch (error) {
+  if (config.vm.display.mode !== "vnc") {
     return {
       exitCode: 1,
-      stdout: "",
+      stdout: lines.join("\n"),
       stderr: [
-        "Unable to enable a live VNC view for the running VM.",
-        error instanceof Error ? error.message : String(error),
-        "Try `crucible vm view --dry-run` to inspect the planned endpoint, or restart later with display support once available.",
+        `VM view requires a VM started with vm.display.mode "vnc"; current config is "${config.vm.display.mode}".`,
+        'Stop the VM, set vm.display.mode to "vnc", then start it again before running `crucible vm view`.',
       ].join("\n"),
     };
-  } finally {
-    qmp.close();
+  }
+
+  const bridgeResult = await (runtime.vmViewBridgeStarter ?? startVmViewBridge)(
+    bridgeCommand,
+    parsed.args.host,
+    port,
+  );
+  if (!bridgeResult.ok) {
+    return {
+      exitCode: 1,
+      stdout: lines.join("\n"),
+      stderr: [
+        "Unable to expose the VM VNC socket on a loopback TCP bridge.",
+        bridgeResult.error,
+        "Try `crucible vm view --dry-run` to inspect the planned bridge command.",
+      ].join("\n"),
+    };
   }
 
   const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
   if (!launchResult.ok) {
+    bridgeResult.bridge.stop();
     return {
       exitCode: 1,
       stdout: lines.join("\n"),
@@ -582,6 +616,198 @@ async function runVmViewCommand(
   }
 
   return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
+}
+
+async function runVmCredentialsCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown vm:credentials option: ${args[0]}` };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const contract = buildProvisioningSecretStorageContract(
+    config.vm.name,
+    config.artifacts.secretsDirectory,
+  );
+  const [standard, admin] = await Promise.all([
+    readWindowsAccountSecret(contract, "standard"),
+    readWindowsAccountSecret(contract, "admin"),
+  ]);
+
+  if (standard === undefined || admin === undefined) {
+    const missing = [
+      standard === undefined ? "standard" : undefined,
+      admin === undefined ? "admin" : undefined,
+    ]
+      .filter((principal): principal is string => principal !== undefined)
+      .join(", ");
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        `VM credentials have not been generated yet (${missing} account missing).`,
+        "Run `crucible provision` first, then retry `crucible vm credentials`.",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    exitCode: 0,
+    stdout: [
+      "VM credentials:",
+      `secrets directory: ${contract.rootDirectory}`,
+      `standard username: ${standard.username}`,
+      `standard password: ${standard.password}`,
+      `admin username: ${admin.username}`,
+      `admin password: ${admin.password}`,
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
+async function readWindowsAccountSecret(
+  contract: ReturnType<typeof buildProvisioningSecretStorageContract>,
+  principal: "standard" | "admin",
+): Promise<{ readonly username: string; readonly password: string } | undefined> {
+  const ref = contract.secretRefs.find((secret) => secret.principal === principal);
+  if (ref === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(await readFile(ref.path, "utf8")) as {
+      readonly username?: unknown;
+      readonly password?: unknown;
+    };
+    if (typeof parsed.username !== "string" || typeof parsed.password !== "string") {
+      throw new Error(`Secret file lacks username or password: ${ref.path}`);
+    }
+    return { username: parsed.username, password: parsed.password };
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw new Error(
+      `Unable to read VM credential secret ${ref.path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function buildVmViewBridgeCommand(
+  args: VmViewArgs,
+  port: number,
+  vncSocketPath: string,
+): readonly string[] {
+  return [
+    "socat",
+    "-d",
+    "-d",
+    `TCP-LISTEN:${port},bind=${args.host},reuseaddr,listen-timeout=15`,
+    `UNIX-CONNECT:${vncSocketPath}`,
+  ];
+}
+
+async function startVmViewBridge(
+  bridgeCommand: readonly string[],
+  host: string,
+  port: number,
+): Promise<
+  | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
+  | { readonly ok: false; readonly error: string }
+> {
+  const executable = bridgeCommand[0] ?? "socat";
+  const args = bridgeCommand.slice(1);
+  let logDir: string | undefined;
+  let logFd: number | undefined;
+  try {
+    logDir = await mkdtemp(join(tmpdir(), "crucible-vnc-bridge-"));
+    const logPath = join(logDir, "socat.stderr.log");
+    logFd = openSync(logPath, "a");
+    const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", logFd] });
+    let stderr = "";
+    const readStderr = async () => {
+      stderr = (await readFile(logPath, "utf8").catch(() => stderr)).slice(-64 * 1024);
+      return stderr;
+    };
+    const started = await new Promise<
+      { readonly ok: true } | { readonly ok: false; readonly error: string }
+    >((resolve) => {
+      let resolved = false;
+      const poll = setInterval(() => {
+        void readStderr().then((output) => {
+          if (output.includes("listening on")) void finish({ ok: true });
+        });
+      }, 25);
+      const finish = async (
+        result: { readonly ok: true } | { readonly ok: false; readonly error: string },
+      ) => {
+        if (resolved) return;
+        resolved = true;
+        clearInterval(poll);
+        clearTimeout(timer);
+        closeDetachedChildFd(logFd);
+        logFd = undefined;
+        await rm(logDir!, { recursive: true, force: true }).catch(() => undefined);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        void readStderr().then(() =>
+          finish({ ok: false, error: `VNC bridge did not report listening on ${host}:${port}` }),
+        );
+      }, 1_000);
+      child.once("error", (error) => {
+        void finish({ ok: false, error: formatBridgeSpawnError(error) });
+      });
+      child.once("close", (code, signal) => {
+        void readStderr().then((output) =>
+          finish({
+            ok: false,
+            error: formatProcessEarlyExit(code, signal, "", output),
+          }),
+        );
+      });
+    });
+    if (!started.ok) {
+      stopDetachedChild(child);
+      return started;
+    }
+
+    child.unref();
+    return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
+  } catch (error) {
+    closeDetachedChildFd(logFd);
+    if (logDir !== undefined)
+      await rm(logDir, { recursive: true, force: true }).catch(() => undefined);
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return {
+        ok: false,
+        error:
+          "socat is required for `crucible vm view` but was not found in PATH. Install socat or run `crucible doctor` for host prerequisite guidance.",
+      };
+    }
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function closeDetachedChildFd(fd: number | undefined): void {
+  if (fd === undefined) return;
+  try {
+    closeSync(fd);
+  } catch {
+    // Best-effort cleanup for startup diagnostics file descriptors.
+  }
+}
+
+function formatBridgeSpawnError(error: Error): string {
+  if ("code" in error && error.code === "ENOENT") {
+    return "socat is required for `crucible vm view` but was not found in PATH. Install socat or run `crucible doctor` for host prerequisite guidance.";
+  }
+  return error.message;
+}
+
+function stopDetachedChild(child: ChildProcess): void {
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // Best-effort cleanup for a short-lived local bridge listener.
+  }
 }
 
 async function launchVmViewer(
@@ -613,14 +839,29 @@ async function launchVmViewer(
     const launched = await new Promise<
       { readonly ok: true } | { readonly ok: false; readonly error: string }
     >((resolve) => {
-      const timer = setTimeout(() => resolve({ ok: true }), 250);
+      let resolved = false;
+      let launchAccepted = false;
+      const finish = (
+        result: { readonly ok: true } | { readonly ok: false; readonly error: string },
+      ) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        launchAccepted = true;
+        finish({ ok: true });
+      }, 1_000);
       child.once("error", (error) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: error.message });
+        finish({ ok: false, error: error.message });
       });
-      child.once("spawn", () => {
-        clearTimeout(timer);
-        resolve({ ok: true });
+      child.once("close", (code, signal) => {
+        if (launchAccepted) return;
+        finish({
+          ok: false,
+          error: formatProcessEarlyExit(code, signal, "", ""),
+        });
       });
     });
     if (!launched.ok) {
@@ -631,6 +872,17 @@ async function launchVmViewer(
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function formatProcessEarlyExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stdout: string,
+  stderr: string,
+): string {
+  const detail = signal === null ? `exit code ${code ?? "unknown"}` : `signal ${signal}`;
+  const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+  return [`process exited before it was ready (${detail})`, output].filter(Boolean).join("\n");
 }
 
 async function runVmLogsCommand(
@@ -2171,12 +2423,40 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
     case "codex":
       return renderSetupInstruction(
         "codex",
-        'Codex MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` to your Codex config.',
+        [
+          "Codex stores MCP servers in `~/.codex/config.toml` or a trusted project `.codex/config.toml`.",
+          "CLI:",
+          "codex mcp add crucible -- crucible mcp --stdio",
+          "",
+          "TOML:",
+          '[mcp_servers.crucible]\ncommand = "crucible"\nargs = ["mcp", "--stdio"]\nenabled = true',
+        ].join("\n"),
       );
     case "copilot":
       return renderSetupInstruction(
         "copilot",
-        'Copilot CLI MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` if your Copilot CLI build supports MCP.',
+        [
+          "Copilot CLI stores MCP servers in `~/.copilot/mcp-config.json`.",
+          "In Copilot CLI, run `/mcp add`, choose Local/STDIO, and use command `crucible mcp --stdio`.",
+          "",
+          "JSON:",
+          JSON.stringify(
+            {
+              mcpServers: {
+                crucible: {
+                  type: "local",
+                  command: "crucible",
+                  args: ["mcp", "--stdio"],
+                  env: {},
+                },
+              },
+            },
+            null,
+            2,
+          ),
+          "",
+          "Copilot cloud agent/code review repository settings also use an `mcpServers` JSON object, but that configuration is managed on GitHub.com and should add only the tool names you intend to expose.",
+        ].join("\n"),
       );
   }
 }
@@ -2221,14 +2501,20 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     return { exitCode: 1, stdout: "", stderr: "npm did not report a latest Crucible version." };
   }
 
-  const install = await detectGlobalInstall(runner);
   const actions: string[] = [
     "Crucible update plan:",
     `current version: ${CRUCIBLE_VERSION}`,
     `latest npm version: ${latestVersion}`,
-    `detected install: ${formatInstallDetection(install)}`,
   ];
   const needsPackageUpdate = latestVersion !== CRUCIBLE_VERSION;
+
+  if (!needsPackageUpdate && !parsed.args.dryRun) {
+    actions.push("package update: already current");
+    return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  }
+
+  const install = await detectGlobalInstall(runner);
+  actions.push(`detected install: ${formatInstallDetection(install)}`);
 
   if (parsed.args.dryRun) {
     actions.push(
@@ -2255,35 +2541,31 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     }
   }
 
-  if (needsPackageUpdate) {
-    const command = buildPackageUpdateCommand(install);
-    let updateResult: ProcessResult;
-    actions.push(`package command: ${formatCommand(command)}`);
-    try {
-      updateResult = await runner.run({
-        executable: command[0] ?? "npm",
-        args: command.slice(1),
-        timeoutMs: 5 * 60 * 1000,
-        maxOutputBytes: 1024 * 1024,
-      });
-    } catch (error) {
-      return {
-        exitCode: 1,
-        stdout: actions.join("\n"),
-        stderr: error instanceof Error ? error.message : String(error),
-      };
-    }
-    if (updateResult.exitCode !== 0 || updateResult.timedOut) {
-      return {
-        exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
-        stdout: actions.join("\n"),
-        stderr: updateResult.stderr,
-      };
-    }
-    actions.push("package update: completed");
-  } else {
-    actions.push("package update: already current");
+  const command = buildPackageUpdateCommand(install);
+  let updateResult: ProcessResult;
+  actions.push(`package command: ${formatCommand(command)}`);
+  try {
+    updateResult = await runner.run({
+      executable: command[0] ?? "npm",
+      args: command.slice(1),
+      timeoutMs: 5 * 60 * 1000,
+      maxOutputBytes: 1024 * 1024,
+    });
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: actions.join("\n"),
+      stderr: error instanceof Error ? error.message : String(error),
+    };
   }
+  if (updateResult.exitCode !== 0 || updateResult.timedOut) {
+    return {
+      exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
+      stdout: actions.join("\n"),
+      stderr: updateResult.stderr,
+    };
+  }
+  actions.push("package update: completed");
 
   const mcpResults = await refreshMcpConfigs();
   actions.push("MCP config refresh:", ...mcpResults.lines);
@@ -2406,6 +2688,13 @@ function firstLine(value: string): string {
   return line ?? "no output";
 }
 
+function versionCommand(args: readonly string[]): CommandResult {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown version option: ${args[0]}` };
+  }
+  return { exitCode: 0, stdout: CRUCIBLE_VERSION, stderr: "" };
+}
+
 function setupFlags(args: SetupArgs): string[] {
   return [args.printOnly ? "--print" : undefined, args.yes ? "--yes" : undefined].filter(
     (value): value is string => value !== undefined,
@@ -2501,7 +2790,7 @@ function runHostCommand(command: string, args: readonly string[]): Promise<Comma
 }
 
 async function setupClaudeCommand(printOnly: boolean): Promise<CommandResult> {
-  const json = JSON.stringify(getMcpServerEntry(), null, 2);
+  const json = JSON.stringify(getClaudeMcpServerEntry(), null, 2);
   if (printOnly) {
     return {
       exitCode: 0,
@@ -2597,7 +2886,11 @@ async function setupJsonMcpCommand(options: {
 }
 
 function getMcpServerEntry(): JsonObject {
-  return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"] };
+  return { enabled: true, type: "local", command: ["crucible", "mcp", "--stdio"] };
+}
+
+function getClaudeMcpServerEntry(): JsonObject {
+  return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"], env: {} };
 }
 
 function jsonValuesEqual(left: unknown, right: unknown): boolean {
@@ -3548,6 +3841,12 @@ const COMMANDS: readonly CommandDefinition[] = [
     examples: ["crucible setup host --print", "crucible setup opencode"],
   },
   {
+    canonical: "version",
+    preferred: "version",
+    summary: "Print the Crucible CLI version.",
+    usage: ["crucible version"],
+  },
+  {
     canonical: "update",
     preferred: "update",
     summary: "Update the global package and refresh MCP config entries.",
@@ -3617,6 +3916,13 @@ const COMMANDS: readonly CommandDefinition[] = [
     group: "vm",
     summary: "Show lifecycle, PID, QMP, and log paths.",
     usage: ["crucible vm status"],
+  },
+  {
+    canonical: "vm:credentials",
+    preferred: "vm credentials",
+    group: "vm",
+    summary: "Print generated Windows account usernames and passwords.",
+    usage: ["crucible vm credentials"],
   },
   {
     canonical: "vm:view",

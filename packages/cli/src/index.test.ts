@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createServer, type Server } from "node:net";
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +37,42 @@ async function createTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
+async function listenOnLoopbackDisplay(): Promise<{
+  readonly server: Server;
+  readonly display: number;
+}> {
+  for (let display = 99; display >= 1; display -= 1) {
+    try {
+      return { server: await listenOnLoopback(5900 + display), display };
+    } catch (error) {
+      if (!isAddressInUseError(error)) throw error;
+    }
+  }
+  throw new Error("No free loopback VNC display port found");
+}
+
+async function listenOnLoopback(port: number): Promise<Server> {
+  const server = createServer((socket) => socket.end());
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+function isAddressInUseError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+}
+
 describe("crucible CLI bootstrap", () => {
   it("prints help", async () => {
     const result = await runCrucibleCli(["--help"], defaultRuntime);
@@ -44,6 +81,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
     expect(result.stdout).toContain("crucible vm status");
+    expect(result.stdout).toContain("vm credentials");
     expect(result.stdout).toContain("Command groups:");
   });
 
@@ -54,6 +92,7 @@ describe("crucible CLI bootstrap", () => {
     expect(group.exitCode).toBe(0);
     expect(group.stdout).toContain("crucible vm");
     expect(group.stdout).toContain("vm status");
+    expect(group.stdout).toContain("vm credentials");
     expect(command.exitCode).toBe(0);
     expect(command.stdout).toContain("crucible vm status");
     expect(command.stdout).toContain("Aliases: vm:status");
@@ -68,6 +107,7 @@ describe("crucible CLI bootstrap", () => {
       config,
       lifecycleManager: lifecycle,
     });
+    const credentials = await runCrucibleCli(["vm", "credentials"], { config });
     const snapshotList = await runCrucibleCli(["snapshot", "list"], { config, snapshotManager });
     const networkStatus = await runCrucibleCli(["network", "status"], { config });
     const netAlias = await runCrucibleCli(["net", "status"], { config });
@@ -78,6 +118,8 @@ describe("crucible CLI bootstrap", () => {
 
     expect(vmStatus.exitCode).toBe(0);
     expect(vmStatus.stdout).toContain("status: running");
+    expect(credentials.exitCode).toBe(1);
+    expect(credentials.stderr).toContain("VM credentials have not been generated yet");
     expect(snapshotList.exitCode).toBe(0);
     expect(snapshotList.stdout).toContain("Snapshots: none");
     expect(networkStatus.exitCode).toBe(0);
@@ -183,6 +225,13 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("guest_health");
   });
 
+  it("prints the CLI version", async () => {
+    const result = await runCrucibleCli(["version"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(CRUCIBLE_VERSION);
+  });
+
   it("reports unknown top-level commands with help", async () => {
     const result = await runCrucibleCli(["nope"], defaultRuntime);
 
@@ -266,7 +315,13 @@ describe("crucible CLI bootstrap", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+        mcp: {
+          crucible: {
+            enabled: true,
+            type: "local",
+            command: ["crucible", "mcp", "--stdio"],
+          },
+        },
       }),
     );
 
@@ -390,14 +445,84 @@ describe("crucible CLI bootstrap", () => {
     });
     const opencodeConfig = JSON.parse(
       await readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
-    ) as { mcp?: { crucible?: { command?: string; args?: string[] } } };
+    ) as { mcp?: { crucible?: { command?: string[]; enabled?: boolean; type?: string } } };
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("package update: completed");
     expect(result.stdout).toContain("Refreshed opencode config:");
-    expect(opencodeConfig.mcp?.crucible?.command).toBe("crucible");
-    expect(opencodeConfig.mcp?.crucible?.args).toEqual(["mcp", "--stdio"]);
+    expect(opencodeConfig.mcp?.crucible).toEqual({
+      enabled: true,
+      type: "local",
+      command: ["crucible", "mcp", "--stdio"],
+    });
     expect(commands).toContain("npm install -g @adamkadaban/crucible@latest");
+  });
+
+  it("skips package and MCP updates when already on the latest version", async () => {
+    const root = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    vi.stubEnv("HOME", root);
+    const commands: string[] = [];
+
+    const result = await runCrucibleCli(["update", "--yes"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: command.executable === "pnpm" ? 1 : 0,
+            stdout: command.args.includes("view") ? `${CRUCIBLE_VERSION}\n` : `${globalRoot}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("package update: already current");
+    expect(result.stdout).not.toContain("MCP config refresh:");
+    expect(commands).not.toContain("npm install -g @adamkadaban/crucible@latest");
+    await expect(
+      readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not require --yes when update is already current", async () => {
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: `${CRUCIBLE_VERSION}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("package update: already current");
+    expect(result.stdout).not.toContain("detected install:");
+    expect(result.stdout).not.toContain("MCP config refresh:");
+    expect(result.stderr).toBe("");
+    expect(commands).toEqual(["npm view @adamkadaban/crucible version --silent"]);
   });
 
   it("prefers pnpm update when pnpm owns the global package", async () => {
@@ -601,7 +726,7 @@ describe("crucible CLI bootstrap", () => {
               command,
               exitCode: command.executable === "pnpm" ? 1 : 0,
               stdout: command.args.includes("view")
-                ? `${CRUCIBLE_VERSION}\n`
+                ? "99.99.99\n"
                 : command.args.includes("root")
                   ? `${globalRoot}\n`
                   : "updated\n",
@@ -969,7 +1094,9 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("opencode.json");
-    expect(result.stdout).toContain('"command": "crucible"');
+    expect(result.stdout).toContain('"type": "local"');
+    expect(result.stdout).toContain('"enabled": true');
+    expect(result.stdout).toContain('"command": [');
     expect(result.stdout).toContain('"mcp"');
   });
 
@@ -989,7 +1116,10 @@ describe("crucible CLI bootstrap", () => {
       const second = await runCrucibleCli(["setup", "opencode"], defaultRuntime);
       const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
         theme: string;
-        mcp: { existing?: { command: string }; crucible?: { command: string; args: string[] } };
+        mcp: {
+          existing?: { command: string };
+          crucible?: { command: string[]; enabled: boolean; type: string };
+        };
       };
 
       expect(first.exitCode).toBe(0);
@@ -999,9 +1129,9 @@ describe("crucible CLI bootstrap", () => {
       expect(parsed.theme).toBe("dark");
       expect(parsed.mcp.existing?.command).toBe("other");
       expect(parsed.mcp.crucible).toEqual({
-        type: "stdio",
-        command: "crucible",
-        args: ["mcp", "--stdio"],
+        enabled: true,
+        type: "local",
+        command: ["crucible", "mcp", "--stdio"],
       });
     } finally {
       if (previousHome === undefined) {
@@ -1028,7 +1158,13 @@ describe("crucible CLI bootstrap", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+        mcp: {
+          crucible: {
+            command: ["crucible", "mcp", "--stdio"],
+            enabled: true,
+            type: "local",
+          },
+        },
       }),
     );
 
@@ -1188,6 +1324,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("claude mcp add");
     expect(result.stdout).toContain("crucible mcp --stdio");
+    expect(result.stdout).toContain('"type": "stdio"');
+    expect(result.stdout).toContain('"args": [');
   });
 
   it("prints setup guidance for codex and copilot", async () => {
@@ -1195,9 +1333,14 @@ describe("crucible CLI bootstrap", () => {
     const copilot = await runCrucibleCli(["setup", "copilot", "--print"], defaultRuntime);
 
     expect(codex.exitCode).toBe(0);
-    expect(codex.stdout).toContain("Codex MCP configuration is version-dependent");
+    expect(codex.stdout).toContain("~/.codex/config.toml");
+    expect(codex.stdout).toContain("codex mcp add crucible");
+    expect(codex.stdout).toContain("[mcp_servers.crucible]");
     expect(copilot.exitCode).toBe(0);
-    expect(copilot.stdout).toContain("Copilot CLI MCP configuration is version-dependent");
+    expect(copilot.stdout).toContain("~/.copilot/mcp-config.json");
+    expect(copilot.stdout).toContain('"mcpServers"');
+    expect(copilot.stdout).not.toContain('"tools"');
+    expect(copilot.stdout).toContain("add only the tool names you intend to expose");
   });
 
   it("aggregates setup all output across targets", async () => {
@@ -1866,50 +2009,128 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("pid: none");
   });
 
+  it("prints generated VM credentials", async () => {
+    const root = await createTempDir("crucible-cli-");
+    const secretsDirectory = path.join(root, "secrets");
+    await mkdir(path.join(secretsDirectory, "test-win", "windows"), { recursive: true });
+    await writeFile(
+      path.join(secretsDirectory, "test-win", "windows", "standard-user.json"),
+      JSON.stringify({ username: "CrucibleUser", password: "standard-secret" }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(secretsDirectory, "test-win", "windows", "admin-user.json"),
+      JSON.stringify({ username: "CrucibleAdmin", password: "admin-secret" }),
+      "utf8",
+    );
+
+    const result = await runCrucibleCli(["vm", "credentials"], {
+      config: parseCrucibleConfig({
+        vm: { name: "test-win" },
+        artifacts: { secretsDirectory },
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VM credentials:");
+    expect(result.stdout).toContain(
+      `secrets directory: ${path.join(secretsDirectory, "test-win")}`,
+    );
+    expect(result.stdout).toContain("standard username: CrucibleUser");
+    expect(result.stdout).toContain("standard password: standard-secret");
+    expect(result.stdout).toContain("admin username: CrucibleAdmin");
+    expect(result.stdout).toContain("admin password: admin-secret");
+  });
+
+  it("reports missing generated VM credentials", async () => {
+    const root = await createTempDir("crucible-cli-");
+    const result = await runCrucibleCli(["vm", "credentials"], {
+      config: parseCrucibleConfig({
+        vm: { name: "test-win" },
+        artifacts: { secretsDirectory: path.join(root, "secrets") },
+      }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("VM credentials have not been generated yet");
+    expect(result.stderr).toContain("standard, admin");
+    expect(result.stderr).toContain("crucible provision");
+  });
+
+  it("reports malformed VM credential file paths", async () => {
+    const root = await createTempDir("crucible-cli-");
+    const secretsDirectory = path.join(root, "secrets");
+    const standardPath = path.join(secretsDirectory, "test-win", "windows", "standard-user.json");
+    await mkdir(path.dirname(standardPath), { recursive: true });
+    await writeFile(standardPath, "{invalid", "utf8");
+    await writeFile(
+      path.join(secretsDirectory, "test-win", "windows", "admin-user.json"),
+      JSON.stringify({ username: "CrucibleAdmin", password: "admin-secret" }),
+      "utf8",
+    );
+
+    await expect(
+      runCrucibleCli(["vm", "credentials"], {
+        config: parseCrucibleConfig({
+          vm: { name: "test-win" },
+          artifacts: { secretsDirectory },
+        }),
+      }),
+    ).rejects.toThrow(`Unable to read VM credential secret ${standardPath}`);
+  });
+
   it("prints vm view dry-run without touching QMP", async () => {
     const result = await runCrucibleCli(["vm", "view", "--dry-run"], defaultRuntime);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VM view dry run:");
+    expect(result.stdout).toContain("VNC socket:");
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
-    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(result.stdout).toContain(
+      "socat -d -d 'TCP-LISTEN:5901,bind=127.0.0.1,reuseaddr,listen-timeout=15'",
+    );
     expect(result.stdout).toContain("remote-viewer vnc://127.0.0.1:5901");
   });
 
-  it("enables vm view over QMP and launches the viewer", async () => {
-    const qmpCommands: string[] = [];
+  it("bridges vm view over loopback and launches the viewer", async () => {
+    const { server, display } = await listenOnLoopbackDisplay();
+    await closeServer(server);
+    const port = 5900 + display;
+    const bridgeCommands: string[] = [];
     const processCommands: string[] = [];
-    const result = await runCrucibleCli(["vm", "view", "--viewer", "vncviewer"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: (command: string, args?: Readonly<Record<string, unknown>>) => {
-          qmpCommands.push(`${command}:${JSON.stringify(args)}`);
-          return Promise.resolve({ id: "test", returnValue: {}, events: [] });
+    const result = await runCrucibleCli(
+      ["vm", "view", "--viewer", "vncviewer", "--display", String(display)],
+      {
+        config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        vmViewBridgeStarter(command) {
+          bridgeCommands.push(command.join(" "));
+          return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
         },
-        close: () => undefined,
-      }),
-      processRunner: {
-        run(command) {
-          processCommands.push(`${command.executable} ${command.args.join(" ")}`);
-          return Promise.resolve({
-            command,
-            exitCode: 0,
-            stdout: "",
-            stderr: "",
-            durationMs: 1,
-            timedOut: false,
-            signal: null,
-          });
+        processRunner: {
+          run(command) {
+            processCommands.push(`${command.executable} ${command.args.join(" ")}`);
+            return Promise.resolve({
+              command,
+              exitCode: 0,
+              stdout: "",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
         },
       },
-    });
+    );
 
     expect(result.exitCode).toBe(0);
-    expect(qmpCommands).toEqual([
-      'human-monitor-command:{"command-line":"change vnc 127.0.0.1:1"}',
+    expect(bridgeCommands).toEqual([
+      `socat -d -d TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,listen-timeout=15 UNIX-CONNECT:artifacts/vnc.sock`,
     ]);
-    expect(processCommands).toEqual(["vncviewer 127.0.0.1:1"]);
+    expect(processCommands).toEqual([`vncviewer 127.0.0.1:${display}`]);
+    expect(result.stdout).toContain(
+      `socat -d -d 'TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,listen-timeout=15' UNIX-CONNECT:artifacts/vnc.sock`,
+    );
     expect(result.stdout).toContain("viewer: launched");
   });
 
@@ -1928,38 +2149,76 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("reports missing vm view viewer executables", async () => {
-    const emptyPath = await createTempDir("crucible-empty-path-");
-    vi.stubEnv("PATH", emptyPath);
-    const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
-        close: () => undefined,
-      }),
-    });
+    const { server, display } = await listenOnLoopbackDisplay();
+    await closeServer(server);
+    {
+      const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
+        config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        vmViewBridgeStarter() {
+          return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
+        },
+        processRunner: {
+          run() {
+            return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+          },
+        },
+      });
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("ENOENT");
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("spawn remote-viewer ENOENT");
+    }
+  });
+
+  it("reports vm view viewer command failures", async () => {
+    const { server, display } = await listenOnLoopbackDisplay();
+    await closeServer(server);
+    const port = 5900 + display;
+    {
+      const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
+        config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        vmViewBridgeStarter() {
+          return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
+        },
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: 7,
+              stdout: "",
+              stderr: "viewer failed",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(`viewer command: remote-viewer vnc://127.0.0.1:${port}`);
+      expect(result.stderr).toContain("viewer failed");
+    }
   });
 
   it("reports vm view injected viewer runner failures", async () => {
-    const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
-      qmpClientFactory: () => ({
-        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
-        close: () => undefined,
-      }),
-      processRunner: {
-        run() {
-          return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+    const { server, display } = await listenOnLoopbackDisplay();
+    await closeServer(server);
+    {
+      const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
+        config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        vmViewBridgeStarter() {
+          return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
         },
-      },
-    });
+        processRunner: {
+          run() {
+            return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+          },
+        },
+      });
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("spawn remote-viewer ENOENT");
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("spawn remote-viewer ENOENT");
+    }
   });
 
   it("rejects non-loopback vm view hosts", async () => {
@@ -1977,16 +2236,75 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
-    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(result.stdout).toContain(
+      "socat -d -d 'TCP-LISTEN:5901,bind=127.0.0.1,reuseaddr,listen-timeout=15'",
+    );
   });
 
-  it("reports vm view QMP failures without launching viewer", async () => {
+  it("reports vm view bridge failures without launching viewer", async () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      vmViewBridgeStarter() {
+        return Promise.resolve({ ok: false, error: "socat failed" });
+      },
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Unable to expose the VM VNC socket");
+    expect(result.stderr).toContain("socat failed");
+    expect(processCommands).toEqual([]);
+  });
+
+  it("reports missing socat for vm view bridge startup", async () => {
+    const emptyPath = await createTempDir("crucible-empty-path-");
+    vi.stubEnv("PATH", emptyPath);
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("socat is required");
+    expect(result.stderr).toContain("crucible doctor");
+    expect(processCommands).toEqual([]);
+  });
+
+  it("rejects vm view when the VM was started without VNC display support", async () => {
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "none" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.reject(new Error("change vnc unsupported")),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
         close: () => undefined,
       }),
       processRunner: {
@@ -2006,8 +2324,8 @@ describe("crucible CLI bootstrap", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Unable to enable a live VNC view");
-    expect(result.stderr).toContain("change vnc unsupported");
+    expect(result.stderr).toContain('vm.display.mode "vnc"');
+    expect(result.stderr).toContain('current config is "none"');
     expect(processCommands).toEqual([]);
   });
 
