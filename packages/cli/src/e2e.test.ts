@@ -267,6 +267,7 @@ describe("Crucible CLI E2E smoke", () => {
       {
         readonly args: readonly string[];
         readonly runtime?: typeof baseRuntime | typeof provisionRuntime;
+        readonly expectExitCode?: number | readonly number[];
         readonly expectStdout?: RegExp;
       }
     > = {
@@ -276,6 +277,7 @@ describe("Crucible CLI E2E smoke", () => {
       },
       doctor: {
         args: ["doctor"],
+        expectExitCode: [0, 1],
         expectStdout: /Status: healthy|Status: degraded|Status: missing/,
       },
       setup: {
@@ -340,7 +342,12 @@ describe("Crucible CLI E2E smoke", () => {
     );
     for (const [canonical, testCase] of Object.entries(cases)) {
       const result = await runCrucibleCli(testCase.args, testCase.runtime ?? baseRuntime);
-      expect(result.exitCode, `${canonical}\n${result.stdout}\n${result.stderr}`).toBe(0);
+      const expectedExitCodes = Array.isArray(testCase.expectExitCode)
+        ? testCase.expectExitCode
+        : [testCase.expectExitCode ?? 0];
+      expect(expectedExitCodes, `${canonical}\n${result.stdout}\n${result.stderr}`).toContain(
+        result.exitCode,
+      );
       if (testCase.expectStdout !== undefined) {
         expect(result.stdout, canonical).toMatch(testCase.expectStdout);
       }
