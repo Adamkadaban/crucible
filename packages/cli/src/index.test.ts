@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -453,6 +453,34 @@ describe("crucible CLI bootstrap", () => {
     await expect(
       readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not require --yes when update is already current", async () => {
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: `${CRUCIBLE_VERSION}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("package update: already current");
+    expect(result.stdout).not.toContain("detected install:");
+    expect(result.stdout).not.toContain("MCP config refresh:");
+    expect(result.stderr).toBe("");
+    expect(commands).toEqual(["npm view @adamkadaban/crucible version --silent"]);
   });
 
   it("prefers pnpm update when pnpm owns the global package", async () => {
@@ -2013,6 +2041,28 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("ENOENT");
+  });
+
+  it("reports vm view viewer processes that exit immediately", async () => {
+    const binDir = await createTempDir("crucible-viewer-bin-");
+    const viewerPath = path.join(binDir, "remote-viewer");
+    await writeFile(viewerPath, "#!/bin/sh\necho viewer failed >&2\nexit 7\n", "utf8");
+    await chmod(viewerPath, 0o755);
+    vi.stubEnv("PATH", binDir);
+
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("viewer command: remote-viewer vnc://127.0.0.1:5901");
+    expect(result.stderr).toContain("viewer exited before it connected (exit code 7)");
+    expect(result.stderr).toContain("viewer failed");
   });
 
   it("reports vm view injected viewer runner failures", async () => {

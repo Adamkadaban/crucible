@@ -611,28 +611,73 @@ async function launchVmViewer(
   }
 
   try {
-    const child = spawn(executable, args, { detached: true, stdio: "ignore" });
+    const child = spawn(executable, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const appendOutput = (current: string, chunk: Buffer): string =>
+      (current + chunk.toString("utf8")).slice(-64 * 1024);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout = appendOutput(stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = appendOutput(stderr, chunk);
+    });
     const launched = await new Promise<
       { readonly ok: true } | { readonly ok: false; readonly error: string }
     >((resolve) => {
-      const timer = setTimeout(() => resolve({ ok: true }), 250);
+      let resolved = false;
+      const finish = (
+        result: { readonly ok: true } | { readonly ok: false; readonly error: string },
+      ) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish({ ok: true }), 1_000);
       child.once("error", (error) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: error.message });
+        finish({ ok: false, error: error.message });
       });
-      child.once("spawn", () => {
-        clearTimeout(timer);
-        resolve({ ok: true });
+      child.once("close", (code, signal) => {
+        finish({
+          ok: false,
+          error: formatViewerEarlyExit(code, signal, stdout, stderr),
+        });
       });
     });
     if (!launched.ok) {
       return launched;
     }
     child.unref();
+    unrefChildStream(child.stdout);
+    unrefChildStream(child.stderr);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function unrefChildStream(stream: NodeJS.ReadableStream | null): void {
+  if (stream === null || !hasUnref(stream)) return;
+  stream.unref();
+}
+
+function hasUnref(stream: NodeJS.ReadableStream): stream is NodeJS.ReadableStream & {
+  readonly unref: () => void;
+} {
+  const candidate = stream as NodeJS.ReadableStream & { readonly unref?: unknown };
+  return typeof candidate.unref === "function";
+}
+
+function formatViewerEarlyExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stdout: string,
+  stderr: string,
+): string {
+  const detail = signal === null ? `exit code ${code ?? "unknown"}` : `signal ${signal}`;
+  const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+  return [`viewer exited before it connected (${detail})`, output].filter(Boolean).join("\n");
 }
 
 async function runVmLogsCommand(
@@ -2252,14 +2297,20 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     return { exitCode: 1, stdout: "", stderr: "npm did not report a latest Crucible version." };
   }
 
-  const install = await detectGlobalInstall(runner);
   const actions: string[] = [
     "Crucible update plan:",
     `current version: ${CRUCIBLE_VERSION}`,
     `latest npm version: ${latestVersion}`,
-    `detected install: ${formatInstallDetection(install)}`,
   ];
   const needsPackageUpdate = latestVersion !== CRUCIBLE_VERSION;
+
+  if (!needsPackageUpdate && !parsed.args.dryRun) {
+    actions.push("package update: already current");
+    return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  }
+
+  const install = await detectGlobalInstall(runner);
+  actions.push(`detected install: ${formatInstallDetection(install)}`);
 
   if (parsed.args.dryRun) {
     actions.push(
@@ -2286,39 +2337,31 @@ async function updateCommand(args: readonly string[], runtime: CliRuntime): Prom
     }
   }
 
-  if (needsPackageUpdate) {
-    const command = buildPackageUpdateCommand(install);
-    let updateResult: ProcessResult;
-    actions.push(`package command: ${formatCommand(command)}`);
-    try {
-      updateResult = await runner.run({
-        executable: command[0] ?? "npm",
-        args: command.slice(1),
-        timeoutMs: 5 * 60 * 1000,
-        maxOutputBytes: 1024 * 1024,
-      });
-    } catch (error) {
-      return {
-        exitCode: 1,
-        stdout: actions.join("\n"),
-        stderr: error instanceof Error ? error.message : String(error),
-      };
-    }
-    if (updateResult.exitCode !== 0 || updateResult.timedOut) {
-      return {
-        exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
-        stdout: actions.join("\n"),
-        stderr: updateResult.stderr,
-      };
-    }
-    actions.push("package update: completed");
-  } else {
-    actions.push("package update: already current");
+  const command = buildPackageUpdateCommand(install);
+  let updateResult: ProcessResult;
+  actions.push(`package command: ${formatCommand(command)}`);
+  try {
+    updateResult = await runner.run({
+      executable: command[0] ?? "npm",
+      args: command.slice(1),
+      timeoutMs: 5 * 60 * 1000,
+      maxOutputBytes: 1024 * 1024,
+    });
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: actions.join("\n"),
+      stderr: error instanceof Error ? error.message : String(error),
+    };
   }
-
-  if (!needsPackageUpdate) {
-    return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  if (updateResult.exitCode !== 0 || updateResult.timedOut) {
+    return {
+      exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
+      stdout: actions.join("\n"),
+      stderr: updateResult.stderr,
+    };
   }
+  actions.push("package update: completed");
 
   const mcpResults = await refreshMcpConfigs();
   actions.push("MCP config refresh:", ...mcpResults.lines);
