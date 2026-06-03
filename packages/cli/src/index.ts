@@ -768,7 +768,10 @@ async function startVmViewBridge(
         );
       });
     });
-    if (!started.ok) return started;
+    if (!started.ok) {
+      stopDetachedChild(child);
+      return started;
+    }
 
     child.unref();
     return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
