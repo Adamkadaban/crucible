@@ -145,7 +145,7 @@ func waitForFileContent(ctx context.Context, path string) ([]byte, error) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if content, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(content))) > 0 {
+		if content, err := os.ReadFile(path); err == nil && strings.ContainsAny(string(content), "\r\n") {
 			return content, nil
 		}
 		select {
