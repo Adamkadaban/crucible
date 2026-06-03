@@ -59,10 +59,12 @@ function makeE2eGuestClient(root: string, execRequests: ExecRequest[]): GuestAge
       Promise.resolve({
         status: "ok",
         version: "e2e",
-        hostname: "CRUCIBLE-E2E",
+        hostName: "CRUCIBLE-E2E",
+        startedAt: "2026-06-02T00:00:00.000Z",
         uptimeSeconds: 123,
-        timeUtc: "2026-06-02T00:00:00.000Z",
-        features: ["exec", "files", "debug", "memory"],
+        goVersion: "go1.25.2",
+        windbgInstalled: true,
+        cdbPath: "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
       }),
     exec: (request: ExecRequest) => {
       execRequests.push(request);
@@ -320,6 +322,7 @@ describe("Crucible MCP protocol E2E", () => {
       expect(display.result.backend).toBe("e2e");
       expect(screenshot.result.sizeBytes).toBe(4096);
       expect(health.result.status).toBe("ok");
+      expect(health.result).toMatchObject({ hostName: "CRUCIBLE-E2E", windbgInstalled: true });
       expect(Buffer.from(exec.result.stdoutBase64, "base64").toString()).toContain("service");
       expect(adminExec.ok).toBe(true);
       expect(read.result).toMatchObject({ inline: true, contents: "mcp-e2e\n" });
