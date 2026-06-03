@@ -6,7 +6,6 @@ import { copyFile, mkdir, readFile, rename, rm, stat as fsStat, writeFile } from
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import net from "node:net";
 import type { ChildProcess } from "node:child_process";
 
 import {
@@ -712,9 +711,9 @@ async function startVmViewBridge(
     if (result.exitCode !== 0 && !result.timedOut) {
       return { ok: false, error: result.stderr || "VNC bridge command failed" };
     }
-    return (await waitForTcpPort(host, port, 1_000))
+    return result.stderr.includes("listening on")
       ? { ok: true, bridge: { stop: () => undefined } }
-      : { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
+      : { ok: false, error: `VNC bridge did not report listening on ${host}:${port}` };
   }
 
   try {
@@ -773,29 +772,6 @@ function stopDetachedChild(child: ChildProcess): void {
   } catch {
     // Best-effort cleanup for a short-lived local bridge listener.
   }
-}
-
-function isTcpPortOpen(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
-    const finish = (open: boolean) => {
-      socket.destroy();
-      resolve(open);
-    };
-    socket.setTimeout(200);
-    socket.once("connect", () => finish(true));
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-  });
-}
-
-async function waitForTcpPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    if (await isTcpPortOpen(host, port)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  } while (Date.now() < deadline);
-  return false;
 }
 
 async function launchVmViewer(
