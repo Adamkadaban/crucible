@@ -7,6 +7,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import net from "node:net";
+import type { ChildProcess } from "node:child_process";
 
 import {
   buildNetworkPlan,
@@ -569,7 +570,7 @@ async function runVmViewCommand(
     };
   }
 
-  const bridgeResult = await ensureVmViewBridge(
+  const bridgeResult = await startVmViewBridge(
     bridgeCommand,
     parsed.args.host,
     port,
@@ -589,12 +590,14 @@ async function runVmViewCommand(
 
   const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
   if (!launchResult.ok) {
+    bridgeResult.bridge.stop();
     return {
       exitCode: 1,
       stdout: lines.join("\n"),
       stderr: launchResult.error,
     };
   }
+  bridgeResult.bridge.stop();
 
   return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
 }
@@ -681,12 +684,15 @@ function buildVmViewBridgeCommand(
   ];
 }
 
-async function ensureVmViewBridge(
+async function startVmViewBridge(
   bridgeCommand: readonly string[],
   host: string,
   port: number,
   runner: ProcessRunner | undefined,
-): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
+): Promise<
+  | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
+  | { readonly ok: false; readonly error: string }
+> {
   const executable = bridgeCommand[0] ?? "socat";
   const args = bridgeCommand.slice(1);
   if (runner !== undefined) {
@@ -699,10 +705,10 @@ async function ensureVmViewBridge(
     if (result.exitCode !== 0 && !result.timedOut) {
       return { ok: false, error: result.stderr || "VNC bridge command failed" };
     }
-    return { ok: true };
+    return (await waitForTcpPort(host, port, 1_000))
+      ? { ok: true, bridge: { stop: () => undefined } }
+      : { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
   }
-
-  if (await isTcpPortOpen(host, port)) return { ok: true };
 
   try {
     const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
@@ -736,10 +742,18 @@ async function ensureVmViewBridge(
     child.unref();
     unrefChildStream(child.stderr);
     return (await waitForTcpPort(host, port, 1_000))
-      ? { ok: true }
+      ? { ok: true, bridge: { stop: () => stopDetachedChild(child) } }
       : { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function stopDetachedChild(child: ChildProcess): void {
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // Best-effort cleanup for a short-lived local bridge listener.
   }
 }
 
@@ -2667,7 +2681,7 @@ function versionCommand(args: readonly string[]): CommandResult {
   if (args.length > 0) {
     return { exitCode: 2, stdout: "", stderr: `Unknown version option: ${args[0]}` };
   }
-  return { exitCode: 0, stdout: `${CRUCIBLE_VERSION}\n`, stderr: "" };
+  return { exitCode: 0, stdout: CRUCIBLE_VERSION, stderr: "" };
 }
 
 function setupFlags(args: SetupArgs): string[] {
