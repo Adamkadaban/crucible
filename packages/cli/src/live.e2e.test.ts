@@ -265,6 +265,7 @@ async function withLiveMcpClient<T>(
   const server = createCrucibleMcpServer({
     config: context.config,
     configPath: liveConfigPath,
+    downloadBaseDirectory: liveRoot,
     guestClientFactory: () => Promise.resolve(context.guest),
     vmAdapter: buildMcpVmAdapter(context.config),
     snapshotAdapter: {
@@ -704,10 +705,10 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
       );
       expect(download.ok).toBe(true);
       expect(download.result.guestPath).toBe(guestPath);
-      expect(download.result.hostPath).toBe(hostDownloadPath);
+      expect(download.result.hostPath).toBe(path.resolve(liveRoot, hostDownloadPath));
       expect(download.result.sizeBytes).toBe(Buffer.byteLength(`${marker}\n`));
       expect(download.result.sha256).toBe(upload.result.sha256);
-      await expect(readFile(hostDownloadPath, "utf8")).resolves.toBe(`${marker}\n`);
+      await expect(readFile(download.result.hostPath, "utf8")).resolves.toBe(`${marker}\n`);
 
       await expectToolOk(client, "vm_mouse_drag", {
         fromX: 12_000,
