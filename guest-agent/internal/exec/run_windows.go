@@ -67,15 +67,12 @@ func runWithScheduledTask(ctx context.Context, req request, cmd *osexec.Cmd, cre
 		cleanupTask(taskName)
 		return err
 	}
-	if err := waitForFile(ctx, codePath); err != nil {
+	codeBytes, err := waitForFileContent(ctx, codePath)
+	if err != nil {
 		return err
 	}
 	copyFileToWriter(stdoutPath, cmd.Stdout)
 	copyFileToWriter(stderrPath, cmd.Stderr)
-	codeBytes, err := os.ReadFile(codePath)
-	if err != nil {
-		return err
-	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(codeBytes)))
 	if err != nil {
 		return err
@@ -144,16 +141,16 @@ func copyFileToWriter(path string, writer interface{}) {
 	_, _ = io.Copy(w, f)
 }
 
-func waitForFile(ctx context.Context, path string) error {
+func waitForFileContent(ctx context.Context, path string) ([]byte, error) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if _, err := os.Stat(path); err == nil {
-			return nil
+		if content, err := os.ReadFile(path); err == nil && strings.ContainsAny(string(content), "\r\n") {
+			return content, nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-ticker.C:
 		}
 	}
