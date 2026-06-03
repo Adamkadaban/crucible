@@ -684,7 +684,7 @@ function buildVmViewBridgeCommand(
 ): readonly string[] {
   return [
     "socat",
-    `TCP-LISTEN:${port},bind=${args.host},reuseaddr`,
+    `TCP-LISTEN:${port},bind=${args.host},reuseaddr,fork`,
     `UNIX-CONNECT:${vncSocketPath}`,
   ];
 }
@@ -746,30 +746,14 @@ async function startVmViewBridge(
 
     child.unref();
     unrefChildStream(child.stderr);
-    return (await waitForProcessToRemainStarted(child, 250))
-      ? { ok: true, bridge: { stop: () => stopDetachedChild(child) } }
-      : { ok: false, error: `VNC bridge did not remain running for ${host}:${port}` };
+    if (await waitForTcpPort(host, port, 1_000)) {
+      return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
+    }
+    stopDetachedChild(child);
+    return { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-function waitForProcessToRemainStarted(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    let resolved = false;
-    const finish = (started: boolean) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
-      resolve(started);
-    };
-    const timer = setTimeout(
-      () => finish(child.exitCode === null && child.signalCode === null),
-      timeoutMs,
-    );
-    child.once("close", () => finish(false));
-    child.once("error", () => finish(false));
-  });
 }
 
 function stopDetachedChild(child: ChildProcess): void {
