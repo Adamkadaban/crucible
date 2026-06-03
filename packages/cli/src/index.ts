@@ -684,7 +684,9 @@ function buildVmViewBridgeCommand(
 ): readonly string[] {
   return [
     "socat",
-    `TCP-LISTEN:${port},bind=${args.host},reuseaddr,fork`,
+    "-d",
+    "-d",
+    `TCP-LISTEN:${port},bind=${args.host},reuseaddr`,
     `UNIX-CONNECT:${vncSocketPath}`,
   ];
 }
@@ -718,7 +720,12 @@ async function startVmViewBridge(
   try {
     const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
+    const stderrListeners: Array<(chunk: Buffer) => void> = [];
+    const onStderr = (listener: (chunk: Buffer) => void) => {
+      stderrListeners.push(listener);
+      child.stderr?.on("data", listener);
+    };
+    onStderr((chunk: Buffer) => {
       stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
     });
     const started = await new Promise<
@@ -731,9 +738,17 @@ async function startVmViewBridge(
         if (resolved) return;
         resolved = true;
         clearTimeout(timer);
+        for (const listener of stderrListeners) child.stderr?.off("data", listener);
         resolve(result);
       };
-      const timer = setTimeout(() => finish({ ok: true }), 250);
+      const timer = setTimeout(
+        () =>
+          finish({ ok: false, error: `VNC bridge did not report listening on ${host}:${port}` }),
+        1_000,
+      );
+      onStderr((chunk: Buffer) => {
+        if (chunk.toString("utf8").includes("listening on")) finish({ ok: true });
+      });
       child.once("error", (error) => finish({ ok: false, error: error.message }));
       child.once("close", (code, signal) =>
         finish({
@@ -746,11 +761,7 @@ async function startVmViewBridge(
 
     child.unref();
     unrefChildStream(child.stderr);
-    if (await waitForTcpPort(host, port, 1_000)) {
-      return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
-    }
-    stopDetachedChild(child);
-    return { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
+    return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
