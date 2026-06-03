@@ -738,7 +738,7 @@ async function startVmViewBridge(
       child.once("close", (code, signal) =>
         finish({
           ok: false,
-          error: formatViewerEarlyExit(code, signal, "", stderr),
+          error: formatProcessEarlyExit(code, signal, "", stderr),
         }),
       );
     });
@@ -868,7 +868,7 @@ async function launchVmViewer(
         }
         finish({
           ok: false,
-          error: formatViewerEarlyExit(code, signal, stdout, stderr),
+          error: formatProcessEarlyExit(code, signal, stdout, stderr),
         });
       });
     });
@@ -896,7 +896,7 @@ function hasUnref(stream: NodeJS.ReadableStream): stream is NodeJS.ReadableStrea
   return typeof candidate.unref === "function";
 }
 
-function formatViewerEarlyExit(
+function formatProcessEarlyExit(
   code: number | null,
   signal: NodeJS.Signals | null,
   stdout: string,
@@ -904,7 +904,7 @@ function formatViewerEarlyExit(
 ): string {
   const detail = signal === null ? `exit code ${code ?? "unknown"}` : `signal ${signal}`;
   const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-  return [`viewer exited before it connected (${detail})`, output].filter(Boolean).join("\n");
+  return [`process exited before it was ready (${detail})`, output].filter(Boolean).join("\n");
 }
 
 async function runVmLogsCommand(
