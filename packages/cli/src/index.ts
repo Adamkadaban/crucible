@@ -588,7 +588,11 @@ async function runVmViewCommand(
     };
   }
 
-  const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
+  const launchResult = await launchVmViewer(
+    viewerCommand,
+    runtime.processRunner,
+    bridgeResult.bridge.stop,
+  );
   if (!launchResult.ok) {
     bridgeResult.bridge.stop();
     return {
@@ -597,7 +601,6 @@ async function runVmViewCommand(
       stderr: launchResult.error,
     };
   }
-  bridgeResult.bridge.stop();
 
   return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
 }
@@ -679,7 +682,7 @@ function buildVmViewBridgeCommand(
 ): readonly string[] {
   return [
     "socat",
-    `TCP-LISTEN:${port},bind=${args.host},reuseaddr,fork`,
+    `TCP-LISTEN:${port},bind=${args.host},reuseaddr`,
     `UNIX-CONNECT:${vncSocketPath}`,
   ];
 }
@@ -741,12 +744,30 @@ async function startVmViewBridge(
 
     child.unref();
     unrefChildStream(child.stderr);
-    return (await waitForTcpPort(host, port, 1_000))
+    return (await waitForProcessToRemainStarted(child, 250))
       ? { ok: true, bridge: { stop: () => stopDetachedChild(child) } }
-      : { ok: false, error: `VNC bridge did not start listening on ${host}:${port}` };
+      : { ok: false, error: `VNC bridge did not remain running for ${host}:${port}` };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function waitForProcessToRemainStarted(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = (started: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      resolve(started);
+    };
+    const timer = setTimeout(
+      () => finish(child.exitCode === null && child.signalCode === null),
+      timeoutMs,
+    );
+    child.once("close", () => finish(false));
+    child.once("error", () => finish(false));
+  });
 }
 
 function stopDetachedChild(child: ChildProcess): void {
@@ -783,6 +804,7 @@ async function waitForTcpPort(host: string, port: number, timeoutMs: number): Pr
 async function launchVmViewer(
   viewerCommand: readonly string[],
   runner: ProcessRunner | undefined,
+  onViewerExit?: () => void,
 ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
   const executable = viewerCommand[0] ?? "remote-viewer";
   const args = viewerCommand.slice(1);
@@ -801,6 +823,7 @@ async function launchVmViewer(
     if (result.exitCode !== 0 || result.timedOut) {
       return { ok: false, error: result.stderr || "viewer command failed" };
     }
+    onViewerExit?.();
     return { ok: true };
   }
 
@@ -820,6 +843,7 @@ async function launchVmViewer(
       { readonly ok: true } | { readonly ok: false; readonly error: string }
     >((resolve) => {
       let resolved = false;
+      let launchAccepted = false;
       const finish = (
         result: { readonly ok: true } | { readonly ok: false; readonly error: string },
       ) => {
@@ -828,11 +852,18 @@ async function launchVmViewer(
         clearTimeout(timer);
         resolve(result);
       };
-      const timer = setTimeout(() => finish({ ok: true }), 1_000);
+      const timer = setTimeout(() => {
+        launchAccepted = true;
+        finish({ ok: true });
+      }, 1_000);
       child.once("error", (error) => {
         finish({ ok: false, error: error.message });
       });
       child.once("close", (code, signal) => {
+        if (launchAccepted) {
+          onViewerExit?.();
+          return;
+        }
         finish({
           ok: false,
           error: formatViewerEarlyExit(code, signal, stdout, stderr),

@@ -2077,7 +2077,7 @@ describe("crucible CLI bootstrap", () => {
 
       expect(result.exitCode).toBe(0);
       expect(processCommands).toEqual([
-        "socat TCP-LISTEN:5998,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:artifacts/vnc.sock",
+        "socat TCP-LISTEN:5998,bind=127.0.0.1,reuseaddr UNIX-CONNECT:artifacts/vnc.sock",
         "vncviewer 127.0.0.1:98",
       ]);
       expect(result.stdout).toContain("viewer: launched");
