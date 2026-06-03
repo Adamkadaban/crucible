@@ -1297,7 +1297,8 @@ describe("crucible CLI bootstrap", () => {
     expect(copilot.exitCode).toBe(0);
     expect(copilot.stdout).toContain("~/.copilot/mcp-config.json");
     expect(copilot.stdout).toContain('"mcpServers"');
-    expect(copilot.stdout).toContain('"tools"');
+    expect(copilot.stdout).not.toContain('"tools"');
+    expect(copilot.stdout).toContain("add only the tool names you intend to expose");
   });
 
   it("aggregates setup all output across targets", async () => {

@@ -2243,7 +2243,6 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
                   command: "crucible",
                   args: ["mcp", "--stdio"],
                   env: {},
-                  tools: ["*"],
                 },
               },
             },
@@ -2251,7 +2250,7 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
             2,
           ),
           "",
-          "Copilot cloud agent/code review repository settings also use an `mcpServers` JSON object, but that configuration is managed on GitHub.com and should allowlist tools intentionally.",
+          "Copilot cloud agent/code review repository settings also use an `mcpServers` JSON object, but that configuration is managed on GitHub.com and should add only the tool names you intend to expose.",
         ].join("\n"),
       );
   }
