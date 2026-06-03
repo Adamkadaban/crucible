@@ -1254,6 +1254,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("claude mcp add");
     expect(result.stdout).toContain("crucible mcp --stdio");
+    expect(result.stdout).toContain('"type": "stdio"');
+    expect(result.stdout).toContain('"args": [');
   });
 
   it("prints setup guidance for codex and copilot", async () => {
@@ -1261,9 +1263,13 @@ describe("crucible CLI bootstrap", () => {
     const copilot = await runCrucibleCli(["setup", "copilot", "--print"], defaultRuntime);
 
     expect(codex.exitCode).toBe(0);
-    expect(codex.stdout).toContain("Codex MCP configuration is version-dependent");
+    expect(codex.stdout).toContain("~/.codex/config.toml");
+    expect(codex.stdout).toContain("codex mcp add crucible");
+    expect(codex.stdout).toContain("[mcp_servers.crucible]");
     expect(copilot.exitCode).toBe(0);
-    expect(copilot.stdout).toContain("Copilot CLI MCP configuration is version-dependent");
+    expect(copilot.stdout).toContain("~/.copilot/mcp-config.json");
+    expect(copilot.stdout).toContain('"mcpServers"');
+    expect(copilot.stdout).toContain('"tools"');
   });
 
   it("aggregates setup all output across targets", async () => {

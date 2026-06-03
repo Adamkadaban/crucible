@@ -118,7 +118,7 @@ crucible setup codex --print
 crucible setup copilot --print
 ```
 
-Example client config:
+Example opencode client config:
 
 ```json
 {
@@ -155,6 +155,8 @@ close button while verifying the guest process exits.
 
 If your MCP client does not inherit the shell environment, point it at `scripts/opencode-mcp.sh` or
 an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucible mcp --stdio`.
+Other clients use different MCP config schemas; run the matching `crucible setup ... --print` helper
+for Claude Code, Codex, or Copilot before editing their config files manually.
 
 ## Common Commands
 

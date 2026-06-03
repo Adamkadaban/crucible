@@ -2173,12 +2173,41 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
     case "codex":
       return renderSetupInstruction(
         "codex",
-        'Codex MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` to your Codex config.',
+        [
+          "Codex stores MCP servers in `~/.codex/config.toml` or a trusted project `.codex/config.toml`.",
+          "CLI:",
+          "codex mcp add crucible -- crucible mcp --stdio",
+          "",
+          "TOML:",
+          '[mcp_servers.crucible]\ncommand = "crucible"\nargs = ["mcp", "--stdio"]\nenabled = true',
+        ].join("\n"),
       );
     case "copilot":
       return renderSetupInstruction(
         "copilot",
-        'Copilot CLI MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` if your Copilot CLI build supports MCP.',
+        [
+          "Copilot CLI stores MCP servers in `~/.copilot/mcp-config.json`.",
+          "In Copilot CLI, run `/mcp add`, choose Local/STDIO, and use command `crucible mcp --stdio`.",
+          "",
+          "JSON:",
+          JSON.stringify(
+            {
+              mcpServers: {
+                crucible: {
+                  type: "local",
+                  command: "crucible",
+                  args: ["mcp", "--stdio"],
+                  env: {},
+                  tools: ["*"],
+                },
+              },
+            },
+            null,
+            2,
+          ),
+          "",
+          "Copilot cloud agent/code review repository settings also use an `mcpServers` JSON object, but that configuration is managed on GitHub.com and should allowlist tools intentionally.",
+        ].join("\n"),
       );
   }
 }
@@ -2514,7 +2543,7 @@ function runHostCommand(command: string, args: readonly string[]): Promise<Comma
 }
 
 async function setupClaudeCommand(printOnly: boolean): Promise<CommandResult> {
-  const json = JSON.stringify(getMcpServerEntry(), null, 2);
+  const json = JSON.stringify(getClaudeMcpServerEntry(), null, 2);
   if (printOnly) {
     return {
       exitCode: 0,
@@ -2611,6 +2640,10 @@ async function setupJsonMcpCommand(options: {
 
 function getMcpServerEntry(): JsonObject {
   return { enabled: true, type: "local", command: ["crucible", "mcp", "--stdio"] };
+}
+
+function getClaudeMcpServerEntry(): JsonObject {
+  return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"], env: {} };
 }
 
 function jsonValuesEqual(left: unknown, right: unknown): boolean {
