@@ -146,10 +146,20 @@ type CliRuntime = {
   readonly snapshotManager?: CliSnapshotManager;
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
+  readonly vmViewBridgeStarter?: VmViewBridgeStarter;
   readonly qmpClientFactory?: () => CliQmpClient;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
 };
+
+type VmViewBridgeStarter = (
+  bridgeCommand: readonly string[],
+  host: string,
+  port: number,
+) => Promise<
+  | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
+  | { readonly ok: false; readonly error: string }
+>;
 
 type CliQmpClient = {
   readonly connect: () => Promise<unknown>;
@@ -569,7 +579,11 @@ async function runVmViewCommand(
     };
   }
 
-  const bridgeResult = await startVmViewBridge(bridgeCommand, parsed.args.host, port);
+  const bridgeResult = await (runtime.vmViewBridgeStarter ?? startVmViewBridge)(
+    bridgeCommand,
+    parsed.args.host,
+    port,
+  );
   if (!bridgeResult.ok) {
     return {
       exitCode: 1,
