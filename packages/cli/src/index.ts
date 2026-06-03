@@ -605,11 +605,7 @@ async function runVmViewCommand(
     };
   }
 
-  const launchResult = await launchVmViewer(
-    viewerCommand,
-    runtime.processRunner,
-    bridgeResult.bridge.stop,
-  );
+  const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
   if (!launchResult.ok) {
     bridgeResult.bridge.stop();
     return {
@@ -703,7 +699,7 @@ function buildVmViewBridgeCommand(
     "socat",
     "-d",
     "-d",
-    `TCP-LISTEN:${port},bind=${args.host},reuseaddr`,
+    `TCP-LISTEN:${port},bind=${args.host},reuseaddr,listen-timeout=15`,
     `UNIX-CONNECT:${vncSocketPath}`,
   ];
 }
@@ -817,7 +813,6 @@ function stopDetachedChild(child: ChildProcess): void {
 async function launchVmViewer(
   viewerCommand: readonly string[],
   runner: ProcessRunner | undefined,
-  onViewerExit?: () => void,
 ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
   const executable = viewerCommand[0] ?? "remote-viewer";
   const args = viewerCommand.slice(1);
@@ -836,7 +831,6 @@ async function launchVmViewer(
     if (result.exitCode !== 0 || result.timedOut) {
       return { ok: false, error: result.stderr || "viewer command failed" };
     }
-    onViewerExit?.();
     return { ok: true };
   }
 
@@ -863,10 +857,7 @@ async function launchVmViewer(
         finish({ ok: false, error: error.message });
       });
       child.once("close", (code, signal) => {
-        if (launchAccepted) {
-          onViewerExit?.();
-          return;
-        }
+        if (launchAccepted) return;
         finish({
           ok: false,
           error: formatProcessEarlyExit(code, signal, "", ""),

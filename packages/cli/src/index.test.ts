@@ -2086,7 +2086,9 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("VM view dry run:");
     expect(result.stdout).toContain("VNC socket:");
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
-    expect(result.stdout).toContain("socat -d -d 'TCP-LISTEN:5901,bind=127.0.0.1");
+    expect(result.stdout).toContain(
+      "socat -d -d 'TCP-LISTEN:5901,bind=127.0.0.1,reuseaddr,listen-timeout=15'",
+    );
     expect(result.stdout).toContain("remote-viewer vnc://127.0.0.1:5901");
   });
 
@@ -2123,11 +2125,11 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(bridgeCommands).toEqual([
-      `socat -d -d TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr UNIX-CONNECT:artifacts/vnc.sock`,
+      `socat -d -d TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,listen-timeout=15 UNIX-CONNECT:artifacts/vnc.sock`,
     ]);
     expect(processCommands).toEqual([`vncviewer 127.0.0.1:${display}`]);
     expect(result.stdout).toContain(
-      `socat -d -d 'TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr' UNIX-CONNECT:artifacts/vnc.sock`,
+      `socat -d -d 'TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,listen-timeout=15' UNIX-CONNECT:artifacts/vnc.sock`,
     );
     expect(result.stdout).toContain("viewer: launched");
   });
@@ -2234,7 +2236,9 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
-    expect(result.stdout).toContain("socat -d -d 'TCP-LISTEN:5901,bind=127.0.0.1");
+    expect(result.stdout).toContain(
+      "socat -d -d 'TCP-LISTEN:5901,bind=127.0.0.1,reuseaddr,listen-timeout=15'",
+    );
   });
 
   it("reports vm view bridge failures without launching viewer", async () => {
