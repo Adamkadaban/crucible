@@ -1981,7 +1981,7 @@ describe("crucible CLI bootstrap", () => {
     const qmpCommands: string[] = [];
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view", "--viewer", "vncviewer"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
         execute: (command: string, args?: Readonly<Record<string, unknown>>) => {
@@ -2032,7 +2032,7 @@ describe("crucible CLI bootstrap", () => {
     const emptyPath = await createTempDir("crucible-empty-path-");
     vi.stubEnv("PATH", emptyPath);
     const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
         execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
@@ -2052,7 +2052,7 @@ describe("crucible CLI bootstrap", () => {
     vi.stubEnv("PATH", binDir);
 
     const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
         execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
@@ -2068,7 +2068,7 @@ describe("crucible CLI bootstrap", () => {
 
   it("reports vm view injected viewer runner failures", async () => {
     const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
         execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
@@ -2106,7 +2106,7 @@ describe("crucible CLI bootstrap", () => {
   it("reports vm view QMP failures without launching viewer", async () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view"], {
-      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
         execute: () => Promise.reject(new Error("change vnc unsupported")),
@@ -2131,6 +2131,37 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("Unable to enable a live VNC view");
     expect(result.stderr).toContain("change vnc unsupported");
+    expect(processCommands).toEqual([]);
+  });
+
+  it("rejects vm view when the VM was started without VNC display support", async () => {
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "none" } } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('vm.display.mode "vnc"');
+    expect(result.stderr).toContain('current config is "none"');
     expect(processCommands).toEqual([]);
   });
 

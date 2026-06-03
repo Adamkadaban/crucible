@@ -550,6 +550,16 @@ async function runVmViewCommand(
   }
 
   const config = getRuntimeConfig(runtime);
+  if (config.vm.display.mode !== "vnc") {
+    return {
+      exitCode: 1,
+      stdout: lines.join("\n"),
+      stderr: [
+        `VM view requires a VM started with vm.display.mode "vnc"; current config is "${config.vm.display.mode}".`,
+        'Stop the VM, set vm.display.mode to "vnc", then start it again before running `crucible vm view`.',
+      ].join("\n"),
+    };
+  }
   const qmp =
     runtime.qmpClientFactory?.() ??
     new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
