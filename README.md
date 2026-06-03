@@ -12,95 +12,45 @@
 </p>
 
 Crucible provisions a Windows analysis VM on QEMU/KVM, installs debugger tooling and a small mTLS
-guest agent, and exposes VM control through both a CLI and MCP server.
+guest agent, then exposes VM control through a CLI and MCP server.
 
 Use it for local malware-analysis and Windows debugging workflows where you control the host. Do not
 treat it as a hard containment boundary against VM escapes or host-kernel bugs.
 
-## Requirements
+## Quick Start
+
+Requirements:
 
 - Linux host with KVM access.
 - QEMU, OVMF, `swtpm`, `socat`, and `xorriso`.
-- A Windows installer ISO and virtio-win ISO that you provide locally.
+- Local Windows installer ISO, virtio-win ISO, and virtio guest tools installer.
 
-Debian / Ubuntu package baseline:
+Debian / Ubuntu baseline:
 
 ```sh
 sudo apt install qemu-system-x86 qemu-utils ovmf swtpm socat xorriso
 ```
 
-## Install
+Install the CLI:
 
 ```sh
 npm install -g @adamkadaban/crucible
-crucible --help
 crucible doctor
-crucible setup host --print
-crucible update --dry-run
 ```
 
-The npm package includes the CLI, MCP server, provisioning scripts, and a Windows x64 guest-agent
-binary. You still need a Linux/KVM host and local Windows + virtio media.
-
-Source checkouts also need Node from `.nvmrc`, pnpm via Corepack, and Go for guest-agent builds.
-
-Create `crucible.config.json` in the directory where you will run Crucible, edit the media paths,
-then provision with the global CLI:
+Create a config, edit the media paths, and provision:
 
 ```sh
 crucible config init
 crucible provision
 crucible guest health
 crucible snapshot list
-crucible snapshot restore clean-base
 ```
 
-## Source Checkout
+The first provision usually takes 12-18 minutes and creates a `clean-base` snapshot. Restore that
+snapshot before each new analysis session.
 
-```sh
-git clone https://github.com/Adamkadaban/crucible.git
-cd crucible
-
-scripts/check-host.sh
-nvm install
-corepack enable pnpm
-pnpm install --frozen-lockfile
-pnpm build
-CRUCIBLE_VERSION=$(node -p "require('./package.json').version") scripts/package-release.sh
-```
-
-Create `crucible.config.json` with your local media paths:
-
-```sh
-pnpm crucible config init
-```
-
-`crucible.config.json`, VM disks, generated credentials, snapshots, dumps, pcaps, symbols, and
-downloaded tool archives are ignored by Git.
-
-From a source checkout, use the package script wrapper instead of the global binary:
-
-```sh
-pnpm crucible provision
-pnpm crucible guest health
-pnpm crucible snapshot list
-```
-
-The first provision usually takes 12-18 minutes. On success Crucible creates a `clean-base`
-snapshot. Restore it before each new analysis session:
-
-Optional `realism.enabled` provisioning generates a seeded, reproducible guest persona with less
-obvious default usernames/hostnames, benign user files across common folders, inert stealer-target
-honeytoken files, and optional common-software presence markers. It does not make QEMU/KVM
-undetectable, does not install real third-party persona applications during provisioning, and must
-never use real personal data or credentials. Live validation also detects real common-user software
-when an operator installs it manually for a persona baseline.
-
-```sh
-pnpm crucible snapshot restore clean-base
-```
-
-## MCP Server
+## MCP
 
 Run the MCP server over stdio:
 
@@ -108,8 +58,7 @@ Run the MCP server over stdio:
 crucible mcp --stdio
 ```
 
-To configure MCP clients, use one of the setup helpers. They are idempotent for supported config
-files and print the file they update:
+Use the setup helpers instead of hand-editing client config:
 
 ```sh
 crucible setup opencode
@@ -118,7 +67,7 @@ crucible setup codex --print
 crucible setup copilot --print
 ```
 
-Example opencode client config:
+Example opencode config:
 
 ```json
 {
@@ -132,64 +81,45 @@ Example opencode client config:
 }
 ```
 
-Useful MCP tools include `vm_status`, `vm_start`, `vm_stop`, `snapshot_list`, `snapshot_restore`,
-`guest_health`, `guest_exec`, `guest_upload_file`, `guest_download_file`, `debug_open`,
-`debug_command`, `debug_dump`, `dump_process`, `memory_scan`, and network/ProcMon inspection
-helpers. GUI-oriented MCP clients can combine `vm_screenshot` with `vm_mouse_move`,
-`vm_mouse_click`, `vm_mouse_double_click`, `vm_mouse_drag`, `vm_key_press`, and `vm_type_text`.
-Mouse coordinates are not screenshot pixels; they use QMP absolute pointer coordinates in the
-normalized `0..0x7fff` range per axis. Convert a screenshot pixel by scaling `x` by
-`32767 / (width - 1)` and `y` by `32767 / (height - 1)`, then rounding to an integer; for a
-single-pixel axis, use coordinate `0` on that axis. Key input is sent through QEMU monitor `sendkey`
-names or chords such as `ctrl-l`, `Ctrl+L`, and `alt-f4`; the CLI adapter normalizes case and `+`
-separators.
-
-User-mode CDB automation is supported. KD/KDNET tooling is installed and reported in health output,
-but kernel-debugging workflows are not implemented yet.
-
-The live E2E suite exercises every registered MCP bootstrap tool against an isolated Windows VM. It
-also validates screenshots by reading the captured PPM bytes, parsing the image header, checking for
-non-flat pixel data, and comparing pixel changes after GUI input. GUI coverage includes mouse move,
-left click, double-click, drag, right-click, key input, text input, and clicking a real Notepad
-close button while verifying the guest process exits.
-
-If your MCP client does not inherit the shell environment, point it at `scripts/opencode-mcp.sh` or
-an equivalent wrapper that loads `nvm` and Corepack before running `pnpm crucible mcp --stdio`.
-Other clients use different MCP config schemas; run the matching `crucible setup ... --print` helper
-for Claude Code, Codex, or Copilot before editing their config files manually.
-
 ## Common Commands
 
 ```sh
-pnpm crucible --help
 crucible --help
-pnpm crucible media plan --manual
-pnpm crucible vm start --dry-run
-pnpm crucible vm status
-pnpm crucible vm credentials
-pnpm crucible vm view --dry-run
-pnpm crucible vm logs
-pnpm crucible vm stop
-pnpm crucible network status
-pnpm crucible snapshot restore clean-base
+crucible version
 crucible update --dry-run
+crucible vm status
+crucible vm credentials
+crucible vm view --dry-run
+crucible snapshot restore clean-base
+crucible network status
 ```
 
-The older colon spellings such as `crucible vm:status` still work for compatibility, but docs prefer
-the space-separated command style.
+`crucible vm credentials` prints generated Windows account credentials from host-only secret files.
+Treat that output as sensitive.
 
-`crucible vm credentials` prints the generated Windows standard and admin account credentials from
-the host-only secret files created during provisioning. Treat this output as sensitive: do not paste
-it into public issues, CI logs, chat transcripts, or committed files.
+## Source Checkout
 
-## Safety Notes
+Use a source checkout only when developing Crucible itself:
+
+```sh
+git clone https://github.com/Adamkadaban/crucible.git
+cd crucible
+scripts/check-host.sh
+nvm install
+corepack enable pnpm
+pnpm install --frozen-lockfile
+pnpm build
+```
+
+From source, use `pnpm crucible ...` instead of the global binary.
+
+## Safety
 
 - Keep the default network mode isolated unless guest egress is intentional.
 - Never mount host home directories, SSH agents, browser profiles, cloud credentials, or repository
   roots into the guest.
 - Keep malware samples and generated artifacts outside Git and outside synced personal folders.
-- Treat `artifacts/secrets/`, `artifacts/boot/Autounattend.xml`, and
-  `artifacts/boot/autounattend.iso` as secret-equivalent local files.
+- Treat generated secrets, autounattend files, dumps, pcaps, and snapshots as local-only artifacts.
 - Stop and restore `clean-base` after each sample unless you are intentionally continuing the same
   investigation.
 
@@ -197,14 +127,14 @@ See [`SECURITY.md`](./SECURITY.md) for reporting and containment guidance.
 
 ## Documentation
 
-- [`docs/install.md`](./docs/install.md) - detailed source install and first provision.
-- [`docs/provisioning.md`](./docs/provisioning.md) - provisioning stages and contracts.
+- [`docs/install.md`](./docs/install.md) - detailed install and first provision.
+- [`docs/provisioning.md`](./docs/provisioning.md) - provisioning stages, realism mode, and E2E
+  scope.
 - [`docs/qemu.md`](./docs/qemu.md) - QEMU command shape and lifecycle state.
 - [`docs/network-isolation.md`](./docs/network-isolation.md) - isolated, NAT, and capture modes.
 - [`docs/protocol.md`](./docs/protocol.md) - guest agent mTLS HTTP API.
 - [`docs/debugger.md`](./docs/debugger.md) - CDB-backed debugger workflows.
-- [`docs/malware-analysis-sop.md`](./docs/malware-analysis-sop.md) - malware-analysis operating
-  procedure.
+- [`docs/malware-analysis-sop.md`](./docs/malware-analysis-sop.md) - operating procedure.
 - [`docs/teardown.md`](./docs/teardown.md) - cleanup boundaries.
 - [`docs/threat-model.md`](./docs/threat-model.md) - assumptions and non-goals.
 
@@ -212,20 +142,13 @@ See [`SECURITY.md`](./SECURITY.md) for reporting and containment guidance.
 
 ```sh
 pnpm check
-
 pnpm e2e
-pnpm e2e:live  # opt-in; requires local Windows media and the live E2E VM config
+pnpm e2e:live  # opt-in; requires local Windows media and live VM config
 
 cd guest-agent
 go test ./...
 go build ./...
 ```
-
-CI-safe E2E covers every registered CLI command with safe arguments and fails if a new command lacks
-a matrix entry. Live E2E is intentionally separate from `pnpm check` because it provisions or reuses
-a real Windows VM and exercises QMP, QGA, the guest agent, MCP tools, screenshots, GUI input,
-debugger automation, process/memory helpers, randomized persona state, decoy files, and software
-evidence.
 
 ## License
 
