@@ -44,6 +44,7 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
     expect(result.stdout).toContain("crucible vm status");
+    expect(result.stdout).toContain("vm credentials");
     expect(result.stdout).toContain("Command groups:");
   });
 
@@ -54,6 +55,7 @@ describe("crucible CLI bootstrap", () => {
     expect(group.exitCode).toBe(0);
     expect(group.stdout).toContain("crucible vm");
     expect(group.stdout).toContain("vm status");
+    expect(group.stdout).toContain("vm credentials");
     expect(command.exitCode).toBe(0);
     expect(command.stdout).toContain("crucible vm status");
     expect(command.stdout).toContain("Aliases: vm:status");
@@ -68,6 +70,7 @@ describe("crucible CLI bootstrap", () => {
       config,
       lifecycleManager: lifecycle,
     });
+    const credentials = await runCrucibleCli(["vm", "credentials"], { config });
     const snapshotList = await runCrucibleCli(["snapshot", "list"], { config, snapshotManager });
     const networkStatus = await runCrucibleCli(["network", "status"], { config });
     const netAlias = await runCrucibleCli(["net", "status"], { config });
@@ -78,6 +81,8 @@ describe("crucible CLI bootstrap", () => {
 
     expect(vmStatus.exitCode).toBe(0);
     expect(vmStatus.stdout).toContain("status: running");
+    expect(credentials.exitCode).toBe(1);
+    expect(credentials.stderr).toContain("VM credentials have not been generated yet");
     expect(snapshotList.exitCode).toBe(0);
     expect(snapshotList.stdout).toContain("Snapshots: none");
     expect(networkStatus.exitCode).toBe(0);
@@ -1965,6 +1970,54 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("status: stopped");
     expect(result.stdout).toContain("pid: none");
+  });
+
+  it("prints generated VM credentials", async () => {
+    const root = await createTempDir("crucible-cli-");
+    const secretsDirectory = path.join(root, "secrets");
+    await mkdir(path.join(secretsDirectory, "test-win", "windows"), { recursive: true });
+    await writeFile(
+      path.join(secretsDirectory, "test-win", "windows", "standard-user.json"),
+      JSON.stringify({ username: "CrucibleUser", password: "standard-secret" }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(secretsDirectory, "test-win", "windows", "admin-user.json"),
+      JSON.stringify({ username: "CrucibleAdmin", password: "admin-secret" }),
+      "utf8",
+    );
+
+    const result = await runCrucibleCli(["vm", "credentials"], {
+      config: parseCrucibleConfig({
+        vm: { name: "test-win" },
+        artifacts: { secretsDirectory },
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VM credentials:");
+    expect(result.stdout).toContain(
+      `secrets directory: ${path.join(secretsDirectory, "test-win")}`,
+    );
+    expect(result.stdout).toContain("standard username: CrucibleUser");
+    expect(result.stdout).toContain("standard password: standard-secret");
+    expect(result.stdout).toContain("admin username: CrucibleAdmin");
+    expect(result.stdout).toContain("admin password: admin-secret");
+  });
+
+  it("reports missing generated VM credentials", async () => {
+    const root = await createTempDir("crucible-cli-");
+    const result = await runCrucibleCli(["vm", "credentials"], {
+      config: parseCrucibleConfig({
+        vm: { name: "test-win" },
+        artifacts: { secretsDirectory: path.join(root, "secrets") },
+      }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("VM credentials have not been generated yet");
+    expect(result.stderr).toContain("standard, admin");
+    expect(result.stderr).toContain("crucible provision");
   });
 
   it("prints vm view dry-run without touching QMP", async () => {

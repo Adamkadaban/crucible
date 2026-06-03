@@ -302,9 +302,14 @@ describe("Crucible CLI E2E smoke", () => {
       "vm:start": { args: ["vm", "start", "--dry-run"], expectStdout: /VM start dry run:/ },
       "vm:stop": { args: ["vm", "stop"], expectStdout: /VM stop requested/ },
       "vm:status": { args: ["vm", "status"], expectStdout: /status: running/ },
+      "vm:credentials": {
+        args: ["vm", "credentials"],
+        expectExitCode: 1,
+        expectStdout: undefined,
+      },
       "vm:view": {
         args: ["vm", "view", "--dry-run"],
-        expectStdout: /remote-viewer|vncviewer|change vnc/,
+        expectStdout: /bridge command: socat/,
       },
       "vm:logs": { args: ["vm", "logs"], expectStdout: /surface stdout/ },
       "snapshot:create": {

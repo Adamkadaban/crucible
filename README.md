@@ -166,6 +166,7 @@ crucible --help
 pnpm crucible media plan --manual
 pnpm crucible vm start --dry-run
 pnpm crucible vm status
+pnpm crucible vm credentials
 pnpm crucible vm view --dry-run
 pnpm crucible vm logs
 pnpm crucible vm stop
@@ -176,6 +177,9 @@ crucible update --dry-run
 
 The older colon spellings such as `crucible vm:status` still work for compatibility, but docs prefer
 the space-separated command style.
+
+`crucible vm credentials` prints the generated Windows standard and admin account credentials from
+the host-only secret files created during provisioning.
 
 ## Safety Notes
 

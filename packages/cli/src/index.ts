@@ -377,6 +377,8 @@ export async function runCrucibleCli(
       return runVmStopCommand(rest, runtime);
     case "vm:status":
       return runVmStatusCommand(rest, runtime);
+    case "vm:credentials":
+      return runVmCredentialsCommand(rest, runtime);
     case "vm:view":
       return runVmViewCommand(rest, runtime);
     case "vm:logs":
@@ -597,6 +599,76 @@ async function runVmViewCommand(
   return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
 }
 
+async function runVmCredentialsCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  if (args.length > 0) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown vm:credentials option: ${args[0]}` };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const contract = buildProvisioningSecretStorageContract(
+    config.vm.name,
+    config.artifacts.secretsDirectory,
+  );
+  const [standard, admin] = await Promise.all([
+    readWindowsAccountSecret(contract, "standard"),
+    readWindowsAccountSecret(contract, "admin"),
+  ]);
+
+  if (standard === undefined || admin === undefined) {
+    const missing = [
+      standard === undefined ? "standard" : undefined,
+      admin === undefined ? "admin" : undefined,
+    ]
+      .filter((principal): principal is string => principal !== undefined)
+      .join(", ");
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        `VM credentials have not been generated yet (${missing} account missing).`,
+        "Run `crucible provision` first, then retry `crucible vm credentials`.",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    exitCode: 0,
+    stdout: [
+      "VM credentials:",
+      `secrets directory: ${contract.rootDirectory}`,
+      `standard username: ${standard.username}`,
+      `standard password: ${standard.password}`,
+      `admin username: ${admin.username}`,
+      `admin password: ${admin.password}`,
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
+async function readWindowsAccountSecret(
+  contract: ReturnType<typeof buildProvisioningSecretStorageContract>,
+  principal: "standard" | "admin",
+): Promise<{ readonly username: string; readonly password: string } | undefined> {
+  const ref = contract.secretRefs.find((secret) => secret.principal === principal);
+  if (ref === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(await readFile(ref.path, "utf8")) as {
+      readonly username?: unknown;
+      readonly password?: unknown;
+    };
+    if (typeof parsed.username !== "string" || typeof parsed.password !== "string") {
+      throw new Error(`Secret file lacks username or password: ${ref.path}`);
+    }
+    return { username: parsed.username, password: parsed.password };
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw error;
+  }
+}
+
 function buildVmViewBridgeCommand(
   args: VmViewArgs,
   port: number,
@@ -615,8 +687,6 @@ async function ensureVmViewBridge(
   port: number,
   runner: ProcessRunner | undefined,
 ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
-  if (await isTcpPortOpen(host, port)) return { ok: true };
-
   const executable = bridgeCommand[0] ?? "socat";
   const args = bridgeCommand.slice(1);
   if (runner !== undefined) {
@@ -631,6 +701,8 @@ async function ensureVmViewBridge(
     }
     return { ok: true };
   }
+
+  if (await isTcpPortOpen(host, port)) return { ok: true };
 
   try {
     const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
@@ -3819,6 +3891,13 @@ const COMMANDS: readonly CommandDefinition[] = [
     group: "vm",
     summary: "Show lifecycle, PID, QMP, and log paths.",
     usage: ["crucible vm status"],
+  },
+  {
+    canonical: "vm:credentials",
+    preferred: "vm credentials",
+    group: "vm",
+    summary: "Print generated Windows account usernames and passwords.",
+    usage: ["crucible vm credentials"],
   },
   {
     canonical: "vm:view",
