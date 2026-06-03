@@ -67,12 +67,12 @@ func runWithScheduledTask(ctx context.Context, req request, cmd *osexec.Cmd, cre
 		cleanupTask(taskName)
 		return err
 	}
-	copyFileToWriter(stdoutPath, cmd.Stdout)
-	copyFileToWriter(stderrPath, cmd.Stderr)
 	codeBytes, err := waitForFileContent(ctx, codePath)
 	if err != nil {
 		return err
 	}
+	copyFileToWriter(stdoutPath, cmd.Stdout)
+	copyFileToWriter(stderrPath, cmd.Stderr)
 	code, err := strconv.Atoi(strings.TrimSpace(string(codeBytes)))
 	if err != nil {
 		return err
