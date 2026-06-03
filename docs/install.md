@@ -10,6 +10,7 @@ Windows x64 guest-agent binary.
 npm install -g @adamkadaban/crucible
 crucible --help
 crucible doctor
+crucible update --dry-run
 ```
 
 Use a source checkout only when developing Crucible itself.
@@ -41,7 +42,7 @@ downloads them on the operator's behalf.
 3. Generate `crucible.config.json` and replace the media paths:
 
 ```sh
-crucible config:init
+crucible config init
 ```
 
 ```json
@@ -94,8 +95,8 @@ export CRUCIBLE_GUEST_KEY_PATH="artifacts/secrets/<vm>/mtls/host-client.key.pem"
 
 ```sh
 crucible provision
-crucible guest:health
-crucible snapshot:list
+crucible guest health
+crucible snapshot list
 ```
 
 The CLI generates a per-VM mTLS PKI under `artifacts/secrets/<vm>/mtls/` on first run (CA + server
@@ -130,3 +131,6 @@ crucible setup copilot --print
 `setup opencode` updates `~/.config/opencode/opencode.json`. `setup claude` uses the Claude CLI to
 add a user-scoped stdio MCP server. Codex and Copilot CLI setup currently print explicit MCP config
 guidance because their local MCP configuration formats vary by version.
+
+Use `crucible update --dry-run` to check the installed Crucible version against npm and see which
+MCP client entries would be refreshed. Use `crucible update --yes` in non-interactive shells.

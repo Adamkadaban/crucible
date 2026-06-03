@@ -285,7 +285,9 @@ describe("VmLifecycleManager", () => {
   });
 
   it("reuses previously-recorded qemu argv when starting a stopped provisioned VM", async () => {
-    const harness = await createLifecycleHarness();
+    const harness = await createLifecycleHarness({
+      configInput: { vm: { display: { mode: "vnc", vncSocketPath: "artifacts/vnc.sock" } } },
+    });
     const richArgs = ["-name", "life-test", "-cdrom", "payload.iso"];
     await mkdirFor(harness.paths.stateManifest);
     await writeFile(
@@ -303,10 +305,106 @@ describe("VmLifecycleManager", () => {
 
     await harness.manager.start();
 
-    expect(harness.spawnRequests[0]?.args).toEqual(richArgs);
+    expect(harness.spawnRequests[0]?.args).toEqual([...richArgs, "-usb", "-device", "usb-tablet"]);
     await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
-      qemu: { args: richArgs },
+      qemu: { args: [...richArgs, "-usb", "-device", "usb-tablet"] },
     });
+  });
+
+  it("refreshes recorded network mode args when restarting a provisioned VM", async () => {
+    const harness = await createLifecycleHarness({
+      configInput: {
+        network: { mode: "isolated", controlPort: 18443 },
+        vm: { display: { mode: "vnc", vncSocketPath: "artifacts/vnc.sock" } },
+      },
+    });
+    const recordedNatArgs = [
+      "-name",
+      "life-test",
+      "-drive",
+      "file=payload.iso,media=cdrom,if=none,readonly=on,id=crucible-payload",
+      "-netdev",
+      "user,id=crucible-life-test-net0,restrict=off,net=192.0.2.0/29,host=192.0.2.1,dhcpstart=192.0.2.2,hostfwd=tcp:127.0.0.1:18443-192.0.2.2:18443",
+      "-device",
+      "virtio-net-pci,netdev=crucible-life-test-net0",
+    ];
+    await mkdirFor(harness.paths.stateManifest);
+    await writeFile(
+      harness.paths.stateManifest,
+      JSON.stringify({
+        version: 1,
+        vmName: "life-test",
+        state: "stopped",
+        paths: harness.paths,
+        qemu: { executable: "qemu-system-x86_64", args: recordedNatArgs },
+        lastTransitionAt: "2026-05-28T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    await harness.manager.start();
+
+    const startedArgs = harness.spawnRequests[0]?.args ?? [];
+    const netdevIndex = startedArgs.indexOf("-netdev");
+    expect(startedArgs[netdevIndex + 1]).toContain("id=crucible-life-test-net0");
+    expect(startedArgs[netdevIndex + 1]).toContain("restrict=on");
+    expect(startedArgs[netdevIndex + 1]).not.toContain("restrict=off");
+    expect(startedArgs).toContain(
+      "file=payload.iso,media=cdrom,if=none,readonly=on,id=crucible-payload",
+    );
+  });
+
+  it("does not add GUI input devices when restarting a headless provisioned VM", async () => {
+    const root = await createTempDir();
+    const config = parseCrucibleConfig({
+      vm: { name: "headless-test", display: { mode: "none" } },
+      artifacts: {
+        directory: path.join(root, "artifacts"),
+        manifestPath: path.join(root, "artifacts", "manifest.json"),
+        logsDirectory: path.join(root, "artifacts", "logs"),
+        snapshotsDirectory: path.join(root, "snapshots"),
+        secretsDirectory: path.join(root, "secrets"),
+      },
+      qmp: { socketPath: path.join(root, "artifacts", "qmp.sock"), timeoutMs: 100 },
+      qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    });
+    const plan = buildQemuCommandPlan({ config });
+    const paths = buildLifecyclePaths(config);
+    const richArgs = ["-name", "headless-test", "-cdrom", "payload.iso"];
+    await mkdirFor(paths.stateManifest);
+    await writeFile(
+      paths.stateManifest,
+      JSON.stringify({
+        version: 1,
+        vmName: "headless-test",
+        state: "stopped",
+        paths,
+        qemu: { executable: "qemu-system-x86_64", args: richArgs },
+        lastTransitionAt: "2026-05-28T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+    const spawnRequests: VmSpawnRequest[] = [];
+    const manager = new VmLifecycleManager({
+      config,
+      plan,
+      spawner: {
+        spawn(request) {
+          spawnRequests.push(request);
+          return Promise.resolve({ pid: 4242 });
+        },
+      },
+      processController: {
+        isAlive: () => false,
+        signal: () => undefined,
+        waitForExit: () => Promise.resolve(true),
+      },
+      qmpClientFactory: () => new FakeQmpSession(new Error("not used")),
+    });
+
+    await manager.start();
+
+    expect(spawnRequests[0]?.args).toEqual(richArgs);
   });
 
   it("recovers provisioned OVMF and payload args if state was clobbered by a bare plan", async () => {
@@ -530,21 +628,34 @@ type HarnessOptions = {
   readonly qmpConnectError?: Error;
   readonly spawnError?: Error;
   readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
+  readonly configInput?: {
+    readonly vm?: Record<string, unknown>;
+    readonly network?: Record<string, unknown>;
+    readonly artifacts?: Record<string, unknown>;
+    readonly qmp?: Record<string, unknown>;
+    readonly qga?: Record<string, unknown>;
+  };
 };
 
 async function createLifecycleHarness(options: HarnessOptions = {}) {
   const root = await createTempDir();
   const config = parseCrucibleConfig({
-    vm: { name: "life-test" },
+    ...options.configInput,
+    vm: { name: "life-test", ...options.configInput?.vm },
     artifacts: {
       directory: path.join(root, "artifacts"),
       manifestPath: path.join(root, "artifacts", "manifest.json"),
       logsDirectory: path.join(root, "artifacts", "logs"),
       snapshotsDirectory: path.join(root, "snapshots"),
       secretsDirectory: path.join(root, "secrets"),
+      ...options.configInput?.artifacts,
     },
-    qmp: { socketPath: path.join(root, "artifacts", "qmp.sock"), timeoutMs: 100 },
-    qga: { socketPath: path.join(root, "artifacts", "qga.sock") },
+    qmp: {
+      socketPath: path.join(root, "artifacts", "qmp.sock"),
+      timeoutMs: 100,
+      ...options.configInput?.qmp,
+    },
+    qga: { socketPath: path.join(root, "artifacts", "qga.sock"), ...options.configInput?.qga },
   });
   const plan = buildQemuCommandPlan({ config, ...options.plan });
   const paths = buildLifecyclePaths(config);

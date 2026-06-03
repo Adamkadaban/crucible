@@ -275,6 +275,30 @@ describe("provisioning contracts", () => {
     );
   });
 
+  it("passes configured account names to local account provisioning", () => {
+    const plan = buildProvisioningPlan({
+      vmName: "analysis one",
+      secretsDirectory: "secrets",
+      controlPort: 9443,
+      guestAddress: "192.0.2.2",
+      standardUsername: "devuser",
+      adminUsername: "localadmin",
+    });
+
+    const localAccounts = plan.stages.find((stage) => stage.id === "local-accounts-created");
+    expect(localAccounts?.script?.arguments).toEqual(
+      expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
+    );
+    const guestAgent = plan.stages.find((stage) => stage.id === "guest-agent-installed");
+    expect(guestAgent?.script?.arguments).toEqual(
+      expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
+    );
+    const health = plan.stages.find((stage) => stage.id === "health-checked");
+    expect(health?.script?.arguments).toEqual(
+      expect.arrayContaining(["-StandardUsername", "devuser", "-AdminUsername", "localadmin"]),
+    );
+  });
+
   it("defines host-only secret references for Windows credentials and mTLS material", () => {
     const secrets = buildProvisioningSecretStorageContract(
       "Analysis VM!",
@@ -365,6 +389,122 @@ describe("provisioning contracts", () => {
 
     const mode = (await stat(result.accounts[0]?.path ?? "")).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  it("regenerates corrupted Windows account secret files during first-boot preparation", async () => {
+    const root = await mkdtempPath("crucible-corrupt-secrets-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const secretsDirectory = join(root, "secrets");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      mkdir(join(secretsDirectory, "secret-vm", "windows"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(secretsDirectory, "secret-vm", "windows", "standard-user.json"), "{", "utf8"),
+      writeFile(join(secretsDirectory, "secret-vm", "windows", "admin-user.json"), "{", "utf8"),
+    ]);
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "secret-vm", diskGiB: 64 },
+        media: { windowsIso: { path: windowsIso }, virtioIso: { path: virtioIso } },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory,
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    await expect(
+      readFile(join(secretsDirectory, "secret-vm", "windows", "standard-user.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toMatchObject({ username: "CrucibleUser" });
+  });
+
+  it("rewrites stale persona account secrets back to default usernames", async () => {
+    const root = await mkdtempPath("crucible-default-secrets-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    const secretsDirectory = join(root, "secrets");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+      writeWindowsAccountSecrets({
+        vmName: "secret-vm",
+        secretsDirectory,
+        standardUsername: "devuser",
+        adminUsername: "localadmin",
+      }),
+    ]);
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "secret-vm", diskGiB: 64 },
+        media: { windowsIso: { path: windowsIso }, virtioIso: { path: virtioIso } },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory,
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    await expect(
+      readFile(join(secretsDirectory, "secret-vm", "windows", "standard-user.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toMatchObject({ username: "CrucibleUser" });
+    await expect(
+      readFile(join(secretsDirectory, "secret-vm", "windows", "admin-user.json"), "utf8").then(
+        JSON.parse,
+      ),
+    ).resolves.toMatchObject({ username: "CrucibleAdmin" });
   });
 
   it("builds a deterministic guest certificate staging plan from host secrets", () => {
@@ -670,6 +810,180 @@ describe("provisioning contracts", () => {
     expect(setupComplete).toContain("qemu-ga-x86_64.msi");
   });
 
+  it("applies seeded realism persona to first-boot provisioning", async () => {
+    const root = await mkdtempPath("crucible-realism-boot-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+    ]);
+    const commands: ProcessCommand[] = [];
+
+    const plan = await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "realism-vm", diskGiB: 64 },
+        media: {
+          windowsIso: { path: windowsIso },
+          virtioIso: { path: virtioIso },
+        },
+        realism: {
+          enabled: true,
+          seed: "realism-seed",
+          profile: "developer",
+          hostname: "DESKTOP-LAB42",
+          adminUsername: "localadmin",
+          userUsername: "devuser",
+          fullName: "Dev User",
+          locale: "en-GB",
+          timezone: "GMT Standard Time",
+          keyboardLayout: "en-GB",
+          screenResolution: "1440x900",
+          installCommonSoftware: true,
+          populateUserFiles: true,
+          simulateUserHistory: true,
+        },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          commands.push(command);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    const autounattend = await readFile(
+      join(root, "artifacts", "boot", "Autounattend.xml"),
+      "utf8",
+    );
+    expect(autounattend).toContain("<ComputerName>DESKTOP-LAB42</ComputerName>");
+    expect(autounattend).toContain("<InputLocale>en-GB</InputLocale>");
+    expect(autounattend).toContain("<TimeZone>GMT Standard Time</TimeZone>");
+    expect(autounattend).toContain("<Name>localadmin</Name>");
+    expect(autounattend).toContain("<Name>devuser</Name>");
+    const standardSecret = JSON.parse(
+      await readFile(join(root, "secrets", "realism-vm", "windows", "standard-user.json"), "utf8"),
+    ) as { username: string };
+    const adminSecret = JSON.parse(
+      await readFile(join(root, "secrets", "realism-vm", "windows", "admin-user.json"), "utf8"),
+    ) as { username: string };
+    expect(standardSecret.username).toBe("devuser");
+    expect(adminSecret.username).toBe("localadmin");
+    const persona = JSON.parse(
+      await readFile(join(root, "artifacts", "boot", "realism-persona.json"), "utf8"),
+    ) as {
+      adminUsername: string;
+      userUsername: string;
+      fullName: string;
+      decoyFiles: { relativePath: string; category: string }[];
+      softwareMarkers: { name: string }[];
+    };
+    expect(persona.adminUsername).toBe("localadmin");
+    expect(persona.userUsername).toBe("devuser");
+    expect(persona.fullName).toBe("Dev User");
+    expect(persona.decoyFiles.some((file) => file.relativePath.startsWith("Videos\\"))).toBe(true);
+    expect(persona.decoyFiles.some((file) => file.category === "inert-secret")).toBe(true);
+    expect(persona.softwareMarkers.map((software) => software.name)).toEqual(
+      expect.arrayContaining(["Google Chrome", "Notepad++", "Visual Studio Code"]),
+    );
+    expect(commands.at(-1)?.args).toContain(
+      `/realism/persona.json=${join(root, "artifacts", "boot", "realism-persona.json")}`,
+    );
+    const manifest = JSON.parse(
+      await readFile(join(root, "artifacts", "manifest.json"), "utf8"),
+    ) as {
+      artifacts: {
+        kind: string;
+        name: string;
+        metadata?: {
+          hostname?: string;
+          adminUsername?: string;
+          userUsername?: string;
+          fullName?: string;
+          decoyFiles?: { content?: string }[];
+        };
+      }[];
+    };
+    const personaRecord = manifest.artifacts.find((artifact) => artifact.kind === "persona");
+    expect(personaRecord?.name).toBe("realism persona");
+    expect(personaRecord?.metadata?.hostname).toBe("DESKTOP-LAB42");
+    expect(personaRecord?.metadata?.adminUsername).toBeUndefined();
+    expect(personaRecord?.metadata?.userUsername).toBeUndefined();
+    expect(personaRecord?.metadata?.fullName).toBeUndefined();
+    expect(personaRecord?.metadata?.decoyFiles?.some((file) => "content" in file)).toBe(false);
+    expect(plan.realismPersona?.userUsername).toBe("devuser");
+  });
+
+  it("sanitizes VM names before writing Autounattend computer names", async () => {
+    const root = await mkdtempPath("crucible-computer-name-");
+    const windowsIso = join(root, "windows.iso");
+    const virtioIso = join(root, "virtio.iso");
+    const ovmfCode = join(root, "OVMF_CODE.fd");
+    const ovmfVars = join(root, "OVMF_VARS.fd");
+    await Promise.all([
+      writeFile(windowsIso, "windows", "utf8"),
+      writeFile(virtioIso, "virtio", "utf8"),
+      writeFile(ovmfCode, "code", "utf8"),
+      writeFile(ovmfVars, "vars", "utf8"),
+    ]);
+
+    await prepareRealFirstBootProvisioning({
+      config: parseCrucibleConfig({
+        vm: { name: "analysis one-", diskGiB: 64 },
+        media: { windowsIso: { path: windowsIso }, virtioIso: { path: virtioIso } },
+        artifacts: {
+          directory: join(root, "artifacts"),
+          manifestPath: join(root, "artifacts", "manifest.json"),
+          logsDirectory: join(root, "artifacts", "logs"),
+          snapshotsDirectory: join(root, "snapshots"),
+          secretsDirectory: join(root, "secrets"),
+        },
+      }),
+      ovmfCodePath: ovmfCode,
+      ovmfVarsTemplatePath: ovmfVars,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+          });
+        },
+      },
+    });
+
+    const autounattend = await readFile(
+      join(root, "artifacts", "boot", "Autounattend.xml"),
+      "utf8",
+    );
+    expect(autounattend).toContain("<ComputerName>ANALYSIS-ONE</ComputerName>");
+  });
+
   it("does not overwrite existing disk or OVMF vars during first-boot preparation", async () => {
     const root = await mkdtempPath("crucible-first-boot-existing-");
     const windowsIso = join(root, "windows.iso");
@@ -832,6 +1146,9 @@ describe("provisioning contracts", () => {
 
     expect(script).toContain("CRUCIBLE_STANDARD_PASSWORD");
     expect(script).toContain("CRUCIBLE_ADMIN_PASSWORD");
+    expect(script).toContain("CrucibleRealism-");
+    expect(script).toContain("-replace '[\\\\/:*?\"<>|\\[\\]]', '_'");
+    expect(script).toContain("New-Item -LiteralPath $keyPath -Force");
     expect(script).toContain("-PasswordNeverExpires:$true");
     expect(script).toContain("-UserMayChangePassword:$false");
     expect(script).not.toContain(
@@ -839,6 +1156,7 @@ describe("provisioning contracts", () => {
     );
     expect(script).not.toContain("-PasswordNeverExpires $true");
     expect(script).not.toContain("-UserMayChangePassword $false");
+    expect(script).not.toContain("New-Item -ItemType Directory -Force -LiteralPath");
   });
 
   it("getExampleConfigJson returns valid JSON", () => {
@@ -876,7 +1194,13 @@ describe("provisioning contracts", () => {
     expect(script).toContain("[System.Net.IPAddress]::IPv6Any");
     expect(script).toContain("-RemoteAddress $HostOnlySourceAddress");
     expect(script).toContain("opensshBootstrapOnly = $true");
+    expect(script).toContain('[string]$StandardUsername = "CrucibleUser"');
+    expect(script).toContain('[string]$AdminUsername = "CrucibleAdmin"');
+    expect(script).toContain("-Identity $StandardUsername");
+    expect(script).toContain("-Identity $AdminUsername");
     expect(script).not.toContain("-RemoteAddress Any");
+    expect(script).not.toContain('-Identity "CrucibleUser"');
+    expect(script).not.toContain('-Identity "CrucibleAdmin"');
   });
 });
 

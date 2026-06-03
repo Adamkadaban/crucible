@@ -20,12 +20,18 @@ import {
 } from "./analysis-policy.js";
 import { defaultCrucibleConfig, type CrucibleConfig } from "./config.js";
 import { CrucibleError } from "./errors.js";
+import {
+  createEmptyArtifactManifest,
+  upsertArtifactRecord,
+  type ArtifactManifest,
+} from "./manifest.js";
 import { type VmLifecycleManager, type VmStatus } from "./lifecycle.js";
 import { ensureMtlsBundle } from "./mtls.js";
 import { buildNetworkPlan } from "./network.js";
 import type { ProcessCommand, ProcessRunner } from "./process.js";
 import { buildQemuCommandPlan } from "./qemu.js";
 import { QmpClient } from "./qmp.js";
+import { buildRealismPersona, type RealismPersona } from "./realism.js";
 import { type SnapshotCreateResult } from "./snapshot.js";
 
 export const PROVISIONING_STAGE_IDS = [
@@ -57,6 +63,9 @@ export const PROVISIONING_SECRET_KINDS = [
   "mtls-guest-server-private-key",
   "mtls-guest-server-certificate",
 ] as const;
+
+const DEFAULT_WINDOWS_STANDARD_USERNAME = "CrucibleUser";
+const DEFAULT_WINDOWS_ADMIN_USERNAME = "CrucibleAdmin";
 
 export type ProvisioningStageId = (typeof PROVISIONING_STAGE_IDS)[number];
 export type ProvisioningScriptRunner = (typeof PROVISIONING_SCRIPT_RUNNERS)[number];
@@ -248,6 +257,7 @@ export type RealFirstBootProvisioningPlan = {
   readonly mtlsServerPrivateKeyPath: string;
   readonly mtlsHostClientCertificatePath: string;
   readonly mtlsHostClientPrivateKeyPath: string;
+  readonly realismPersona?: RealismPersona;
   readonly commands: readonly ProcessCommand[];
 };
 
@@ -299,6 +309,8 @@ export type ProvisioningPlanOptions = {
   readonly guestAddress: string;
   readonly snapshotName?: string;
   readonly analysisPolicy?: AnalysisVmPolicyConfig;
+  readonly standardUsername?: string;
+  readonly adminUsername?: string;
 };
 
 // Use the full Windows path rather than a bare `powershell.exe`. qemu-ga's
@@ -340,18 +352,39 @@ export function buildProvisioningPlan(options: ProvisioningPlanOptions): Provisi
   };
 }
 
+function applyRealismToAnalysisPolicy(
+  analysisPolicy: AnalysisVmPolicyConfig,
+  persona: RealismPersona | undefined,
+): AnalysisVmPolicyConfig {
+  if (persona === undefined) {
+    return analysisPolicy;
+  }
+
+  return {
+    ...analysisPolicy,
+    profile: {
+      ...analysisPolicy.profile,
+      hostname: analysisPolicy.profile.hostname ?? persona.hostname,
+      username: analysisPolicy.profile.username ?? persona.userUsername,
+    },
+  };
+}
+
 export async function runProvisioningCommand(
   options: ProvisioningCommandRunnerOptions,
 ): Promise<ProvisioningCommandResult> {
   const config = options.config ?? defaultCrucibleConfig;
   const snapshotName = options.snapshotName ?? "clean-base";
+  const realismPersona = buildRealismPersona({ vmName: config.vm.name, config: config.realism });
   const plan = buildProvisioningPlan({
     vmName: config.vm.name,
     secretsDirectory: config.artifacts.secretsDirectory,
     controlPort: config.network.controlPort,
     guestAddress: getGuestControlAddress(config),
     snapshotName,
-    analysisPolicy: config.analysisPolicy,
+    analysisPolicy: applyRealismToAnalysisPolicy(config.analysisPolicy, realismPersona),
+    standardUsername: realismPersona?.userUsername,
+    adminUsername: realismPersona?.adminUsername,
   });
   const executor = options.executor ?? blockedProvisioningExecutor;
   const steps: ProvisioningCommandStep[] = [];
@@ -508,6 +541,7 @@ export async function prepareRealFirstBootProvisioning(
   const autounattendIsoPath = path.join(bootDirectory, "autounattend.iso");
   const windowsIsoPath = config.media.windowsIso?.path;
   const virtioIsoPath = config.media.virtioIso?.path;
+  const realismPersona = buildRealismPersona({ vmName: config.vm.name, config: config.realism });
 
   if (windowsIsoPath === undefined || virtioIsoPath === undefined) {
     throw new CrucibleError(
@@ -534,9 +568,17 @@ export async function prepareRealFirstBootProvisioning(
   const accounts = await ensureWindowsAccountSecrets({
     vmName: config.vm.name,
     secretsDirectory: config.artifacts.secretsDirectory,
+    standardUsername: realismPersona?.userUsername,
+    adminUsername: realismPersona?.adminUsername,
   });
+  const realismPersonaPath =
+    realismPersona === undefined ? undefined : path.join(bootDirectory, "realism-persona.json");
+  if (realismPersona !== undefined) {
+    await writeRealismPersonaFile(realismPersonaPath!, realismPersona);
+    await writeRealismPersonaManifest(config, realismPersona, realismPersonaPath!);
+  }
   const autounattendXmlPath = path.join(bootDirectory, "Autounattend.xml");
-  await writeFile(autounattendXmlPath, buildAutounattendXml(config, accounts), {
+  await writeFile(autounattendXmlPath, buildAutounattendXml(config, accounts, realismPersona), {
     encoding: "utf8",
     mode: 0o600,
   });
@@ -655,6 +697,7 @@ export async function prepareRealFirstBootProvisioning(
     mtlsServerCertificatePath: mtls.serverCertificatePath,
     mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
     provisioningScriptsDirectory,
+    realismPersonaPath,
     timeoutMs,
   });
   await runProvisioningProcess(options.processRunner, payloadIsoCommand);
@@ -682,6 +725,7 @@ export async function prepareRealFirstBootProvisioning(
     mtlsServerPrivateKeyPath: mtls.serverPrivateKeyPath,
     mtlsHostClientCertificatePath: mtls.hostClientCertificatePath,
     mtlsHostClientPrivateKeyPath: mtls.hostClientPrivateKeyPath,
+    realismPersona,
     commands: [...commands, payloadIsoCommand],
   };
 }
@@ -698,6 +742,7 @@ async function buildPayloadIsoCommand(options: {
   readonly mtlsServerCertificatePath: string;
   readonly mtlsServerPrivateKeyPath: string;
   readonly provisioningScriptsDirectory: string;
+  readonly realismPersonaPath?: string;
   readonly timeoutMs: number;
 }): Promise<ProcessCommand> {
   // Remove any leftover payload.iso from a previous run before xorriso
@@ -736,6 +781,9 @@ async function buildPayloadIsoCommand(options: {
   if (options.procmonZipPath !== undefined) {
     await assertReadableFile("Process Monitor zip", options.procmonZipPath);
     graftPoints.push(`/tools/ProcessMonitor.zip=${options.procmonZipPath}`);
+  }
+  if (options.realismPersonaPath !== undefined) {
+    graftPoints.push(`/realism/persona.json=${options.realismPersonaPath}`);
   }
   return {
     executable: options.xorrisoExecutable,
@@ -798,6 +846,65 @@ async function optionalReadableFile(filePath: string): Promise<string | undefine
   }
 }
 
+async function writeRealismPersonaManifest(
+  config: CrucibleConfig,
+  persona: RealismPersona,
+  personaPath: string,
+): Promise<void> {
+  let manifest: ArtifactManifest;
+  try {
+    manifest = JSON.parse(
+      await readFile(config.artifacts.manifestPath, "utf8"),
+    ) as ArtifactManifest;
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+    manifest = createEmptyArtifactManifest(config.vm.name);
+  }
+
+  await mkdir(path.dirname(config.artifacts.manifestPath), { recursive: true });
+  await writeFile(
+    config.artifacts.manifestPath,
+    `${JSON.stringify(
+      upsertArtifactRecord(manifest, {
+        kind: "persona",
+        name: "realism persona",
+        path: personaPath,
+        createdAt: new Date().toISOString(),
+        metadata: redactRealismPersonaForManifest(persona),
+      }),
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
+
+async function writeRealismPersonaFile(filePath: string, persona: RealismPersona): Promise<void> {
+  await writeFile(filePath, `${JSON.stringify(persona, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(filePath, 0o600);
+}
+
+function redactRealismPersonaForManifest({
+  adminUsername: _adminUsername,
+  userUsername: _userUsername,
+  fullName: _fullName,
+  ...persona
+}: RealismPersona): Record<string, unknown> {
+  return {
+    ...persona,
+    decoyFiles: persona.decoyFiles.map((file) => ({
+      relativePath: file.relativePath,
+      lastWriteTimeUtc: file.lastWriteTimeUtc,
+      category: file.category,
+    })),
+  };
+}
+
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
@@ -811,14 +918,39 @@ type EmbeddedAccount = {
 async function ensureWindowsAccountSecrets(options: {
   readonly vmName: string;
   readonly secretsDirectory: string;
+  readonly standardUsername?: string;
+  readonly adminUsername?: string;
 }): Promise<readonly EmbeddedAccount[]> {
+  const expectedStandardUsername = options.standardUsername ?? DEFAULT_WINDOWS_STANDARD_USERNAME;
+  const expectedAdminUsername = options.adminUsername ?? DEFAULT_WINDOWS_ADMIN_USERNAME;
   const contract = buildProvisioningSecretStorageContract(options.vmName, options.secretsDirectory);
   const standardRef = requiredSecretRef(contract, "windows-standard-password");
   const adminRef = requiredSecretRef(contract, "windows-admin-password");
-  if (!(await pathExists(standardRef.path)) || !(await pathExists(adminRef.path))) {
+  const [standardExists, adminExists] = await Promise.all([
+    pathExists(standardRef.path),
+    pathExists(adminRef.path),
+  ]);
+  let shouldWriteAccounts = !standardExists || !adminExists;
+  if (!shouldWriteAccounts) {
+    try {
+      const [standardRaw, adminRaw] = await Promise.all([
+        readFile(standardRef.path, "utf8"),
+        readFile(adminRef.path, "utf8"),
+      ]);
+      const standard = JSON.parse(standardRaw) as WindowsAccountSecret;
+      const admin = JSON.parse(adminRaw) as WindowsAccountSecret;
+      shouldWriteAccounts =
+        standard.username !== expectedStandardUsername || admin.username !== expectedAdminUsername;
+    } catch {
+      shouldWriteAccounts = true;
+    }
+  }
+  if (shouldWriteAccounts) {
     await writeWindowsAccountSecrets({
       vmName: options.vmName,
       secretsDirectory: options.secretsDirectory,
+      standardUsername: options.standardUsername,
+      adminUsername: options.adminUsername,
     });
   }
   const [standardRaw, adminRaw] = await Promise.all([
@@ -836,6 +968,7 @@ async function ensureWindowsAccountSecrets(options: {
 function buildAutounattendXml(
   config: CrucibleConfig,
   accounts: readonly EmbeddedAccount[],
+  realismPersona?: RealismPersona,
 ): string {
   const adminAccount = accounts.find((a) => a.principal === "admin");
   if (adminAccount === undefined) {
@@ -845,7 +978,10 @@ function buildAutounattendXml(
       {},
     );
   }
-  const computerName = config.vm.name.slice(0, 15);
+  const computerName = windowsComputerName(realismPersona?.hostname ?? config.vm.name);
+  const locale = realismPersona?.locale ?? "en-US";
+  const keyboardLayout = realismPersona?.keyboardLayout ?? locale;
+  const timezone = realismPersona?.timezone ?? "UTC";
   const localAccountLines: string[] = [];
   for (const account of accounts) {
     const group = account.principal === "admin" ? "Administrators" : "Users";
@@ -866,11 +1002,11 @@ function buildAutounattendXml(
     '<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">',
     '  <settings pass="windowsPE">',
     '    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
-    "      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>",
-    "      <InputLocale>en-US</InputLocale>",
-    "      <SystemLocale>en-US</SystemLocale>",
-    "      <UILanguage>en-US</UILanguage>",
-    "      <UserLocale>en-US</UserLocale>",
+    `      <SetupUILanguage><UILanguage>${escapeXml(locale)}</UILanguage></SetupUILanguage>`,
+    `      <InputLocale>${escapeXml(keyboardLayout)}</InputLocale>`,
+    `      <SystemLocale>${escapeXml(locale)}</SystemLocale>`,
+    `      <UILanguage>${escapeXml(locale)}</UILanguage>`,
+    `      <UserLocale>${escapeXml(locale)}</UserLocale>`,
     "    </component>",
     '    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     "      <RunSynchronous>",
@@ -897,7 +1033,7 @@ function buildAutounattendXml(
     '  <settings pass="specialize">',
     '    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     `      <ComputerName>${escapeXml(computerName)}</ComputerName>`,
-    "      <TimeZone>UTC</TimeZone>",
+    `      <TimeZone>${escapeXml(timezone)}</TimeZone>`,
     "    </component>",
     '    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     "      <RunSynchronous>",
@@ -933,10 +1069,10 @@ function buildAutounattendXml(
     "  </settings>",
     '  <settings pass="oobeSystem">',
     '    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
-    "      <InputLocale>en-US</InputLocale>",
-    "      <SystemLocale>en-US</SystemLocale>",
-    "      <UILanguage>en-US</UILanguage>",
-    "      <UserLocale>en-US</UserLocale>",
+    `      <InputLocale>${escapeXml(keyboardLayout)}</InputLocale>`,
+    `      <SystemLocale>${escapeXml(locale)}</SystemLocale>`,
+    `      <UILanguage>${escapeXml(locale)}</UILanguage>`,
+    `      <UserLocale>${escapeXml(locale)}</UserLocale>`,
     "    </component>",
     '    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">',
     "      <OOBE>",
@@ -963,7 +1099,7 @@ function buildAutounattendXml(
     "          <PlainText>true</PlainText>",
     "        </Password>",
     "      </AutoLogon>",
-    "      <TimeZone>UTC</TimeZone>",
+    `      <TimeZone>${escapeXml(timezone)}</TimeZone>`,
     "    </component>",
     "  </settings>",
     "</unattend>",
@@ -1033,6 +1169,17 @@ function buildWinPeInstallScript(config: CrucibleConfig): string {
     "wpeutil reboot",
     `rem virtio profile ${osFolder}`,
   ].join("\r\n");
+}
+
+function windowsComputerName(value: string): string {
+  const sanitized = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 15)
+    .replace(/-+$/, "");
+  return sanitized.length > 0 ? sanitized : "CRUCIBLE-VM";
 }
 
 function buildSetupCompleteScript(): string {
@@ -1159,6 +1306,7 @@ export function buildGuestHealthReport(options: {
   readonly provisioningComplete?: boolean;
 }): GuestHealthReport {
   const config = options.config ?? defaultCrucibleConfig;
+  const realismPersona = buildRealismPersona({ vmName: config.vm.name, config: config.realism });
   const plan =
     options.plan ??
     buildProvisioningPlan({
@@ -1166,7 +1314,9 @@ export function buildGuestHealthReport(options: {
       secretsDirectory: config.artifacts.secretsDirectory,
       controlPort: config.network.controlPort,
       guestAddress: getGuestControlAddress(config),
-      analysisPolicy: config.analysisPolicy,
+      analysisPolicy: applyRealismToAnalysisPolicy(config.analysisPolicy, realismPersona),
+      standardUsername: realismPersona?.userUsername,
+      adminUsername: realismPersona?.adminUsername,
     });
   const healthStage = requiredStage(plan, "health-checked");
   const checks: GuestHealthCheckResult[] = healthStage.readinessChecks.map((check) => ({
@@ -1360,6 +1510,14 @@ function buildProvisioningStageContracts(
         "guest/provision/create-local-accounts.ps1",
         {
           elevated: true,
+          scriptArguments: [
+            ...(options.standardUsername === undefined
+              ? []
+              : ["-StandardUsername", options.standardUsername]),
+            ...(options.adminUsername === undefined
+              ? []
+              : ["-AdminUsername", options.adminUsername]),
+          ],
           environmentSecretRefs: ["windows-standard-password", "windows-admin-password"],
         },
       ),
@@ -1385,6 +1543,10 @@ function buildProvisioningStageContracts(
           "192.0.2.1",
           "-ControlPort",
           String(options.controlPort),
+          ...(options.standardUsername === undefined
+            ? []
+            : ["-StandardUsername", options.standardUsername]),
+          ...(options.adminUsername === undefined ? [] : ["-AdminUsername", options.adminUsername]),
         ],
         timeoutMs: INSTALL_SCRIPT_TIMEOUT_MS,
         elevated: true,
@@ -1451,7 +1613,16 @@ function buildProvisioningStageContracts(
         "guest-agent-powershell",
         "guest/provision/test-health.ps1",
         {
-          scriptArguments: ["-AllowMissingWinDbg", "-AllowDefenderEnabled"],
+          scriptArguments: [
+            "-AllowMissingWinDbg",
+            "-AllowDefenderEnabled",
+            ...(options.standardUsername === undefined
+              ? []
+              : ["-StandardUsername", options.standardUsername]),
+            ...(options.adminUsername === undefined
+              ? []
+              : ["-AdminUsername", options.adminUsername]),
+          ],
         },
       ),
       producesSecrets: [],
@@ -1556,7 +1727,7 @@ export async function writeWindowsAccountSecrets(
     {
       ref: standardRef,
       secret: {
-        username: options.standardUsername ?? "CrucibleUser",
+        username: options.standardUsername ?? DEFAULT_WINDOWS_STANDARD_USERNAME,
         password: generatePassword(passwordLength, random),
         principal: "standard" as const,
         generatedAt,
@@ -1565,7 +1736,7 @@ export async function writeWindowsAccountSecrets(
     {
       ref: adminRef,
       secret: {
-        username: options.adminUsername ?? "CrucibleAdmin",
+        username: options.adminUsername ?? DEFAULT_WINDOWS_ADMIN_USERNAME,
         password: generatePassword(passwordLength, random),
         principal: "admin" as const,
         generatedAt,

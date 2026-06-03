@@ -7,19 +7,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildLifecyclePaths,
+  CRUCIBLE_VERSION,
   defaultCrucibleConfig,
   parseCrucibleConfig,
   type GuestAgentHealth,
   type VmStatus,
 } from "@crucible/core";
 
-import { runCrucibleCli } from "./index.js";
+import {
+  buildMcpVmAdapter,
+  normalizeVmTextInput,
+  qemuKeyForTextInput,
+  runCrucibleCli,
+} from "./index.js";
 
 const defaultRuntime = { config: defaultCrucibleConfig };
 const tempDirs: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
@@ -36,6 +43,135 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("crucible provision");
     expect(result.stdout).toContain("crucible mcp");
+    expect(result.stdout).toContain("crucible vm status");
+    expect(result.stdout).toContain("Command groups:");
+  });
+
+  it("prints grouped and command help", async () => {
+    const group = await runCrucibleCli(["vm", "--help"], defaultRuntime);
+    const command = await runCrucibleCli(["vm", "status", "--help"], defaultRuntime);
+
+    expect(group.exitCode).toBe(0);
+    expect(group.stdout).toContain("crucible vm");
+    expect(group.stdout).toContain("vm status");
+    expect(command.exitCode).toBe(0);
+    expect(command.stdout).toContain("crucible vm status");
+    expect(command.stdout).toContain("Aliases: vm:status");
+  });
+
+  it("supports space-separated command aliases", async () => {
+    const config = parseCrucibleConfig({ vm: { name: "test-win" } });
+    const lifecycle = fakeLifecycleManager(config, { processAlive: true, qmpAvailable: true });
+    const snapshotManager = fakeSnapshotManager(config);
+
+    const vmStatus = await runCrucibleCli(["vm", "status"], {
+      config,
+      lifecycleManager: lifecycle,
+    });
+    const snapshotList = await runCrucibleCli(["snapshot", "list"], { config, snapshotManager });
+    const networkStatus = await runCrucibleCli(["network", "status"], { config });
+    const netAlias = await runCrucibleCli(["net", "status"], { config });
+    const guestExec = await runCrucibleCli(["guest", "exec", "whoami.exe"], {
+      config,
+      guestClientFactory: () => Promise.resolve(fakeGuestClient()),
+    });
+
+    expect(vmStatus.exitCode).toBe(0);
+    expect(vmStatus.stdout).toContain("status: running");
+    expect(snapshotList.exitCode).toBe(0);
+    expect(snapshotList.stdout).toContain("Snapshots: none");
+    expect(networkStatus.exitCode).toBe(0);
+    expect(networkStatus.stdout).toContain("Network status:");
+    expect(netAlias.exitCode).toBe(0);
+    expect(netAlias.stdout).toContain("Network status:");
+    expect(guestExec.exitCode).toBe(0);
+    expect(guestExec.stdout).toContain("fake-output");
+  });
+
+  it("maps common ASCII punctuation for VM text input", () => {
+    expect(qemuKeyForTextInput("_")).toBe("shift-minus");
+    expect(qemuKeyForTextInput("+")).toBe("shift-equal");
+    expect(qemuKeyForTextInput("?")).toBe("shift-slash");
+    expect(qemuKeyForTextInput("@")).toBe("shift-2");
+  });
+
+  it("normalizes VM text input line endings before key expansion", () => {
+    expect(normalizeVmTextInput("one\r\ntwo\rthree\nfour")).toBe("one\ntwo\nthree\nfour");
+  });
+
+  it("drives VM display input through QMP-backed MCP adapter methods", async () => {
+    const calls: Array<{ command: string; args?: Readonly<Record<string, unknown>> }> = [];
+    const adapter = buildMcpVmAdapter(parseCrucibleConfig({ vm: { name: "test-win" } }), () => ({
+      connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+      execute: <T = unknown>(command: string, args?: Readonly<Record<string, unknown>>) => {
+        calls.push({ command, args });
+        const returnValue =
+          command === "query-commands"
+            ? ([{ name: "input-send-event" }, { name: "human-monitor-command" }] as T)
+            : ({} as T);
+        return Promise.resolve({ id: "test", returnValue, events: [] });
+      },
+      close: () => undefined,
+    }));
+
+    await expect(adapter.displayInfo()).resolves.toMatchObject({
+      available: true,
+      inputAvailable: true,
+      backend: "qmp-input-send-event+qmp-human-monitor-command",
+    });
+    await expect(adapter.mouseClick({ x: 10, y: 20, button: "left" })).resolves.toMatchObject({
+      action: "mouse_click",
+      backend: "qmp-input-send-event",
+    });
+    await expect(adapter.keyPress("ctrl+alt+delete")).resolves.toMatchObject({
+      action: "key_press",
+      key: "ctrl-alt-delete",
+    });
+    await expect(adapter.typeText("A_+\r\n")).resolves.toMatchObject({
+      action: "type_text",
+      textLength: 4,
+    });
+
+    expect(calls).toContainEqual({ command: "query-commands", args: undefined });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        command: "human-monitor-command",
+        args: { "command-line": "sendkey shift-minus" },
+      }),
+    );
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        command: "human-monitor-command",
+        args: { "command-line": "sendkey ret" },
+      }),
+    );
+  });
+
+  it("passes guest command help flags after the argument separator", async () => {
+    const requests: Array<{ executable: string; arguments?: readonly string[] }> = [];
+    const result = await runCrucibleCli(["guest", "exec", "--", "whoami.exe", "--help"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      guestClientFactory: () =>
+        Promise.resolve({
+          ...fakeGuestClient(),
+          exec: (request: { executable: string; arguments?: readonly string[] }) => {
+            requests.push(request);
+            return Promise.resolve({
+              exitCode: 0,
+              stdoutBase64: Buffer.from("guest-help").toString("base64"),
+              stderrBase64: "",
+              timedOut: false,
+              durationMs: 5,
+              truncated: false,
+            });
+          },
+        }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("guest-help");
+    expect(result.stdout).not.toContain("Command groups:");
+    expect(requests[0]).toMatchObject({ executable: "whoami.exe", arguments: ["--help"] });
   });
 
   it("prints mcp banner without starting stdio transport", async () => {
@@ -53,6 +189,441 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("Unknown command: nope");
     expect(result.stderr).toContain("crucible provision");
+  });
+
+  it("suggests close command matches", async () => {
+    const result = await runCrucibleCli(["vm", "stats", "--bad"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown command: vm stats");
+    expect(result.stderr).not.toContain("Unknown command: vm stats --bad");
+    expect(result.stderr).toContain("Did you mean: crucible vm status?");
+  });
+
+  it("reports unknown help requests as command errors", async () => {
+    const flagHelp = await runCrucibleCli(["vm", "stats", "--help"], defaultRuntime);
+    const pseudoHelp = await runCrucibleCli(["help", "vm", "stats"], defaultRuntime);
+
+    expect(flagHelp.exitCode).toBe(2);
+    expect(flagHelp.stdout).toBe("");
+    expect(flagHelp.stderr).toContain("Unknown command: vm stats");
+    expect(pseudoHelp.exitCode).toBe(2);
+    expect(pseudoHelp.stdout).toBe("");
+    expect(pseudoHelp.stderr).toContain("Unknown command: vm stats");
+  });
+
+  it("prints update dry-run plan without installing", async () => {
+    const root = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(root, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(root, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : `${root}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Crucible update plan:");
+    expect(result.stdout).toContain("latest npm version: 1.2.3");
+    expect(result.stdout).toContain("package update: would run");
+    expect(result.stdout).toContain("MCP config refresh:");
+    expect(result.stdout).toContain("opencode: would refresh:");
+    expect(result.stdout).toContain("claude: would skip");
+    expect(result.stdout).not.toContain("would run claude MCP setup command");
+    expect(commands).toEqual([
+      "npm view @adamkadaban/crucible version --silent",
+      "npm root -g",
+      "pnpm root -g",
+    ]);
+  });
+
+  it("reports current opencode MCP config during update dry-run", async () => {
+    const previousHome = process.env.HOME;
+    const home = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = home;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    const configPath = path.join(home, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+      }),
+    );
+
+    try {
+      const result = await runCrucibleCli(["update", "--dry-run"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view") ? "1.2.3\n" : `${globalRoot}\n`,
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(`opencode: already current: ${configPath}`);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("reports opencode MCP dry-run parse failures without writing", async () => {
+    const previousHome = process.env.HOME;
+    const home = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = home;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    const configPath = path.join(home, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, "not-json", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["update", "--dry-run"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view") ? "1.2.3\n" : `${globalRoot}\n`,
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("opencode: would fail;");
+      expect(await readFile(configPath, "utf8")).toBe("not-json");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("updates package and refreshes opencode MCP config with --yes", async () => {
+    const root = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    vi.stubEnv("HOME", root);
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update", "--yes"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          if (command.executable === "pnpm") {
+            return Promise.resolve({
+              command,
+              exitCode: 1,
+              stdout: "",
+              stderr: "pnpm global root unavailable",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          }
+          const stdout = command.args.includes("view")
+            ? "1.2.3\n"
+            : command.args.includes("root")
+              ? `${globalRoot}\n`
+              : "updated\n";
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+    const opencodeConfig = JSON.parse(
+      await readFile(path.join(root, ".config", "opencode", "opencode.json"), "utf8"),
+    ) as { mcp?: { crucible?: { command?: string; args?: string[] } } };
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("package update: completed");
+    expect(result.stdout).toContain("Refreshed opencode config:");
+    expect(opencodeConfig.mcp?.crucible?.command).toBe("crucible");
+    expect(opencodeConfig.mcp?.crucible?.args).toEqual(["mcp", "--stdio"]);
+    expect(commands).toContain("npm install -g @adamkadaban/crucible@latest");
+  });
+
+  it("prefers pnpm update when pnpm owns the global package", async () => {
+    const npmRoot = await createTempDir("crucible-npm-root-");
+    const pnpmRoot = await createTempDir("crucible-pnpm-root-");
+    await mkdir(path.join(pnpmRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(pnpmRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          commands.push(`${command.executable} ${command.args.join(" ")}`);
+          const stdout = command.args.includes("view")
+            ? "1.2.3\n"
+            : command.executable === "pnpm"
+              ? `${pnpmRoot}\n`
+              : `${npmRoot}\n`;
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(`detected install: pnpm global (${pnpmRoot})`);
+    expect(result.stdout).toContain("package command: pnpm add -g '@adamkadaban/crucible@latest'");
+    expect(commands).toContain("pnpm root -g");
+  });
+
+  it("falls back to npm when pnpm is not installed", async () => {
+    const npmRoot = await createTempDir("crucible-npm-root-");
+    await mkdir(path.join(npmRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(npmRoot, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          if (command.executable === "pnpm") {
+            return Promise.reject(new Error("spawn pnpm ENOENT"));
+          }
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : `${npmRoot}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(`detected install: npm global (${npmRoot})`);
+    expect(result.stdout).toContain(
+      "package command: npm install -g '@adamkadaban/crucible@latest'",
+    );
+  });
+
+  it("requires --yes for non-interactive update apply", async () => {
+    const result = await runCrucibleCli(["update"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : "/npm/global\n",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Non-interactive update requires --yes");
+  });
+
+  it("requires --yes when update stdout is piped", async () => {
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    try {
+      const result = await runCrucibleCli(["update"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: 0,
+              stdout: command.args.includes("view") ? "1.2.3\n" : "/npm/global\n",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Non-interactive update requires --yes");
+    } finally {
+      if (stdinDescriptor === undefined) {
+        Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
+      } else {
+        Object.defineProperty(process.stdin, "isTTY", stdinDescriptor);
+      }
+      if (stdoutDescriptor === undefined) {
+        Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: undefined });
+      } else {
+        Object.defineProperty(process.stdout, "isTTY", stdoutDescriptor);
+      }
+    }
+  });
+
+  it("rejects unknown update options", async () => {
+    const result = await runCrucibleCli(["update", "--bad"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Unknown update option: --bad");
+  });
+
+  it("reports npm version lookup spawn failures during update", async () => {
+    const result = await runCrucibleCli(["update", "--dry-run"], {
+      ...defaultRuntime,
+      processRunner: {
+        run() {
+          return Promise.reject(new Error("spawn npm ENOENT"));
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Failed to check npm");
+    expect(result.stderr).toContain("spawn npm ENOENT");
+  });
+
+  it("reports package update spawn failures", async () => {
+    const root = await createTempDir("crucible-global-root-");
+    await mkdir(path.join(root, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(path.join(root, "@adamkadaban", "crucible", "package.json"), "{}", "utf8");
+    const result = await runCrucibleCli(["update", "--yes"], {
+      ...defaultRuntime,
+      processRunner: {
+        run(command) {
+          if (command.args.includes("install")) {
+            return Promise.reject(new Error("spawn npm ENOENT"));
+          }
+          return Promise.resolve({
+            command,
+            exitCode: command.executable === "pnpm" ? 1 : 0,
+            stdout: command.args.includes("view") ? "1.2.3\n" : `${root}\n`,
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("spawn npm ENOENT");
+  });
+
+  it("returns non-zero when update MCP refresh fails", async () => {
+    const previousHome = process.env.HOME;
+    const home = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = home;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    const configPath = path.join(home, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, "not-json", "utf8");
+
+    try {
+      const result = await runCrucibleCli(["update", "--yes"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view")
+                ? `${CRUCIBLE_VERSION}\n`
+                : command.args.includes("root")
+                  ? `${globalRoot}\n`
+                  : "updated\n",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain("MCP config refresh:");
+      expect(result.stderr).toContain("Failed to read");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
   });
 
   it("rejects invalid vm:create and vm:start options", async () => {
@@ -371,7 +942,7 @@ describe("crucible CLI bootstrap", () => {
     const result = await runCrucibleCli(["config:init", "--bad"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Unknown config:init option: --bad");
+    expect(result.stderr).toContain("Unknown config init option: --bad");
   });
 
   it("prints host setup install command without --yes", async () => {
@@ -432,6 +1003,60 @@ describe("crucible CLI bootstrap", () => {
         command: "crucible",
         args: ["mcp", "--stdio"],
       });
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }
+  });
+
+  it("treats reordered opencode MCP entries as current during update", async () => {
+    const previousHome = process.env.HOME;
+    const root = await createTempDir("crucible-home-");
+    const globalRoot = await createTempDir("crucible-global-root-");
+    process.env.HOME = root;
+    await mkdir(path.join(globalRoot, "@adamkadaban", "crucible"), { recursive: true });
+    await writeFile(
+      path.join(globalRoot, "@adamkadaban", "crucible", "package.json"),
+      "{}",
+      "utf8",
+    );
+    const configPath = path.join(root, ".config", "opencode", "opencode.json");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcp: { crucible: { args: ["mcp", "--stdio"], command: "crucible", type: "stdio" } },
+      }),
+    );
+
+    try {
+      const result = await runCrucibleCli(["update", "--yes"], {
+        ...defaultRuntime,
+        processRunner: {
+          run(command) {
+            return Promise.resolve({
+              command,
+              exitCode: command.executable === "pnpm" ? 1 : 0,
+              stdout: command.args.includes("view")
+                ? "1.2.3\n"
+                : command.args.includes("root")
+                  ? `${globalRoot}\n`
+                  : "updated\n",
+              stderr: "",
+              durationMs: 1,
+              timedOut: false,
+              signal: null,
+            });
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("opencode config already current");
+      expect(result.stdout).not.toContain("Backup:");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -1241,6 +1866,151 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stdout).toContain("pid: none");
   });
 
+  it("prints vm view dry-run without touching QMP", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--dry-run"], defaultRuntime);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VM view dry run:");
+    expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
+    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+    expect(result.stdout).toContain("remote-viewer vnc://127.0.0.1:5901");
+  });
+
+  it("enables vm view over QMP and launches the viewer", async () => {
+    const qmpCommands: string[] = [];
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view", "--viewer", "vncviewer"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: (command: string, args?: Readonly<Record<string, unknown>>) => {
+          qmpCommands.push(`${command}:${JSON.stringify(args)}`);
+          return Promise.resolve({ id: "test", returnValue: {}, events: [] });
+        },
+        close: () => undefined,
+      }),
+      processRunner: {
+        run(command) {
+          processCommands.push(`${command.executable} ${command.args.join(" ")}`);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(qmpCommands).toEqual([
+      'human-monitor-command:{"command-line":"change vnc 127.0.0.1:1"}',
+    ]);
+    expect(processCommands).toEqual(["vncviewer 127.0.0.1:1"]);
+    expect(result.stdout).toContain("viewer: launched");
+  });
+
+  it("rejects unsupported vm view viewers", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--viewer", "sh"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--viewer must be remote-viewer or vncviewer");
+  });
+
+  it("rejects malformed vm view display values", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--display", "1junk"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--display must be an integer from 0 to 99");
+  });
+
+  it("reports missing vm view viewer executables", async () => {
+    const emptyPath = await createTempDir("crucible-empty-path-");
+    vi.stubEnv("PATH", emptyPath);
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("ENOENT");
+  });
+
+  it("reports vm view injected viewer runner failures", async () => {
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        close: () => undefined,
+      }),
+      processRunner: {
+        run() {
+          return Promise.reject(new Error("spawn remote-viewer ENOENT"));
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("spawn remote-viewer ENOENT");
+  });
+
+  it("rejects non-loopback vm view hosts", async () => {
+    const result = await runCrucibleCli(["vm", "view", "--host", "0.0.0.0"], defaultRuntime);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("loopback");
+  });
+
+  it("canonicalizes vm view localhost host to loopback address", async () => {
+    const result = await runCrucibleCli(
+      ["vm", "view", "--dry-run", "--host", "localhost"],
+      defaultRuntime,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("VNC endpoint: 127.0.0.1:5901");
+    expect(result.stdout).toContain("change vnc 127.0.0.1:1");
+  });
+
+  it("reports vm view QMP failures without launching viewer", async () => {
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: () => Promise.reject(new Error("change vnc unsupported")),
+        close: () => undefined,
+      }),
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Unable to enable a live VNC view");
+    expect(result.stderr).toContain("change vnc unsupported");
+    expect(processCommands).toEqual([]);
+  });
+
   it("prints missing VM logs before the VM has started", async () => {
     const root = await createTempDir("crucible-cli-");
     const config = parseCrucibleConfig({
@@ -1866,7 +2636,7 @@ describe("additional CLI coverage", () => {
     const result = await runCrucibleCli(["net:teardown", "--invalid"], defaultRuntime);
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Unknown net:teardown option: --invalid");
+    expect(result.stderr).toContain("Unknown network teardown option: --invalid");
   });
 
   it("provision fails when stage is blocked", async () => {
@@ -2114,7 +2884,7 @@ describe("additional CLI coverage", () => {
     });
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Unknown net:status option: --verbose");
+    expect(result.stderr).toContain("Unknown network status option: --verbose");
   });
 
   it("net:plan rejects missing --mode value", async () => {

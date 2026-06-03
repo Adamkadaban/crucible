@@ -16,13 +16,13 @@ binaries or KVM device without changing the host.
 
 ## Installation Media
 
-`crucible media:plan` describes the installation media needed before provisioning a VM. The default
+`crucible media plan` describes the installation media needed before provisioning a VM. The default
 profile uses Windows 11 Enterprise Evaluation and the stable virtio-win ISO. The alternate
 `windows-server-2025-eval` profile uses Windows Server Evaluation with the same virtio defaults.
 
 Pass `--manual` to include profile-specific manual download URLs. Manual downloads are expected when
 Microsoft evaluation links require registration, redirects, or anti-bot checks. In that case,
-download the files shown by `crucible media:plan --manual` and place them at the printed cache
+download the files shown by `crucible media plan --manual` and place them at the printed cache
 paths, or configure explicit overrides in `crucible.config.json`.
 
 ```json
@@ -44,12 +44,12 @@ include a `sha256` field for later verification.
 Dry-run the full host-side plan before provisioning:
 
 ```sh
-pnpm crucible media:plan --manual
-pnpm crucible vm:create --dry-run
-pnpm crucible vm:start --dry-run
+pnpm crucible media plan --manual
+pnpm crucible vm create --dry-run
+pnpm crucible vm start --dry-run
 ```
 
-`vm:create --dry-run` shows the qcow2 creation command and QEMU launch argv. `vm:start --dry-run`
+`vm create --dry-run` shows the qcow2 creation command and QEMU launch argv. `vm start --dry-run`
 shows the launch argv only. Neither command downloads media, creates disks, or starts a VM.
 
 ## Provisioning Outline
@@ -83,9 +83,9 @@ The real provisioning smoke command is:
 
 ```sh
 pnpm crucible provision && \
-  pnpm crucible snapshot:create clean-base && \
-  pnpm crucible snapshot:restore clean-base && \
-  pnpm crucible guest:health
+  pnpm crucible snapshot create clean-base && \
+  pnpm crucible snapshot restore clean-base && \
+  pnpm crucible guest health
 ```
 
 Do not run this in CI. It needs a configured Linux/KVM host, Windows guest, QGA bootstrap path, and

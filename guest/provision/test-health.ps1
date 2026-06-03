@@ -1,6 +1,12 @@
 param(
     [switch]$AllowMissingWinDbg,
-    [switch]$AllowDefenderEnabled
+    [switch]$AllowDefenderEnabled,
+
+    [Parameter()]
+    [string]$StandardUsername = "CrucibleUser",
+
+    [Parameter()]
+    [string]$AdminUsername = "CrucibleAdmin"
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,8 +131,8 @@ $sysinternals = [ordered]@{
     autorunsc = Find-ToolExecutable -FileNames @("autorunsc64.exe", "autorunsc.exe")
     sigcheck = Find-ToolExecutable -FileNames @("sigcheck64.exe", "sigcheck.exe")
 }
-$crucibleAdmin = Test-AccountExists -Name "CrucibleAdmin"
-$crucibleUser = Test-AccountExists -Name "CrucibleUser"
+$crucibleAdmin = Test-AccountExists -Name $AdminUsername
+$crucibleUser = Test-AccountExists -Name $StandardUsername
 $qemuAgentStatus = Get-ServiceStatusOrMissing -Name "qemu-ga"
 $crucibleAgentStatus = Get-ServiceStatusOrMissing -Name "CrucibleGuestAgent"
 $defenderRtp = Get-DefenderRealTimeProtection

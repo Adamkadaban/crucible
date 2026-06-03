@@ -1,6 +1,6 @@
 {
   "name": "@adamkadaban/crucible",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Build, snapshot, and control isolated Windows analysis VMs from Linux MCP agents.",
   "author": "Adam Hassan",
   "license": "MIT",
@@ -57,6 +57,8 @@
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "coverage": "vitest run --coverage",
     "crucible": "tsx --conditions=development packages/cli/src/index.ts",
+    "e2e": "vitest run --config vitest.e2e.config.ts",
+    "e2e:live": "CRUCIBLE_E2E_LIVE=1 vitest run --config vitest.live-e2e.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:version": "node scripts/generate-version.mjs",

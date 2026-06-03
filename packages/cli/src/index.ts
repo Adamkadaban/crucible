@@ -15,7 +15,9 @@ import {
   buildGuestHealthReport,
   buildMediaCachePlan,
   buildQemuCommandPlan,
+  buildProvisioningSecretStorageContract,
   CrucibleError,
+  CRUCIBLE_VERSION,
   DebuggerSessionManager,
   describeCommand,
   FIREWALL_BACKENDS,
@@ -76,6 +78,28 @@ type CommandResult = {
   readonly stderr: string;
 };
 
+type CommandDefinition = {
+  readonly canonical: string;
+  readonly preferred: string;
+  readonly group?: string;
+  readonly summary: string;
+  readonly usage: readonly string[];
+  readonly examples?: readonly string[];
+  readonly aliases?: readonly string[];
+};
+
+type CommandGroupDefinition = {
+  readonly name: string;
+  readonly aliases?: readonly string[];
+  readonly summary: string;
+};
+
+type ParsedCliInvocation =
+  | { readonly kind: "command"; readonly command: string; readonly rest: readonly string[] }
+  | { readonly kind: "help"; readonly text: string }
+  | { readonly kind: "unknown-help"; readonly command: string }
+  | { readonly kind: "unknown"; readonly command: string };
+
 type CliGuestHealthClient = {
   readonly health: () => Promise<GuestAgentHealth>;
   readonly exec: (request: {
@@ -99,6 +123,8 @@ type GuestPolicyHealth = {
   readonly sysinternals?: Readonly<Record<string, string | null>>;
   readonly crucibleAdminPresent: boolean;
   readonly crucibleUserPresent: boolean;
+  readonly adminUsername?: string;
+  readonly standardUsername?: string;
   readonly qemuAgentStatus: string;
   readonly crucibleAgentStatus: string;
   readonly defenderRealTimeProtectionEnabled: boolean | null;
@@ -119,9 +145,31 @@ type CliRuntime = {
   readonly snapshotManager?: CliSnapshotManager;
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
+  readonly qmpClientFactory?: () => CliQmpClient;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
 };
+
+type CliQmpClient = {
+  readonly connect: () => Promise<unknown>;
+  readonly execute: (
+    command: string,
+    args?: Readonly<Record<string, unknown>>,
+    options?: Readonly<Record<string, unknown>>,
+  ) => Promise<unknown>;
+  readonly close: () => void;
+};
+
+type VmViewArgs = {
+  readonly dryRun: boolean;
+  readonly viewer: "remote-viewer" | "vncviewer";
+  readonly host: string;
+  readonly display: number;
+};
+
+type VmViewArgsResult =
+  | { readonly ok: true; readonly args: VmViewArgs }
+  | { readonly ok: false; readonly message: string };
 
 type ProvisionProgressReporter = {
   readonly start: () => void;
@@ -185,20 +233,119 @@ type SetupArgsResult =
   | { readonly ok: true; readonly args: SetupArgs }
   | { readonly ok: false; readonly message: string };
 
+type UpdateArgs = {
+  readonly dryRun: boolean;
+  readonly yes: boolean;
+};
+
+type UpdateArgsResult =
+  | { readonly ok: true; readonly args: UpdateArgs }
+  | { readonly ok: false; readonly message: string };
+
 type JsonObject = { [key: string]: unknown };
+type QmpMouseButton = "left" | "middle" | "right";
+type CliQmpSession = Pick<QmpClient, "connect" | "execute" | "close">;
+
+const QEMU_TEXT_KEY_MAP: Readonly<Record<string, string>> = {
+  " ": "spc",
+  "\n": "ret",
+  "\r": "ret",
+  "\t": "tab",
+  ".": "dot",
+  ",": "comma",
+  "/": "slash",
+  "\\": "backslash",
+  "-": "minus",
+  "=": "equal",
+  ";": "semicolon",
+  ":": "shift-semicolon",
+  "'": "apostrophe",
+  '"': "shift-apostrophe",
+  "[": "bracket_left",
+  "]": "bracket_right",
+  "{": "shift-bracket_left",
+  "}": "shift-bracket_right",
+  "`": "grave_accent",
+  "~": "shift-grave_accent",
+  _: "shift-minus",
+  "+": "shift-equal",
+  "|": "shift-backslash",
+  "<": "shift-comma",
+  ">": "shift-dot",
+  "?": "shift-slash",
+  "!": "shift-1",
+  "@": "shift-2",
+  "#": "shift-3",
+  $: "shift-4",
+  "%": "shift-5",
+  "^": "shift-6",
+  "&": "shift-7",
+  "*": "shift-8",
+  "(": "shift-9",
+  ")": "shift-0",
+  "0": "0",
+  "1": "1",
+  "2": "2",
+  "3": "3",
+  "4": "4",
+  "5": "5",
+  "6": "6",
+  "7": "7",
+  "8": "8",
+  "9": "9",
+};
+const QEMU_KEY_ALIASES: Readonly<Record<string, string>> = {
+  ctrl: "ctrl",
+  control: "ctrl",
+  alt: "alt",
+  shift: "shift",
+  win: "meta_l",
+  windows: "meta_l",
+  cmd: "meta_l",
+  meta: "meta_l",
+  enter: "ret",
+  return: "ret",
+  escape: "esc",
+  esc: "esc",
+  space: "spc",
+  tab: "tab",
+  delete: "delete",
+  del: "delete",
+  backspace: "backspace",
+};
+
+export function qemuKeyForTextInput(key: string): string {
+  const mapped = QEMU_TEXT_KEY_MAP[key];
+  if (mapped !== undefined) return mapped;
+  if (/^[a-z]$/.test(key)) return key;
+  if (/^[A-Z]$/.test(key)) return `shift-${key.toLowerCase()}`;
+  throw new CrucibleError(
+    "CONFIG_INVALID",
+    `unsupported key for VM text input: ${JSON.stringify(key)}`,
+  );
+}
+
+export function normalizeVmTextInput(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
 
 export async function runCrucibleCli(
   args: readonly string[],
   runtime: CliRuntime = {},
 ): Promise<CommandResult> {
-  const [command, ...rest] = args;
+  const parsed = parseCliInvocation(args);
+  if (parsed.kind === "help") {
+    return { exitCode: 0, stdout: parsed.text, stderr: "" };
+  }
+  if (parsed.kind === "unknown-help") {
+    return { exitCode: 2, stdout: "", stderr: renderUnknownCommand(parsed.command) };
+  }
+  if (parsed.kind === "unknown") {
+    return { exitCode: 2, stdout: "", stderr: renderUnknownCommand(parsed.command) };
+  }
+  const { command, rest } = parsed;
 
   switch (command) {
-    case undefined:
-    case "--help":
-    case "-h":
-    case "help":
-      return { exitCode: 0, stdout: getHelpText(), stderr: "" };
     case "media:plan":
       return renderMediaPlanCommand(rest, runtime);
     case "media:fetch-tools":
@@ -209,6 +356,8 @@ export async function runCrucibleCli(
       return doctorCommand(rest);
     case "setup":
       return setupCommand(rest, runtime);
+    case "update":
+      return updateCommand(rest, runtime);
     case "net:plan":
       return renderNetPlanCommand(rest, runtime);
     case "net:status":
@@ -225,6 +374,8 @@ export async function runCrucibleCli(
       return runVmStopCommand(rest, runtime);
     case "vm:status":
       return runVmStatusCommand(rest, runtime);
+    case "vm:view":
+      return runVmViewCommand(rest, runtime);
     case "vm:logs":
       return runVmLogsCommand(rest, runtime);
     case "snapshot:create":
@@ -372,6 +523,116 @@ async function runVmStatusCommand(
   };
 }
 
+async function runVmViewCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  const parsed = parseVmViewArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const endpoint = `${parsed.args.host}:${parsed.args.display}`;
+  const port = 5900 + parsed.args.display;
+  const viewerCommand = buildVmViewCommand(parsed.args, port);
+  const lines = [
+    "VM view:",
+    `VNC endpoint: ${parsed.args.host}:${port}`,
+    `QMP command: change vnc ${endpoint}`,
+    `viewer command: ${formatCommand(viewerCommand)}`,
+    "Safety: binds display to loopback only; does not restart or reconfigure the VM beyond the live VNC endpoint.",
+  ];
+
+  if (parsed.args.dryRun) {
+    return { exitCode: 0, stdout: ["VM view dry run:", ...lines.slice(1)].join("\n"), stderr: "" };
+  }
+
+  const config = getRuntimeConfig(runtime);
+  const qmp =
+    runtime.qmpClientFactory?.() ??
+    new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs });
+  try {
+    await qmp.connect();
+    await qmp.execute(
+      "human-monitor-command",
+      { "command-line": `change vnc ${endpoint}` },
+      { timeoutMs: config.qmp.timeoutMs },
+    );
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        "Unable to enable a live VNC view for the running VM.",
+        error instanceof Error ? error.message : String(error),
+        "Try `crucible vm view --dry-run` to inspect the planned endpoint, or restart later with display support once available.",
+      ].join("\n"),
+    };
+  } finally {
+    qmp.close();
+  }
+
+  const launchResult = await launchVmViewer(viewerCommand, runtime.processRunner);
+  if (!launchResult.ok) {
+    return {
+      exitCode: 1,
+      stdout: lines.join("\n"),
+      stderr: launchResult.error,
+    };
+  }
+
+  return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
+}
+
+async function launchVmViewer(
+  viewerCommand: readonly string[],
+  runner: ProcessRunner | undefined,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
+  const executable = viewerCommand[0] ?? "remote-viewer";
+  const args = viewerCommand.slice(1);
+  if (runner !== undefined) {
+    let result: ProcessResult;
+    try {
+      result = await runner.run({
+        executable,
+        args,
+        timeoutMs: 10_000,
+        maxOutputBytes: 256 * 1024,
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    if (result.exitCode !== 0 || result.timedOut) {
+      return { ok: false, error: result.stderr || "viewer command failed" };
+    }
+    return { ok: true };
+  }
+
+  try {
+    const child = spawn(executable, args, { detached: true, stdio: "ignore" });
+    const launched = await new Promise<
+      { readonly ok: true } | { readonly ok: false; readonly error: string }
+    >((resolve) => {
+      const timer = setTimeout(() => resolve({ ok: true }), 250);
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        resolve({ ok: false, error: error.message });
+      });
+      child.once("spawn", () => {
+        clearTimeout(timer);
+        resolve({ ok: true });
+      });
+    });
+    if (!launched.ok) {
+      return launched;
+    }
+    child.unref();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function runVmLogsCommand(
   args: readonly string[],
   runtime: CliRuntime,
@@ -407,8 +668,74 @@ function getSnapshotManager(runtime: CliRuntime): CliSnapshotManager {
   return runtime.snapshotManager ?? new SnapshotManager({ config: getRuntimeConfig(runtime) });
 }
 
-function buildMcpVmAdapter(config: CrucibleConfig) {
+export function buildMcpVmAdapter(
+  config: CrucibleConfig,
+  qmpClientFactory: () => CliQmpSession = () =>
+    new QmpClient({ socketPath: config.qmp.socketPath, timeoutMs: config.qmp.timeoutMs }),
+) {
   const manager = new VmLifecycleManager({ config });
+  const withQmp = async <T>(operation: (qmp: CliQmpSession) => Promise<T>) => {
+    const qmp = qmpClientFactory();
+    try {
+      await qmp.connect();
+      return await operation(qmp);
+    } finally {
+      qmp.close();
+    }
+  };
+  const sendInput = (events: readonly Record<string, unknown>[]) =>
+    withQmp((qmp) =>
+      qmp
+        .execute("input-send-event", { events }, { timeoutMs: config.qmp.timeoutMs })
+        .then(() => undefined),
+    );
+  const sendMonitorCommand = (command: string) =>
+    withQmp((qmp) =>
+      qmp.execute(
+        "human-monitor-command",
+        { "command-line": command },
+        { timeoutMs: config.qmp.timeoutMs },
+      ),
+    );
+  const buttonName = (button: QmpMouseButton) => {
+    switch (button) {
+      case "left":
+        return "left";
+      case "middle":
+        return "middle";
+      case "right":
+        return "right";
+    }
+  };
+  const mouseMoveEvent = (x: number) => ({
+    type: "abs" as const,
+    data: { axis: "x", value: x },
+    // QMP absolute pointer coordinates are normalized 0..0x7fff.
+  });
+  const mouseAbsEvents = (x: number, y: number) => [
+    mouseMoveEvent(x),
+    { type: "abs" as const, data: { axis: "y", value: y } },
+  ];
+  const mouseButtonEvents = (button: QmpMouseButton) => [
+    { type: "btn" as const, data: { button: buttonName(button), down: true } },
+    { type: "btn" as const, data: { button: buttonName(button), down: false } },
+  ];
+  const normalizeQemuKey = (key: string) => {
+    const parts = key
+      .trim()
+      .split(/[+-]/)
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0);
+    if (parts.length === 0) {
+      throw new CrucibleError("CONFIG_INVALID", "key must not be empty");
+    }
+    return parts.map((part) => QEMU_KEY_ALIASES[part] ?? part).join("-");
+  };
+  const assertPairedCoordinates = (x: number | undefined, y: number | undefined) => {
+    if ((x === undefined) !== (y === undefined)) {
+      throw new CrucibleError("CONFIG_INVALID", "x and y must be supplied together");
+    }
+  };
   const render = async () => {
     const status = await manager.status();
     return {
@@ -431,10 +758,7 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       await mkdir(dirname(outputPath), { recursive: true });
       const isPng = outputPath.endsWith(".png");
       const ppmPath = isPng ? `${outputPath}.tmp.ppm` : outputPath;
-      const qmp = new QmpClient({
-        socketPath: config.qmp.socketPath,
-        timeoutMs: config.qmp.timeoutMs,
-      });
+      const qmp = qmpClientFactory();
       try {
         await qmp.connect();
         await qmp.execute("screendump", { filename: ppmPath }, { timeoutMs: config.qmp.timeoutMs });
@@ -451,6 +775,118 @@ function buildMcpVmAdapter(config: CrucibleConfig) {
       }
       const fileInfo = await fsStat(outputPath);
       return { path: outputPath, sizeBytes: fileInfo.size };
+    },
+    displayInfo: async () => {
+      try {
+        const commands = await withQmp(async (qmp) => {
+          const result = await qmp.execute<Array<{ name?: string }>>("query-commands", undefined, {
+            timeoutMs: config.qmp.timeoutMs,
+          });
+          return new Set(
+            result.returnValue
+              .map((command) => command.name)
+              .filter((name): name is string => name !== undefined),
+          );
+        });
+        const mouseAvailable = commands.has("input-send-event");
+        const keyAvailable = commands.has("human-monitor-command");
+        const inputAvailable = mouseAvailable || keyAvailable;
+        const inputBackends = [
+          mouseAvailable ? "qmp-input-send-event" : undefined,
+          keyAvailable ? "qmp-human-monitor-command" : undefined,
+        ].filter((backend): backend is string => backend !== undefined);
+        return {
+          available: true,
+          backend: inputBackends.length > 0 ? inputBackends.join("+") : "qmp",
+          inputAvailable,
+          message:
+            inputBackends.length > 0
+              ? `QMP display is reachable; input backend(s): ${inputBackends.join(", ")}.`
+              : "QMP display is reachable, but display input commands are unavailable.",
+        };
+      } catch (error) {
+        return {
+          available: false,
+          backend: "qmp",
+          inputAvailable: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+    mouseMove: async (x: number, y: number) => {
+      await sendInput(mouseAbsEvents(x, y));
+      return { action: "mouse_move", backend: "qmp-input-send-event", x, y };
+    },
+    mouseClick: async (input: {
+      readonly x?: number;
+      readonly y?: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      assertPairedCoordinates(input.x, input.y);
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
+      await sendInput([...events, ...mouseButtonEvents(input.button)]);
+      return { action: "mouse_click", backend: "qmp-input-send-event", ...input };
+    },
+    mouseDoubleClick: async (input: {
+      readonly x?: number;
+      readonly y?: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      assertPairedCoordinates(input.x, input.y);
+      const events = input.x === undefined ? [] : mouseAbsEvents(input.x, input.y as number);
+      await sendInput([
+        ...events,
+        ...mouseButtonEvents(input.button),
+        ...mouseButtonEvents(input.button),
+      ]);
+      return { action: "mouse_double_click", backend: "qmp-input-send-event", ...input };
+    },
+    mouseDrag: async (input: {
+      readonly fromX: number;
+      readonly fromY: number;
+      readonly toX: number;
+      readonly toY: number;
+      readonly button: "left" | "middle" | "right";
+    }) => {
+      await sendInput([
+        ...mouseAbsEvents(input.fromX, input.fromY),
+        { type: "btn", data: { button: buttonName(input.button), down: true } },
+        ...mouseAbsEvents(input.toX, input.toY),
+        { type: "btn", data: { button: buttonName(input.button), down: false } },
+      ]);
+      return {
+        action: "mouse_drag",
+        backend: "qmp-input-send-event",
+        x: input.toX,
+        y: input.toY,
+        button: input.button,
+      };
+    },
+    keyPress: async (key: string) => {
+      const normalized = normalizeQemuKey(key);
+      await sendMonitorCommand(`sendkey ${normalized}`);
+      return { action: "key_press", backend: "qmp-human-monitor-command", key: normalized };
+    },
+    typeText: async (text: string, delayMs?: number) => {
+      const normalizedText = normalizeVmTextInput(text);
+      const commands = [...normalizedText].map((key) => `sendkey ${qemuKeyForTextInput(key)}`);
+      await withQmp(async (qmp) => {
+        for (const command of commands) {
+          await qmp.execute(
+            "human-monitor-command",
+            { "command-line": command },
+            { timeoutMs: config.qmp.timeoutMs },
+          );
+          if (delayMs !== undefined && delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+      });
+      return {
+        action: "type_text",
+        backend: "qmp-human-monitor-command",
+        textLength: normalizedText.length,
+      };
     },
   };
 }
@@ -927,6 +1363,12 @@ function getExampleConfigJson(): string {
         mode: "isolated",
         controlPort: 8443,
       },
+      realism: {
+        enabled: false,
+        seed: "optional-reproducible-seed",
+        profile: "office-user",
+        populateUserFiles: true,
+      },
       qmp: {
         socketPath: "artifacts/qmp.sock",
         timeoutMs: 5000,
@@ -1078,7 +1520,7 @@ async function runGuestHealthCommand(
       const client = await guestClientFactory();
       try {
         const health = await client.health();
-        const policyHealth = await readGuestPolicyHealth(client);
+        const policyHealth = await readGuestPolicyHealth(client, config);
         const healthy = health.status === "ok" && policyHealth.healthy;
         return {
           exitCode: healthy ? 0 : 1,
@@ -1390,8 +1832,8 @@ function renderGuestAgentHealth(
       `- symbol cache: ${policyHealth.symbolCachePath ?? "missing"}`,
       `- symbol cache writable: ${formatBoolean(policyHealth.symbolCacheWritable)}`,
       `- Sysinternals: ${formatToolMap(policyHealth.sysinternals)}`,
-      `- CrucibleAdmin present: ${policyHealth.crucibleAdminPresent ? "yes" : "no"}`,
-      `- CrucibleUser present: ${policyHealth.crucibleUserPresent ? "yes" : "no"}`,
+      `- ${policyHealth.adminUsername ?? "CrucibleAdmin"} present: ${policyHealth.crucibleAdminPresent ? "yes" : "no"}`,
+      `- ${policyHealth.standardUsername ?? "CrucibleUser"} present: ${policyHealth.crucibleUserPresent ? "yes" : "no"}`,
       `- qemu-ga service: ${policyHealth.qemuAgentStatus ?? "unknown"}`,
       `- CrucibleGuestAgent service: ${policyHealth.crucibleAgentStatus ?? "unknown"}`,
       `- Defender real-time protection: ${formatBoolean(policyHealth.defenderRealTimeProtectionEnabled)}`,
@@ -1486,8 +1928,11 @@ function formatRecordedBoolean(value: boolean, recorded: boolean): string {
   return recorded ? formatBoolean(value) : "unknown";
 }
 
-async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<GuestPolicyHealth> {
-  const command = buildGuestPolicyHealthCommand();
+async function readGuestPolicyHealth(
+  client: CliGuestHealthClient,
+  config: CrucibleConfig,
+): Promise<GuestPolicyHealth> {
+  const command = buildGuestPolicyHealthCommand(await readConfiguredWindowsAccountNames(config));
   const result = await client.exec({
     executable: "powershell.exe",
     arguments: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
@@ -1507,7 +1952,40 @@ async function readGuestPolicyHealth(client: CliGuestHealthClient): Promise<Gues
   return JSON.parse(stdout) as GuestPolicyHealth;
 }
 
-function buildGuestPolicyHealthCommand(): string {
+async function readConfiguredWindowsAccountNames(config: CrucibleConfig): Promise<{
+  readonly standardUsername: string;
+  readonly adminUsername: string;
+}> {
+  const contract = buildProvisioningSecretStorageContract(
+    config.vm.name,
+    config.artifacts.secretsDirectory,
+  );
+  const readUsername = async (principal: "standard" | "admin", fallback: string) => {
+    const ref = contract.secretRefs.find((secret) => secret.principal === principal);
+    if (ref === undefined) return fallback;
+    try {
+      const parsed = JSON.parse(await readFile(ref.path, "utf8")) as { username?: unknown };
+      return typeof parsed.username === "string" && parsed.username.length > 0
+        ? parsed.username
+        : fallback;
+    } catch (error) {
+      if (isMissingPathError(error)) return fallback;
+      throw error;
+    }
+  };
+
+  return {
+    standardUsername: await readUsername("standard", "CrucibleUser"),
+    adminUsername: await readUsername("admin", "CrucibleAdmin"),
+  };
+}
+
+function buildGuestPolicyHealthCommand(accountNames: {
+  readonly standardUsername: string;
+  readonly adminUsername: string;
+}): string {
+  const standardUsername = powerShellSingleQuoted(accountNames.standardUsername);
+  const adminUsername = powerShellSingleQuoted(accountNames.adminUsername);
   return String.raw`$ErrorActionPreference='Stop';
 function Find-Dbg([string[]]$Names){
   foreach($name in $Names){$cmd=Get-Command $name -ErrorAction SilentlyContinue; if($null -ne $cmd){return $cmd.Source}}
@@ -1524,8 +2002,12 @@ function DefenderRtp(){try{$s=Get-MpComputerStatus -ErrorAction Stop; return [bo
 function DwordValue([string]$Path,[string]$Name){try{$i=Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop; return [int]($i.$Name)}catch{return $null}}
 function CodeIntegrityBootOptions(){try{$b=& bcdedit /enum 2>$null; if($LASTEXITCODE -ne 0){return @()}; $o=@(); if($b | Select-String -Pattern '^\s*nointegritychecks\s+Yes\s*$' -Quiet){$o += 'nointegritychecks'}; if($b | Select-String -Pattern '^\s*testsigning\s+Yes\s*$' -Quiet){$o += 'testsigning'}; return @($o)}catch{return @()}}
 function TestSigning(){try{$b=& bcdedit /enum '{current}' 2>$null; if($LASTEXITCODE -ne 0){return $null}; return [bool]($b | Select-String -Pattern 'testsigning\s+Yes' -Quiet)}catch{return $null}}
-$cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $kd=Find-Dbg @('kd.exe'); $kdnet=Find-Dbg @('kdnet.exe'); $gflags=Find-Dbg @('gflags.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $symbolCache=[Environment]::GetEnvironmentVariable('_NT_ALT_SYMBOL_PATH','Machine'); $symbolWritable=$false; if(-not [string]::IsNullOrWhiteSpace($symbolCache)){try{New-Item -ItemType Directory -Force -Path $symbolCache|Out-Null; $probe=Join-Path $symbolCache 'crucible-symbol-cache.probe'; Set-Content -LiteralPath $probe -Value ok -Force; Remove-Item -LiteralPath $probe -Force; $symbolWritable=$true}catch{$symbolWritable=$false}}; $sys=[ordered]@{handle=Find-Tool @('handle64.exe','handle.exe'); strings=Find-Tool @('strings64.exe','strings.exe'); tcpview=Find-Tool @('Tcpview.exe','Tcpview64.exe'); tcpvcon=Find-Tool @('tcpvcon64.exe','tcpvcon.exe'); procdump=Find-Tool @('procdump64.exe','procdump.exe'); procmon=Find-Tool @('Procmon64.exe','Procmon.exe','procmon64.exe','procmon.exe'); listdlls=Find-Tool @('Listdlls64.exe','Listdlls.exe'); autorunsc=Find-Tool @('autorunsc64.exe','autorunsc.exe'); sigcheck=Find-Tool @('sigcheck64.exe','sigcheck.exe')}; $admin=Test-User 'CrucibleAdmin'; $user=Test-User 'CrucibleUser'; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
-[ordered]@{cdbPath=$cdb; windbgPath=$windbg; kdPath=$kd; kdnetPath=$kdnet; gflagsPath=$gflags; symbolPath=$symbol; symbolCachePath=$symbolCache; symbolCacheWritable=$symbolWritable; sysinternals=$sys; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false -and $null -ne $cdb -and $null -ne $windbg -and $null -ne $kd -and $null -ne $kdnet -and $null -ne $gflags -and $symbolWritable)} | ConvertTo-Json -Compress`;
+$adminUsername=${adminUsername}; $standardUsername=${standardUsername}; $cdb=Find-Dbg @('cdb.exe'); $windbg=Find-Dbg @('windbg.exe','WinDbgX.exe'); $kd=Find-Dbg @('kd.exe'); $kdnet=Find-Dbg @('kdnet.exe'); $gflags=Find-Dbg @('gflags.exe'); $symbol=[Environment]::GetEnvironmentVariable('_NT_SYMBOL_PATH','Machine'); $symbolCache=[Environment]::GetEnvironmentVariable('_NT_ALT_SYMBOL_PATH','Machine'); $symbolWritable=$false; if(-not [string]::IsNullOrWhiteSpace($symbolCache)){try{New-Item -ItemType Directory -Force -Path $symbolCache|Out-Null; $probe=Join-Path $symbolCache 'crucible-symbol-cache.probe'; Set-Content -LiteralPath $probe -Value ok -Force; Remove-Item -LiteralPath $probe -Force; $symbolWritable=$true}catch{$symbolWritable=$false}}; $sys=[ordered]@{handle=Find-Tool @('handle64.exe','handle.exe'); strings=Find-Tool @('strings64.exe','strings.exe'); tcpview=Find-Tool @('Tcpview.exe','Tcpview64.exe'); tcpvcon=Find-Tool @('tcpvcon64.exe','tcpvcon.exe'); procdump=Find-Tool @('procdump64.exe','procdump.exe'); procmon=Find-Tool @('Procmon64.exe','Procmon.exe','procmon64.exe','procmon.exe'); listdlls=Find-Tool @('Listdlls64.exe','Listdlls.exe'); autorunsc=Find-Tool @('autorunsc64.exe','autorunsc.exe'); sigcheck=Find-Tool @('sigcheck64.exe','sigcheck.exe')}; $admin=Test-User $adminUsername; $user=Test-User $standardUsername; $qga=ServiceStatus 'qemu-ga'; $agent=ServiceStatus 'CrucibleGuestAgent'; $def=DefenderRtp; $vbs=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity'; $hvci=DwordValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'; $ciRecorded=($null -ne $vbs -and $null -ne $hvci); $ciDisabled=($vbs -eq 0 -and $hvci -eq 0); $bootOptions=@(CodeIntegrityBootOptions); $ts=TestSigning;
+[ordered]@{cdbPath=$cdb; windbgPath=$windbg; kdPath=$kd; kdnetPath=$kdnet; gflagsPath=$gflags; symbolPath=$symbol; symbolCachePath=$symbolCache; symbolCacheWritable=$symbolWritable; sysinternals=$sys; adminUsername=$adminUsername; standardUsername=$standardUsername; crucibleAdminPresent=$admin; crucibleUserPresent=$user; qemuAgentStatus=$qga; crucibleAgentStatus=$agent; defenderRealTimeProtectionEnabled=$def; codeIntegrityStateRecorded=[bool]$ciRecorded; codeIntegrityEnforcementDisabled=[bool]$ciDisabled; hypervisorEnforcedCodeIntegrityDisabled=[bool]($hvci -eq 0); codeIntegrityBootOptions=@($bootOptions); testSigningEnabled=$ts; healthy=($admin -and $user -and $qga -eq 'Running' -and $agent -eq 'Running' -and $ciRecorded -and $ciDisabled -and $ts -eq $false -and $null -ne $cdb -and $null -ne $windbg -and $null -ne $kd -and $null -ne $kdnet -and $null -ne $gflags -and $symbolWritable)} | ConvertTo-Json -Compress`;
+}
+
+function powerShellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function renderSnapshotCreateResult(result: SnapshotCreateResult): string {
@@ -1682,6 +2164,7 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
         configPath: join(homedir(), ".config", "opencode", "opencode.json"),
         mcpKey: "mcp",
         printOnly: parsed.args.printOnly,
+        mode: "setup",
       });
     case "claude":
       return setupClaudeCommand(parsed.args.printOnly);
@@ -1696,6 +2179,231 @@ async function setupCommand(args: readonly string[], runtime: CliRuntime): Promi
         'Copilot CLI MCP configuration is version-dependent. Add a stdio MCP server named `crucible` with command `crucible` and args `["mcp", "--stdio"]` if your Copilot CLI build supports MCP.',
       );
   }
+}
+
+async function updateCommand(args: readonly string[], runtime: CliRuntime): Promise<CommandResult> {
+  const parsed = parseUpdateArgs(args);
+  if (!parsed.ok) {
+    return { exitCode: 2, stdout: "", stderr: parsed.message };
+  }
+
+  const runner = runtime.processRunner ?? nodeProcessRunner;
+  let latestResult: ProcessResult;
+  try {
+    latestResult = await runner.run({
+      executable: "npm",
+      args: ["view", "@adamkadaban/crucible", "version", "--silent"],
+      timeoutMs: 60_000,
+      maxOutputBytes: 64 * 1024,
+    });
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: [
+        "Failed to check npm for the latest Crucible version.",
+        error instanceof Error ? error.message : String(error),
+      ].join("\n"),
+    };
+  }
+  if (latestResult.exitCode !== 0 || latestResult.timedOut) {
+    return {
+      exitCode: latestResult.timedOut ? 1 : (latestResult.exitCode ?? 1),
+      stdout: "",
+      stderr: [`Failed to check npm for the latest Crucible version.`, latestResult.stderr]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
+
+  const latestVersion = latestResult.stdout.trim();
+  if (latestVersion.length === 0) {
+    return { exitCode: 1, stdout: "", stderr: "npm did not report a latest Crucible version." };
+  }
+
+  const install = await detectGlobalInstall(runner);
+  const actions: string[] = [
+    "Crucible update plan:",
+    `current version: ${CRUCIBLE_VERSION}`,
+    `latest npm version: ${latestVersion}`,
+    `detected install: ${formatInstallDetection(install)}`,
+  ];
+  const needsPackageUpdate = latestVersion !== CRUCIBLE_VERSION;
+
+  if (parsed.args.dryRun) {
+    actions.push(
+      `package update: ${needsPackageUpdate ? "would run" : "already current"}`,
+      `package command: ${formatCommand(buildPackageUpdateCommand(install))}`,
+      "MCP config refresh:",
+      ...(await renderMcpUpdateDryRun()),
+    );
+    return { exitCode: 0, stdout: actions.join("\n"), stderr: "" };
+  }
+
+  if (!parsed.args.yes && (!process.stdin.isTTY || !process.stdout.isTTY)) {
+    return {
+      exitCode: 1,
+      stdout: actions.join("\n"),
+      stderr: "Non-interactive update requires --yes.",
+    };
+  }
+
+  if (!parsed.args.yes) {
+    const confirmed = await confirmYes("Update Crucible and refresh MCP config? [Y/n] ");
+    if (!confirmed) {
+      return { exitCode: 1, stdout: actions.join("\n"), stderr: "Update cancelled." };
+    }
+  }
+
+  if (needsPackageUpdate) {
+    const command = buildPackageUpdateCommand(install);
+    let updateResult: ProcessResult;
+    actions.push(`package command: ${formatCommand(command)}`);
+    try {
+      updateResult = await runner.run({
+        executable: command[0] ?? "npm",
+        args: command.slice(1),
+        timeoutMs: 5 * 60 * 1000,
+        maxOutputBytes: 1024 * 1024,
+      });
+    } catch (error) {
+      return {
+        exitCode: 1,
+        stdout: actions.join("\n"),
+        stderr: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (updateResult.exitCode !== 0 || updateResult.timedOut) {
+      return {
+        exitCode: updateResult.timedOut ? 1 : (updateResult.exitCode ?? 1),
+        stdout: actions.join("\n"),
+        stderr: updateResult.stderr,
+      };
+    }
+    actions.push("package update: completed");
+  } else {
+    actions.push("package update: already current");
+  }
+
+  const mcpResults = await refreshMcpConfigs();
+  actions.push("MCP config refresh:", ...mcpResults.lines);
+  return { exitCode: mcpResults.exitCode, stdout: actions.join("\n"), stderr: mcpResults.stderr };
+}
+
+type GlobalInstallDetection = {
+  readonly manager: "npm" | "pnpm";
+  readonly detail: string;
+};
+
+async function detectGlobalInstall(runner: ProcessRunner): Promise<GlobalInstallDetection> {
+  const [npmRoot, pnpmRoot] = await Promise.all([
+    readGlobalRoot(runner, "npm"),
+    readGlobalRoot(runner, "pnpm"),
+  ]);
+
+  if (pnpmRoot !== undefined && (await packageExistsInGlobalRoot(pnpmRoot))) {
+    return { manager: "pnpm", detail: pnpmRoot };
+  }
+  if (npmRoot !== undefined && (await packageExistsInGlobalRoot(npmRoot))) {
+    return { manager: "npm", detail: npmRoot };
+  }
+  if (npmRoot !== undefined) {
+    return { manager: "npm", detail: `${npmRoot} (package not found; fallback)` };
+  }
+  if (pnpmRoot !== undefined) {
+    return { manager: "pnpm", detail: `${pnpmRoot} (package not found; fallback)` };
+  }
+
+  return { manager: "npm", detail: "fallback" };
+}
+
+async function readGlobalRoot(
+  runner: ProcessRunner,
+  manager: "npm" | "pnpm",
+): Promise<string | undefined> {
+  let result: ProcessResult;
+  try {
+    result = await runner.run({
+      executable: manager,
+      args: ["root", "-g"],
+      timeoutMs: 30_000,
+      maxOutputBytes: 64 * 1024,
+    });
+  } catch {
+    return undefined;
+  }
+  const root = result.stdout.trim();
+  return result.exitCode === 0 && root.length > 0 ? root : undefined;
+}
+
+function packageExistsInGlobalRoot(root: string): Promise<boolean> {
+  return fileExists(join(root, "@adamkadaban", "crucible", "package.json"));
+}
+
+function formatInstallDetection(install: GlobalInstallDetection): string {
+  return `${install.manager} global (${install.detail})`;
+}
+
+function buildPackageUpdateCommand(install: GlobalInstallDetection): readonly string[] {
+  if (install.manager === "pnpm") {
+    return ["pnpm", "add", "-g", "@adamkadaban/crucible@latest"];
+  }
+  return ["npm", "install", "-g", "@adamkadaban/crucible@latest"];
+}
+
+async function renderMcpUpdateDryRun(): Promise<readonly string[]> {
+  const opencodePath = join(homedir(), ".config", "opencode", "opencode.json");
+  const opencodeStatus = await describeJsonMcpUpdateDryRun(opencodePath, "mcp");
+  return [
+    `- opencode: ${opencodeStatus}: ${opencodePath}`,
+    "- claude: would skip; run `crucible setup claude` to refresh via Claude CLI",
+    "- codex: would skip; run `crucible setup codex --print` for current guidance",
+    "- copilot: would skip; run `crucible setup copilot --print` for current guidance",
+  ];
+}
+
+async function describeJsonMcpUpdateDryRun(configPath: string, mcpKey: string): Promise<string> {
+  try {
+    const config = await readJsonObjectIfExists(configPath);
+    const existing = config[mcpKey];
+    if (existing !== undefined && !isJsonObject(existing)) {
+      return `would fail; expected ${configPath}.${mcpKey} to be an object`;
+    }
+    const previousEntry = existing === undefined ? undefined : existing.crucible;
+    return jsonValuesEqual(previousEntry, getMcpServerEntry())
+      ? "already current"
+      : "would refresh";
+  } catch (error) {
+    return `would fail; ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function refreshMcpConfigs(): Promise<{
+  readonly exitCode: number;
+  readonly lines: readonly string[];
+  readonly stderr: string;
+}> {
+  const results: string[] = [];
+  const opencode = await setupJsonMcpCommand({
+    targetName: "opencode",
+    configPath: join(homedir(), ".config", "opencode", "opencode.json"),
+    mcpKey: "mcp",
+    printOnly: false,
+    mode: "update",
+  });
+  results.push(
+    `- opencode: ${firstLine([opencode.stdout, opencode.stderr].filter(Boolean).join(" "))}`,
+  );
+
+  results.push("- claude: skipped; run `crucible setup claude` to refresh via Claude CLI");
+  results.push("- codex: skipped; run `crucible setup codex --print` for current guidance");
+  results.push("- copilot: skipped; run `crucible setup copilot --print` for current guidance");
+  return { exitCode: opencode.exitCode, lines: results, stderr: opencode.stderr };
+}
+
+function firstLine(value: string): string {
+  const line = value.split("\n").find((candidate) => candidate.trim().length > 0);
+  return line ?? "no output";
 }
 
 function setupFlags(args: SetupArgs): string[] {
@@ -1830,6 +2538,7 @@ async function setupJsonMcpCommand(options: {
   readonly configPath: string;
   readonly mcpKey: string;
   readonly printOnly: boolean;
+  readonly mode?: "setup" | "update";
 }): Promise<CommandResult> {
   const entry = getMcpServerEntry();
   if (options.printOnly) {
@@ -1859,7 +2568,16 @@ async function setupJsonMcpCommand(options: {
     };
   }
   const existing: JsonObject = currentMcp ?? {};
+  const previousEntry = existing.crucible;
+  const changed = !jsonValuesEqual(previousEntry, entry);
   config[options.mcpKey] = { ...existing, crucible: entry };
+  if (options.mode === "update" && !changed) {
+    return {
+      exitCode: 0,
+      stdout: `${options.targetName} config already current: ${options.configPath}`,
+      stderr: "",
+    };
+  }
   let backupPath: string | undefined;
   try {
     backupPath = await writeJsonConfigWithBackup(options.configPath, config);
@@ -1870,7 +2588,8 @@ async function setupJsonMcpCommand(options: {
       stderr: `Failed to write ${options.configPath}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  const lines = [`Updated ${options.targetName} config: ${options.configPath}`];
+  const verb = options.mode === "update" ? "Refreshed" : "Updated";
+  const lines = [`${verb} ${options.targetName} config: ${options.configPath}`];
   if (backupPath !== undefined) {
     lines.push(`Backup: ${backupPath}`);
   }
@@ -1879,6 +2598,24 @@ async function setupJsonMcpCommand(options: {
 
 function getMcpServerEntry(): JsonObject {
   return { type: "stdio", command: "crucible", args: ["mcp", "--stdio"] };
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(stableJsonValue(left)) === JSON.stringify(stableJsonValue(right));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (isJsonObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableJsonValue(nested)]),
+    );
+  }
+  return value;
 }
 
 function renderSetupInstruction(target: string, message: string): CommandResult {
@@ -1976,7 +2713,7 @@ function renderNetTeardownCommand(args: readonly string[], runtime: CliRuntime):
 
 function renderNetStatusCommand(args: readonly string[], runtime: CliRuntime): CommandResult {
   if (args.length > 0) {
-    return { exitCode: 2, stdout: "", stderr: `Unknown net:status option: ${args[0]}` };
+    return { exitCode: 2, stdout: "", stderr: `Unknown network status option: ${args[0]}` };
   }
   const config = getRuntimeConfig(runtime);
   const plan = buildNetworkPlan({
@@ -2272,6 +3009,71 @@ type NetTeardownArgsResult =
   | { readonly ok: true; readonly args: NetTeardownArgs }
   | { readonly ok: false; readonly message: string };
 
+function parseVmViewArgs(args: readonly string[]): VmViewArgsResult {
+  let dryRun = false;
+  let viewer: "remote-viewer" | "vncviewer" = "remote-viewer";
+  let host = "127.0.0.1";
+  let display = 1;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--viewer") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --viewer" };
+      }
+      if (value !== "remote-viewer" && value !== "vncviewer") {
+        return { ok: false, message: "--viewer must be remote-viewer or vncviewer" };
+      }
+      viewer = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--host") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --host" };
+      }
+      if (value !== "127.0.0.1" && value !== "localhost") {
+        return { ok: false, message: "vm view only supports loopback hosts" };
+      }
+      host = "127.0.0.1";
+      index += 1;
+      continue;
+    }
+    if (arg === "--display") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        return { ok: false, message: "Missing value for --display" };
+      }
+      if (!/^\d+$/.test(value)) {
+        return { ok: false, message: "--display must be an integer from 0 to 99" };
+      }
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 99) {
+        return { ok: false, message: "--display must be an integer from 0 to 99" };
+      }
+      display = parsed;
+      index += 1;
+      continue;
+    }
+    return { ok: false, message: `Unknown vm view option: ${arg}` };
+  }
+
+  return { ok: true, args: { dryRun, viewer, host, display } };
+}
+
+function buildVmViewCommand(args: VmViewArgs, port: number): readonly string[] {
+  if (args.viewer === "vncviewer") {
+    return ["vncviewer", `${args.host}:${args.display}`];
+  }
+  return ["remote-viewer", `vnc://${args.host}:${port}`];
+}
+
 type GuestExecArgsResult =
   | { readonly ok: true; readonly args: GuestExecArgs }
   | { readonly ok: false; readonly message: string };
@@ -2429,7 +3231,7 @@ function parseNetPlanArgs(args: readonly string[], defaultMode: NetworkMode): Ne
       continue;
     }
 
-    return { ok: false, message: `Unknown net:plan option: ${arg}` };
+    return { ok: false, message: `Unknown network plan option: ${arg}` };
   }
 
   return { ok: true, args: { mode, firewallBackend, includeApply } };
@@ -2500,7 +3302,7 @@ function parseNetTeardownArgs(
       continue;
     }
 
-    return { ok: false, message: `Unknown net:teardown option: ${arg}` };
+    return { ok: false, message: `Unknown network teardown option: ${arg}` };
   }
 
   return { ok: true, args: { mode, firewallBackend, operation } };
@@ -2582,7 +3384,7 @@ function parseConfigInitArgs(args: readonly string[]): ConfigInitArgsResult {
       index += 1;
       continue;
     }
-    return { ok: false, message: `Unknown config:init option: ${arg}` };
+    return { ok: false, message: `Unknown config init option: ${arg}` };
   }
 
   return { ok: true, args: { outputPath, force } };
@@ -2612,6 +3414,25 @@ function parseSetupArgs(args: readonly string[]): SetupArgsResult {
   }
 
   return { ok: true, args: { target, printOnly, yes } };
+}
+
+function parseUpdateArgs(args: readonly string[]): UpdateArgsResult {
+  let dryRun = false;
+  let yes = false;
+
+  for (const arg of args) {
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--yes") {
+      yes = true;
+      continue;
+    }
+    return { ok: false, message: `Unknown update option: ${arg}` };
+  }
+
+  return { ok: true, args: { dryRun, yes } };
 }
 
 function isSetupTarget(value: string | undefined): value is SetupTarget {
@@ -2665,7 +3486,7 @@ function buildEnvGuestClientFactory():
   );
 }
 
-function buildDefaultGuestClientFactory(
+export function buildDefaultGuestClientFactory(
   config: CrucibleConfig,
 ): (() => Promise<CliGuestHealthClient>) | undefined {
   const envFactory = buildEnvGuestClientFactory();
@@ -2693,38 +3514,470 @@ function hasExplicitGuestClientEnv(): boolean {
   );
 }
 
+const COMMAND_GROUPS: readonly CommandGroupDefinition[] = [
+  { name: "config", summary: "Create and inspect Crucible configuration." },
+  { name: "media", summary: "Plan local Windows, virtio, and tool media." },
+  { name: "vm", summary: "Create, start, stop, and inspect the analysis VM." },
+  { name: "snapshot", summary: "Create, list, and restore VM snapshots." },
+  { name: "network", aliases: ["net"], summary: "Preview and switch VM network modes." },
+  { name: "guest", summary: "Check or run commands through the Windows guest agent." },
+  { name: "debug", summary: "Run debugger smoke checks." },
+  { name: "scenario", summary: "Run canned analysis workflows." },
+];
+
+const COMMANDS: readonly CommandDefinition[] = [
+  {
+    canonical: "config:init",
+    preferred: "config init",
+    group: "config",
+    summary: "Write an example global config file.",
+    usage: ["crucible config init [--output ~/.config/crucible/config.json] [--force]"],
+    examples: ["crucible config init", "crucible config init --force"],
+  },
+  {
+    canonical: "doctor",
+    preferred: "doctor",
+    summary: "Check host prerequisites.",
+    usage: ["crucible doctor"],
+  },
+  {
+    canonical: "setup",
+    preferred: "setup",
+    summary: "Install host prerequisites or configure MCP clients.",
+    usage: ["crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]"],
+    examples: ["crucible setup host --print", "crucible setup opencode"],
+  },
+  {
+    canonical: "update",
+    preferred: "update",
+    summary: "Update the global package and refresh MCP config entries.",
+    usage: ["crucible update [--dry-run] [--yes]"],
+    examples: ["crucible update --dry-run", "crucible update --yes"],
+  },
+  {
+    canonical: "provision",
+    preferred: "provision",
+    summary: "Provision a Windows analysis VM and clean baseline snapshot.",
+    usage: ["crucible provision"],
+  },
+  {
+    canonical: "mcp",
+    preferred: "mcp",
+    summary: "Print MCP server info or run the stdio MCP server.",
+    usage: ["crucible mcp", "crucible mcp --stdio"],
+  },
+  {
+    canonical: "package",
+    preferred: "package",
+    summary: "Build release package artifacts from a source checkout.",
+    usage: ["crucible package"],
+  },
+  {
+    canonical: "media:plan",
+    preferred: "media plan",
+    group: "media",
+    summary: "Print required media and optional manual download links.",
+    usage: [
+      "crucible media plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
+    ],
+    examples: ["crucible media plan --manual"],
+  },
+  {
+    canonical: "media:fetch-tools",
+    preferred: "media fetch-tools",
+    group: "media",
+    summary: "Download optional tool archives into the media cache.",
+    usage: ["crucible media fetch-tools [--force]"],
+  },
+  {
+    canonical: "vm:create",
+    preferred: "vm create",
+    group: "vm",
+    summary: "Print the planned qcow2 creation and QEMU inputs.",
+    usage: ["crucible vm create --dry-run"],
+  },
+  {
+    canonical: "vm:start",
+    preferred: "vm start",
+    group: "vm",
+    summary: "Start the VM, or print the planned QEMU argv.",
+    usage: ["crucible vm start [--dry-run]"],
+    examples: ["crucible vm start --dry-run", "crucible vm start"],
+  },
+  {
+    canonical: "vm:stop",
+    preferred: "vm stop",
+    group: "vm",
+    summary: "Request graceful VM shutdown, ACPI poweroff, or kill fallback.",
+    usage: ["crucible vm stop [--poweroff|--kill]"],
+  },
+  {
+    canonical: "vm:status",
+    preferred: "vm status",
+    group: "vm",
+    summary: "Show lifecycle, PID, QMP, and log paths.",
+    usage: ["crucible vm status"],
+  },
+  {
+    canonical: "vm:view",
+    preferred: "vm view",
+    group: "vm",
+    summary: "Open a loopback-only VNC view of the running VM.",
+    usage: [
+      "crucible vm view [--dry-run] [--viewer remote-viewer|vncviewer] [--host 127.0.0.1|localhost] [--display 1]",
+    ],
+    examples: ["crucible vm view --dry-run", "crucible vm view --viewer remote-viewer"],
+  },
+  {
+    canonical: "vm:logs",
+    preferred: "vm logs",
+    group: "vm",
+    summary: "Print the current VM stdout and stderr logs.",
+    usage: ["crucible vm logs"],
+  },
+  {
+    canonical: "snapshot:create",
+    preferred: "snapshot create",
+    group: "snapshot",
+    summary: "Create a QMP/qcow2 snapshot; defaults to clean-base when name is omitted.",
+    usage: ["crucible snapshot create [name]"],
+  },
+  {
+    canonical: "snapshot:list",
+    preferred: "snapshot list",
+    group: "snapshot",
+    summary: "List snapshots recorded in the artifact manifest.",
+    usage: ["crucible snapshot list"],
+  },
+  {
+    canonical: "snapshot:restore",
+    preferred: "snapshot restore",
+    group: "snapshot",
+    summary: "Restore a QMP/qcow2 snapshot; defaults to clean-base when name is omitted.",
+    usage: ["crucible snapshot restore [name]"],
+    examples: ["crucible snapshot restore clean-base"],
+  },
+  {
+    canonical: "net:plan",
+    preferred: "network plan",
+    group: "network",
+    aliases: ["net plan"],
+    summary: "Print QEMU network args and firewall plans.",
+    usage: [
+      "crucible network plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
+    ],
+  },
+  {
+    canonical: "net:status",
+    preferred: "network status",
+    group: "network",
+    aliases: ["net status"],
+    summary: "Show configured network mode and egress posture.",
+    usage: ["crucible network status"],
+  },
+  {
+    canonical: "net:set",
+    preferred: "network set",
+    group: "network",
+    aliases: ["net set"],
+    summary: "Preview a switch to isolated, NAT, or capture mode.",
+    usage: ["crucible network set isolated|nat|capture"],
+  },
+  {
+    canonical: "net:teardown",
+    preferred: "network teardown",
+    group: "network",
+    aliases: ["net teardown"],
+    summary: "Print project-owned network teardown commands.",
+    usage: [
+      "crucible network teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
+    ],
+  },
+  {
+    canonical: "guest:health",
+    preferred: "guest health",
+    group: "guest",
+    summary: "Check guest-agent and Windows policy health.",
+    usage: ["crucible guest health"],
+  },
+  {
+    canonical: "guest:exec",
+    preferred: "guest exec",
+    group: "guest",
+    summary: "Run a command through the Windows guest agent.",
+    usage: ["crucible guest exec [--as service|standard|admin] <executable> [args...]"],
+    examples: ["crucible guest exec --as admin whoami.exe"],
+  },
+  {
+    canonical: "debug:smoke",
+    preferred: "debug smoke",
+    group: "debug",
+    summary: "Run a CDB smoke command against a guest executable.",
+    usage: ["crucible debug smoke --exe <guest-executable>"],
+  },
+  {
+    canonical: "scenario:malware-dry-run",
+    preferred: "scenario malware-dry-run",
+    group: "scenario",
+    summary: "Print the malware-analysis dry-run workflow.",
+    usage: ["crucible scenario malware-dry-run"],
+  },
+];
+
+export const CLI_COMMANDS: readonly CommandDefinition[] = COMMANDS;
+
+function parseCliInvocation(args: readonly string[]): ParsedCliInvocation {
+  const separatorIndex = args.indexOf("--");
+  const commandArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+  const helpIndex = commandArgs.findIndex((arg) => arg === "--help" || arg === "-h");
+  if (args.length === 0 || helpIndex === 0) {
+    return { kind: "help", text: getHelpText() };
+  }
+
+  if (args[0] === "help") {
+    const tokens = args.slice(1);
+    const help = getHelpForTokens(tokens);
+    return help.kind === "unknown"
+      ? { kind: "unknown-help", command: help.command }
+      : { kind: "help", text: help.text };
+  }
+
+  if (helpIndex > 0) {
+    const tokens = args.slice(0, helpIndex);
+    const help = getHelpForTokens(tokens);
+    return help.kind === "unknown"
+      ? { kind: "unknown-help", command: help.command }
+      : { kind: "help", text: help.text };
+  }
+
+  const direct = getCommandByName(args[0]);
+  if (direct !== undefined) {
+    return { kind: "command", command: direct.canonical, rest: args.slice(1) };
+  }
+
+  const groupName = normalizeCommandGroupName(args[0]);
+  if (groupName !== undefined) {
+    if (args[1] === undefined) {
+      return { kind: "help", text: getGroupHelpText(groupName) };
+    }
+
+    const command = getCommandByGroupedName(groupName, args[1]);
+    if (command !== undefined) {
+      return { kind: "command", command: command.canonical, rest: args.slice(2) };
+    }
+
+    return { kind: "unknown", command: [args[0], args[1]].filter(Boolean).join(" ") };
+  }
+
+  return { kind: "unknown", command: args[0] ?? "" };
+}
+
+type HelpLookupResult =
+  | { readonly kind: "help"; readonly text: string }
+  | { readonly kind: "unknown"; readonly command: string };
+
+function getHelpForTokens(tokens: readonly string[]): HelpLookupResult {
+  if (tokens.length === 0) {
+    return { kind: "help", text: getHelpText() };
+  }
+
+  const direct = tokens.length === 1 ? getCommandByName(tokens[0]) : undefined;
+  if (direct !== undefined) {
+    return { kind: "help", text: getCommandHelpText(direct) };
+  }
+
+  const groupName = normalizeCommandGroupName(tokens[0]);
+  if (groupName === undefined) {
+    return { kind: "unknown", command: tokens[0] ?? "" };
+  }
+
+  if (tokens.length === 1) {
+    return { kind: "help", text: getGroupHelpText(groupName) };
+  }
+
+  const command = getCommandByGroupedName(groupName, tokens[1]);
+  return command === undefined
+    ? { kind: "unknown", command: [tokens[0], tokens[1]].filter(Boolean).join(" ") }
+    : { kind: "help", text: getCommandHelpText(command) };
+}
+
+function getCommandByName(name: string | undefined): CommandDefinition | undefined {
+  if (name === undefined) {
+    return undefined;
+  }
+
+  return COMMANDS.find(
+    (command) =>
+      command.canonical === name || command.preferred === name || command.aliases?.includes(name),
+  );
+}
+
+function getCommandByGroupedName(
+  groupName: string,
+  subcommand: string | undefined,
+): CommandDefinition | undefined {
+  if (subcommand === undefined) {
+    return undefined;
+  }
+
+  return COMMANDS.find((command) => {
+    if (command.group !== groupName) {
+      return false;
+    }
+    const preferredSubcommand = command.preferred.split(" ").at(1);
+    const aliasSubcommands = (command.aliases ?? [])
+      .map((alias) => alias.split(" ").at(1))
+      .filter((value): value is string => value !== undefined);
+    return preferredSubcommand === subcommand || aliasSubcommands.includes(subcommand);
+  });
+}
+
+function normalizeCommandGroupName(name: string | undefined): string | undefined {
+  if (name === undefined) {
+    return undefined;
+  }
+
+  return COMMAND_GROUPS.find((group) => group.name === name || group.aliases?.includes(name))?.name;
+}
+
+function renderUnknownCommand(command: string): string {
+  const suggestion = findClosestCommand(command);
+  return [
+    `Unknown command: ${command}`,
+    suggestion === undefined ? undefined : `Did you mean: crucible ${suggestion}?`,
+    "",
+    getHelpText(),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function findClosestCommand(input: string): string | undefined {
+  const normalizedInput = normalizeSuggestionText(input);
+  let best: { readonly command: string; readonly distance: number } | undefined;
+  for (const command of COMMANDS) {
+    for (const candidate of [command.preferred, command.canonical, ...(command.aliases ?? [])]) {
+      const distance = levenshteinDistance(normalizedInput, normalizeSuggestionText(candidate));
+      if (best === undefined || distance < best.distance) {
+        best = { command: command.preferred, distance };
+      }
+    }
+  }
+
+  if (best === undefined || best.distance > Math.max(2, Math.floor(normalizedInput.length / 3))) {
+    return undefined;
+  }
+  return best.command;
+}
+
+function normalizeSuggestionText(value: string): string {
+  return value.replaceAll(":", " ").replaceAll(/\s+/g, " ").toLowerCase();
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + cost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length] ?? 0;
+}
+
 function getHelpText(): string {
   return [
     "crucible",
     "",
     "Usage:",
-    "  crucible config:init [--output ~/.config/crucible/config.json] [--force]",
+    "  crucible <command> [options]",
+    "  crucible <group> <command> [options]",
+    "  crucible <group> --help",
+    "",
+    "Common workflows:",
+    "  crucible config init",
     "  crucible doctor",
-    "  crucible setup host|opencode|claude|codex|copilot|all [--print] [--yes]",
-    "  crucible provision   Provision a Windows analysis VM",
-    "  crucible snapshot:create clean-base",
-    "  crucible snapshot:restore clean-base",
-    "  crucible guest:health",
-    "  crucible guest:exec [--as service|standard|admin] <executable> [args...]",
-    "  crucible debug:smoke --exe <guest-executable>",
-    "  crucible scenario:malware-dry-run",
-    "  crucible package",
-    "  crucible mcp         Start the MCP server (scaffolded)",
-    "  crucible media:plan [--manual] [--profile windows11-enterprise-eval|windows-server-2025-eval]",
-    "  crucible media:fetch-tools [--force]  Download optional tool archives into media/cache",
-    "  crucible net:plan [--mode isolated|nat|capture] [--backend nftables|iptables] [--apply]",
-    "  crucible net:status",
-    "  crucible net:set isolated|nat|capture",
-    "  crucible net:teardown [--mode isolated|nat|capture] [--backend nftables|iptables] [--dry-run|--apply]",
-    "  crucible vm:create --dry-run  Print the planned qcow2 creation and QEMU inputs",
-    "  crucible vm:start [--dry-run] Print or run the planned QEMU argv and sockets",
-    "  crucible vm:stop [--poweroff|--kill]",
-    "  crucible vm:status",
-    "  crucible vm:logs",
-    "  crucible snapshot:create [name]  Create a QMP/qcow2 snapshot (default: clean-base)",
-    "  crucible snapshot:list           List snapshots recorded in the artifact manifest",
-    "  crucible snapshot:restore [name] Restore a QMP/qcow2 snapshot (default: clean-base)",
+    "  crucible setup host --print",
+    "  crucible provision",
+    "  crucible vm status",
+    "  crucible snapshot restore clean-base",
+    "  crucible mcp --stdio",
+    "",
+    "Command groups:",
+    ...COMMAND_GROUPS.map(
+      (group) => `  ${group.name.padEnd(10)} ${group.summary}${formatGroupAliases(group)}`,
+    ),
+    "",
+    "Commands:",
+    ...COMMANDS.filter((command) => command.group === undefined).map(formatCommandSummary),
+    ...COMMAND_GROUPS.flatMap((group) =>
+      COMMANDS.filter((command) => command.group === group.name).map(formatCommandSummary),
+    ),
+    "",
+    "Legacy colon commands still work, for example `crucible vm:status`.",
+    "Run `crucible <group> --help` or `crucible <group> <command> --help` for details.",
   ].join("\n");
+}
+
+function getGroupHelpText(groupName: string): string {
+  const group = COMMAND_GROUPS.find((candidate) => candidate.name === groupName);
+  if (group === undefined) {
+    return getHelpText();
+  }
+  const commands = COMMANDS.filter((command) => command.group === group.name);
+  return [
+    `crucible ${group.name}`,
+    "",
+    group.summary,
+    group.aliases === undefined ? undefined : `Aliases: ${group.aliases.join(", ")}`,
+    "",
+    "Usage:",
+    `  crucible ${group.name} <command> [options]`,
+    "",
+    "Commands:",
+    ...commands.map(formatCommandSummary),
+    "",
+    "Examples:",
+    ...commands
+      .flatMap((command) => command.examples ?? command.usage.slice(0, 1))
+      .map((example) => `  ${example}`),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function getCommandHelpText(command: CommandDefinition): string {
+  return [
+    `crucible ${command.preferred}`,
+    "",
+    command.summary,
+    "",
+    "Usage:",
+    ...command.usage.map((usage) => `  ${usage}`),
+    command.aliases === undefined && !command.canonical.includes(":")
+      ? undefined
+      : `Aliases: ${[command.canonical, ...(command.aliases ?? [])].join(", ")}`,
+    command.examples === undefined ? undefined : "",
+    command.examples === undefined ? undefined : "Examples:",
+    ...(command.examples ?? []).map((example) => `  ${example}`),
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function formatCommandSummary(command: CommandDefinition): string {
+  return `  ${command.preferred.padEnd(28)} ${command.summary}`;
+}
+
+function formatGroupAliases(group: CommandGroupDefinition): string {
+  return group.aliases === undefined ? "" : ` (alias: ${group.aliases.join(", ")})`;
 }
 
 if (isCliEntrypoint()) {

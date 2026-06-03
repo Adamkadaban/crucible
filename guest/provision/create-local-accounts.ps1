@@ -107,12 +107,118 @@ function Grant-BatchLogonRight {
     }
 }
 
+function Find-CruciblePayloadRoot {
+    $payload = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' |
+        Where-Object { $_.VolumeName -eq 'CRUCIBLE' } |
+        Select-Object -First 1
+
+    if ($null -eq $payload) {
+        return $null
+    }
+
+    return $payload.DeviceID
+}
+
+function Read-RealismPersona {
+    $payloadRoot = Find-CruciblePayloadRoot
+    if ([string]::IsNullOrWhiteSpace($payloadRoot)) {
+        return $null
+    }
+
+    $personaPath = Join-Path $payloadRoot "realism\persona.json"
+    if (-not (Test-Path -LiteralPath $personaPath)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $personaPath -Raw | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+}
+
+function Install-DecoyUserFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Username
+    )
+
+    $persona = Read-RealismPersona
+    if (-not $persona.populateUserFiles) {
+        return
+    }
+
+    $profileRoot = Join-Path "C:\Users" $Username
+    [System.IO.Directory]::CreateDirectory($profileRoot) | Out-Null
+    foreach ($file in @($persona.decoyFiles)) {
+        $relativePath = [string]$file.relativePath
+        if (
+            [string]::IsNullOrWhiteSpace($relativePath) -or
+            $relativePath.Contains("..") -or
+            [System.IO.Path]::IsPathRooted($relativePath) -or
+            $relativePath.Contains(":")
+        ) {
+            continue
+        }
+
+        $targetPath = Join-Path $profileRoot $relativePath
+        [System.IO.Directory]::CreateDirectory((Split-Path -Parent $targetPath)) | Out-Null
+        Set-Content -LiteralPath $targetPath -Value ([string]$file.content) -Encoding UTF8
+        if ($file.lastWriteTimeUtc) {
+            try {
+                (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc = [datetime]$file.lastWriteTimeUtc
+            } catch {
+            }
+        }
+    }
+}
+
+function Install-CommonSoftwareMarkers {
+    $persona = Read-RealismPersona
+    if (-not $persona.installCommonSoftware) {
+        return
+    }
+
+    $uninstallRoot = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    $programFiles = [Environment]::GetFolderPath("ProgramFiles")
+    if ([string]::IsNullOrWhiteSpace($programFiles)) {
+        $programFiles = Join-Path $env:SystemDrive "Program Files"
+    }
+    [System.IO.Directory]::CreateDirectory($programFiles) | Out-Null
+    foreach ($software in @($persona.softwareMarkers)) {
+        if ($null -eq $software -or [string]::IsNullOrWhiteSpace([string]$software.name)) {
+            continue
+        }
+        $safeName = ([string]$software.name) -replace '[\\/:*?"<>|\[\]]', '_'
+        if ([string]::IsNullOrWhiteSpace($safeName)) {
+            continue
+        }
+        $installLocation = Join-Path $programFiles $safeName
+        [System.IO.Directory]::CreateDirectory($installLocation) | Out-Null
+        Set-Content -LiteralPath (Join-Path $installLocation "README-crucible-realism.txt") -Encoding UTF8 -Value @(
+            "Crucible realism marker for $($software.name).",
+            "This is an inert install-presence marker, not a bundled third-party application."
+        )
+
+        $keyPath = Join-Path $uninstallRoot "CrucibleRealism-$safeName"
+        New-Item -LiteralPath $keyPath -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "DisplayName" -PropertyType String -Value ([string]$software.name) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "DisplayVersion" -PropertyType String -Value ([string]$software.version) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "Publisher" -PropertyType String -Value ([string]$software.publisher) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "InstallDate" -PropertyType String -Value ([string]$software.installDate) -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "InstallLocation" -PropertyType String -Value $installLocation -Force | Out-Null
+        New-ItemProperty -LiteralPath $keyPath -Name "SystemComponent" -PropertyType DWord -Value 0 -Force | Out-Null
+    }
+}
+
 $standardPassword = Require-SecretEnvironment -Name "CRUCIBLE_STANDARD_PASSWORD"
 $adminPassword = Require-SecretEnvironment -Name "CRUCIBLE_ADMIN_PASSWORD"
 
 Ensure-LocalAccount -Username $StandardUsername -Password $standardPassword -Administrator $false
 Ensure-LocalAccount -Username $AdminUsername -Password $adminPassword -Administrator $true
 Grant-BatchLogonRight -Usernames @($StandardUsername, $AdminUsername)
+Install-DecoyUserFiles -Username $StandardUsername
+Install-CommonSoftwareMarkers
 
 # Persist autologon beyond the initial LogonCount from Autounattend.xml so the
 # VM always boots to an interactive desktop after provisioning reboots.

@@ -133,6 +133,7 @@ export function buildQemuCommandPlan(options: QemuPlanOptions = {}): QemuCommand
     `unix:${config.qmp.socketPath},server=on,wait=off`,
     ...buildOptionalVirtioDeviceArgs(config),
     ...buildTpmArgs(options.bootMedia),
+    ...buildDisplayInputArgs(config),
     ...buildDisplayArgs(config),
     ...config.vm.extraQemuArgs,
   ];
@@ -258,6 +259,11 @@ function buildDisplayArgs(config: CrucibleConfig): readonly string[] {
   }
   validateQemuSuboptionValue("vm.display.vncSocketPath", display.vncSocketPath);
   return ["-vnc", `unix:${display.vncSocketPath}`];
+}
+
+function buildDisplayInputArgs(config: CrucibleConfig): readonly string[] {
+  if (config.vm.display.mode === "none") return [];
+  return ["-usb", "-device", "usb-tablet"];
 }
 
 function getDefaultDiskPath(config: CrucibleConfig): string {

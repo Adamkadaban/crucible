@@ -148,9 +148,53 @@ Host-side helpers parse the JSON audit output and produce readiness checks for `
 `code-integrity-recorded`, `test-signing-disabled`, and `analysis-profile-audited`. These checks are
 fixture-tested and do not require a real Windows VM in CI.
 
+## Realism Persona
+
+The optional `realism` config section adds a seeded, reproducible persona to reduce obvious default
+sandbox fingerprints. It is disabled by default and does not make QEMU/KVM undetectable. MITRE
+ATT&CK T1497-style checks can still detect virtualization, analysis tools, short uptime, or other
+environment artifacts.
+
+When `realism.enabled` is true, Crucible generates or accepts explicit values for the hostname,
+standard/admin usernames, full name, locale, keyboard layout, timezone, screen resolution, and
+profile (`minimal`, `office-user`, `developer`, `student`, or `home-user`). The seed is recorded in
+the artifact manifest so analysts can reproduce the same persona later. `timezone` must be a Windows
+time zone ID such as `Pacific Standard Time` or `Eastern Standard Time`, not an IANA name such as
+`America/New_York`.
+
+`screenResolution` is recorded as persona metadata only. Current provisioning does not apply display
+settings inside the guest.
+
+Provisioning uses the persona in these places:
+
+- Autounattend uses the generated hostname, locale, keyboard layout, timezone, and local-account
+  names during first boot.
+- The `local-accounts-created` stage receives the same generated usernames and creates matching
+  password secret JSON files under `artifacts.secretsDirectory`.
+- The payload ISO includes `realism/persona.json`, which the account stage reads to populate benign
+  decoy files across `Desktop`, `Documents`, `Downloads`, `Pictures`, `Videos`, `Music`, and
+  selected app-data-style paths.
+- If `simulateUserHistory` is true, the decoy plan includes intentionally fake, inert stealer-target
+  files such as `.aws\credentials`, `.ssh\id_rsa`, FileZilla config, backup-code notes, and
+  wallet-looking paths. These are honeytoken-style placeholders, not real secrets.
+- If `installCommonSoftware` is true, provisioning creates inert install-presence markers and
+  uninstall-registry entries for common applications such as Chrome, Firefox, 7-Zip, Acrobat Reader,
+  Notepad++, VLC, and profile-specific apps. It does not download or run third-party installers. The
+  markers use `CrucibleRealism-*` uninstall keys and include a README that identifies them as inert
+  presence markers.
+
+Live validation can detect real common-user applications installed outside provisioning. A
+NAT-enabled manual trial showed that the free Ninite bundle for `7zip`, `notepadplusplus`, `vlc`,
+`firefox`, and `chrome` works when launched interactively as the provisioned admin user, while
+`/silent` is not reliable for the free installer. Do not document those installs as part of
+provisioning unless a future dedicated post-agent stage implements and tests that path.
+
+Never use real personal data, synced browser profiles, credentials, SSH keys, API tokens, cloud
+accounts, or operator home directories as realism sources.
+
 ## Guest Health
 
-`crucible guest:health` renders the readiness checks from the `health-checked` stage:
+`crucible guest health` renders the readiness checks from the `health-checked` stage:
 
 - `debugger-health` for CDB, WinDbg, KD/KDNET, GFlags, symbol path, symbol cache, Sysinternals, and
   dynamic-tool readiness.
@@ -164,9 +208,9 @@ but the guest health endpoint has not been queried.
 
 ## Clean-Base Snapshot
 
-The provisioning exit flow uses `snapshot:create clean-base` only after debugger tooling, dynamic
+The provisioning exit flow uses `snapshot create clean-base` only after debugger tooling, dynamic
 analysis tools, local accounts, guest agent setup, policy lockdown, and guest health have completed.
-`snapshot:restore clean-base` runs before the final health check. The snapshot manager stores the
+`snapshot restore clean-base` runs before the final health check. The snapshot manager stores the
 `clean-base` record in the artifact manifest with the base qcow2 disk path, QEMU snapshot tag, clean
 flag, snapshot mode, and last restore timestamp.
 
@@ -210,10 +254,30 @@ The real provisioning smoke command is:
 
 ```sh
 pnpm crucible provision && \
-  pnpm crucible snapshot:create clean-base && \
-  pnpm crucible snapshot:restore clean-base && \
-  pnpm crucible guest:health
+  pnpm crucible snapshot create clean-base && \
+  pnpm crucible snapshot restore clean-base && \
+  pnpm crucible guest health
 ```
 
 This must be run on a Linux/KVM host with Windows media, virtio media, QEMU Guest Agent readiness,
 and the guest-service adapter available. It is intentionally not part of CI.
+
+## E2E Coverage
+
+`pnpm e2e` is CI-safe and uses fake lifecycle, snapshot, process, and guest-agent adapters. It
+covers every registered CLI command with safe arguments and asserts that the matrix matches the
+exported command registry.
+
+`pnpm e2e:live` is opt-in and uses `/home/<user>/.config/crucible-live-e2e` by default. It
+provisions or reuses a real Windows baseline, restores `clean-base` between stateful checks, and
+exercises:
+
+- randomized persona hostname, standard/admin users, decoy files, inert secret markers, and software
+  marker registry/readme entries;
+- real debugger and Sysinternals file/service evidence;
+- every registered MCP bootstrap tool, with expected-error allowances only for optional host/guest
+  dependencies such as missing `tshark` or ProcMon;
+- screenshots by reading PPM bytes, parsing dimensions, rejecting flat images, and comparing pixel
+  changes after UI actions;
+- keyboard input, text typing, mouse move, left click, double-click, drag, right-click, and a real
+  Notepad close-button click verified by process exit.
