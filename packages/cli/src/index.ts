@@ -738,8 +738,8 @@ async function startVmViewBridge(
           finish({ ok: false, error: `VNC bridge did not report listening on ${host}:${port}` }),
         1_000,
       );
-      onStderr((chunk: Buffer) => {
-        if (chunk.toString("utf8").includes("listening on")) finish({ ok: true });
+      onStderr(() => {
+        if (stderr.includes("listening on")) finish({ ok: true });
       });
       child.once("error", (error) => finish({ ok: false, error: formatBridgeSpawnError(error) }));
       child.once("close", (code, signal) =>
