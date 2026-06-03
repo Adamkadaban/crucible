@@ -188,6 +188,7 @@ describe("Crucible MCP protocol E2E", () => {
         network: { mode: "isolated" },
       }),
       configPath,
+      downloadBaseDirectory: root,
       hostCheck: () =>
         Promise.resolve({
           healthy: true,
@@ -332,7 +333,7 @@ describe("Crucible MCP protocol E2E", () => {
       expect(vmEvents).toEqual(["start", "stop"]);
       expect(execRequests.some((request) => request.as === "admin")).toBe(true);
     } finally {
-      await rm("artifacts/downloads/mcp-e2e-payload.txt", { force: true });
+      await rm(path.join(root, "artifacts", "downloads", "mcp-e2e-payload.txt"), { force: true });
       await client.close();
       await server.close();
     }

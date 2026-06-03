@@ -510,6 +510,7 @@ export type RegisterCrucibleToolsOptions = {
   readonly configPath?: string;
   readonly networkMode?: NetworkMode;
   readonly policy?: CruciblePolicy;
+  readonly downloadBaseDirectory?: string;
 };
 
 /**
@@ -524,6 +525,10 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
   const hostCheck = options.hostCheck ?? runHostCheck;
   const guestClientFactory = options.guestClientFactory;
   const policy = options.policy ?? DEFAULT_POLICY;
+  const resolveDownloadPath = (hostPath: string) =>
+    options.downloadBaseDirectory === undefined
+      ? hostPath
+      : path.resolve(options.downloadBaseDirectory, hostPath);
 
   server.registerTool(
     "host_check",
@@ -741,17 +746,18 @@ export function registerCrucibleTools(options: RegisterCrucibleToolsOptions): vo
         if (!decision.allowed) {
           return validationError(decision.reason, auditLogPath);
         }
-        await mkdir(path.dirname(input.hostPath), { recursive: true });
-        await writeFile(input.hostPath, Buffer.alloc(0), { flag: "wx" });
-        await rm(input.hostPath, { force: true });
+        const hostPath = resolveDownloadPath(input.hostPath);
+        await mkdir(path.dirname(hostPath), { recursive: true });
+        await writeFile(hostPath, Buffer.alloc(0), { flag: "wx" });
+        await rm(hostPath, { force: true });
         const client = await requireGuestClient(guestClientFactory);
-        const transfer = await client.downloadFile(input.guestPath, input.hostPath);
-        const info = await stat(input.hostPath);
+        const transfer = await client.downloadFile(input.guestPath, hostPath);
+        const info = await stat(hostPath);
         return toJsonContent({
           ok: true,
           result: {
             guestPath: input.guestPath,
-            hostPath: input.hostPath,
+            hostPath,
             sizeBytes: info.size,
             sha256: transfer.sha256,
           },
@@ -2025,6 +2031,7 @@ export async function runStdioMcpServer(
     | "configPath"
     | "networkMode"
     | "policy"
+    | "downloadBaseDirectory"
   >,
 ): Promise<void> {
   const server = createCrucibleMcpServer(options);
@@ -2045,6 +2052,7 @@ export function createCrucibleMcpServer(
     | "configPath"
     | "networkMode"
     | "policy"
+    | "downloadBaseDirectory"
   >,
 ): McpServer {
   const server = new McpServer({ name: "crucible", version: CRUCIBLE_VERSION });
