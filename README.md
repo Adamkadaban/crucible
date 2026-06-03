@@ -50,7 +50,7 @@ crucible snapshot list
 The first provision usually takes 12-18 minutes and creates a `clean-base` snapshot. Restore that
 snapshot before each new analysis session.
 
-## MCP
+## MCP Server
 
 Run the MCP server over stdio:
 
