@@ -569,12 +569,7 @@ async function runVmViewCommand(
     };
   }
 
-  const bridgeResult = await startVmViewBridge(
-    bridgeCommand,
-    parsed.args.host,
-    port,
-    runtime.processRunner,
-  );
+  const bridgeResult = await startVmViewBridge(bridgeCommand, parsed.args.host, port);
   if (!bridgeResult.ok) {
     return {
       exitCode: 1,
@@ -694,28 +689,12 @@ async function startVmViewBridge(
   bridgeCommand: readonly string[],
   host: string,
   port: number,
-  runner: ProcessRunner | undefined,
 ): Promise<
   | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
   | { readonly ok: false; readonly error: string }
 > {
   const executable = bridgeCommand[0] ?? "socat";
   const args = bridgeCommand.slice(1);
-  if (runner !== undefined) {
-    let result: ProcessResult;
-    try {
-      result = await runner.run({ executable, args, timeoutMs: 1_000, maxOutputBytes: 64 * 1024 });
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-    if (result.exitCode !== 0 && !result.timedOut) {
-      return { ok: false, error: result.stderr || "VNC bridge command failed" };
-    }
-    return result.stderr.includes("listening on")
-      ? { ok: true, bridge: { stop: () => undefined } }
-      : { ok: false, error: `VNC bridge did not report listening on ${host}:${port}` };
-  }
-
   try {
     const child = spawn(executable, args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
