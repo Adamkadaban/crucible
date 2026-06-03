@@ -2251,6 +2251,34 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("reports missing socat for vm view bridge startup", async () => {
+    const emptyPath = await createTempDir("crucible-empty-path-");
+    vi.stubEnv("PATH", emptyPath);
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("socat is required");
+    expect(result.stderr).toContain("crucible doctor");
+    expect(processCommands).toEqual([]);
+  });
+
   it("rejects vm view when the VM was started without VNC display support", async () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view"], {

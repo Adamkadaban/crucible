@@ -727,7 +727,7 @@ async function startVmViewBridge(
       onStderr((chunk: Buffer) => {
         if (chunk.toString("utf8").includes("listening on")) finish({ ok: true });
       });
-      child.once("error", (error) => finish({ ok: false, error: error.message }));
+      child.once("error", (error) => finish({ ok: false, error: formatBridgeSpawnError(error) }));
       child.once("close", (code, signal) =>
         finish({
           ok: false,
@@ -741,8 +741,22 @@ async function startVmViewBridge(
     unrefChildStream(child.stderr);
     return { ok: true, bridge: { stop: () => stopDetachedChild(child) } };
   } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return {
+        ok: false,
+        error:
+          "socat is required for `crucible vm view` but was not found in PATH. Install socat or run `crucible doctor` for host prerequisite guidance.",
+      };
+    }
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function formatBridgeSpawnError(error: Error): string {
+  if ("code" in error && error.code === "ENOENT") {
+    return "socat is required for `crucible vm view` but was not found in PATH. Install socat or run `crucible doctor` for host prerequisite guidance.";
+  }
+  return error.message;
 }
 
 function stopDetachedChild(child: ChildProcess): void {
