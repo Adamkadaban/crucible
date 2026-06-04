@@ -824,6 +824,7 @@ describe.runIf(liveEnabled)("Crucible live VM acceptance E2E", () => {
       });
       await callOk("vm_key_press", { key: "esc" });
       await callOk("vm_type_text", { text: "abc", delayMs: 1 });
+      await callOk("vm_paste_text", { text: "paste", delayMs: 1 });
 
       await callOk("network_status");
       await callOk("network_set_mode", { mode: "isolated" });
