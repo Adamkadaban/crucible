@@ -2352,7 +2352,7 @@ describe("crucible CLI bootstrap", () => {
   });
 
   it("rejects VM paste from interactive stdin", async () => {
-    const originalIsTty = process.stdin.isTTY;
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
     try {
       const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
@@ -2361,7 +2361,11 @@ describe("crucible CLI bootstrap", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("requires piped stdin");
     } finally {
-      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalIsTty });
+      if (stdinDescriptor === undefined) {
+        Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
+      } else {
+        Object.defineProperty(process.stdin, "isTTY", stdinDescriptor);
+      }
     }
   });
 
