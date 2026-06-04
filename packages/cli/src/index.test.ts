@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer, type Server } from "node:net";
 import { spawnSync } from "node:child_process";
+import { Readable } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -2304,7 +2305,7 @@ describe("crucible CLI bootstrap", () => {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "none" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        execute: <T>() => Promise.resolve({ id: "test", returnValue: undefined as T, events: [] }),
         close: () => undefined,
       }),
       processRunner: {
@@ -2327,6 +2328,75 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain('vm.display.mode "vnc"');
     expect(result.stderr).toContain('current config is "none"');
     expect(processCommands).toEqual([]);
+  });
+
+  it("pastes VM text from injected stdin", async () => {
+    const commands: string[] = [];
+    const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      stdinText: "P@ssw0rd!",
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: <T>(_command: string, args?: Readonly<Record<string, unknown>>) => {
+          const commandLine =
+            typeof args?.["command-line"] === "string" ? args["command-line"] : "";
+          commands.push(commandLine);
+          return Promise.resolve({ id: "test", returnValue: undefined as T, events: [] });
+        },
+        close: () => undefined,
+      }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pasted text into the focused VM window");
+    expect(commands).toContain("sendkey shift-2");
+  });
+
+  it("rejects VM paste from interactive stdin", async () => {
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    try {
+      const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("requires piped stdin");
+    } finally {
+      if (stdinDescriptor === undefined) {
+        Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
+      } else {
+        Object.defineProperty(process.stdin, "isTTY", stdinDescriptor);
+      }
+    }
+  });
+
+  it("rejects oversized VM paste text", async () => {
+    const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      stdinText: "x".repeat(4_097),
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("1 to 4096 characters");
+  });
+
+  it("stops reading piped VM paste stdin after the size cap", async () => {
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+    const stdin = Readable.from([Buffer.alloc(4_097)]);
+    Object.defineProperty(stdin, "isTTY", { configurable: true, value: false });
+    Object.defineProperty(process, "stdin", { configurable: true, value: stdin });
+    try {
+      const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("1 to 4096 characters");
+    } finally {
+      if (stdinDescriptor !== undefined) {
+        Object.defineProperty(process, "stdin", stdinDescriptor);
+      }
+    }
   });
 
   it("prints missing VM logs before the VM has started", async () => {

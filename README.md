@@ -89,13 +89,15 @@ crucible version
 crucible update --dry-run
 crucible vm status
 crucible vm credentials
+printf %s "$VM_PASSWORD" | crucible vm paste --stdin
 crucible vm view --dry-run
 crucible snapshot restore clean-base
 crucible network status
 ```
 
 `crucible vm credentials` prints generated Windows account credentials from host-only secret files.
-Treat that output as sensitive.
+Treat that output as sensitive. Use `crucible vm paste --stdin` to paste passwords into the focused
+VM window without putting the secret itself in shell history.
 
 ## Source Checkout
 

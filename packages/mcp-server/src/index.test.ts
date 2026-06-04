@@ -60,6 +60,7 @@ describe("crucible MCP tools", () => {
       "vm_mouse_drag",
       "vm_key_press",
       "vm_type_text",
+      "vm_paste_text",
       "network_status",
       "network_set_mode",
       "network_active_status",
@@ -1858,6 +1859,7 @@ describe("crucible MCP tools", () => {
     });
     await client.callTool({ name: "vm_key_press", arguments: { key: "Ctrl+L" } });
     await client.callTool({ name: "vm_type_text", arguments: { text: "C:\\Temp", delayMs: 1 } });
+    await client.callTool({ name: "vm_paste_text", arguments: { text: "P@ssw0rd!" } });
 
     expect(
       parseFirstTextPayload<{ ok: boolean; result: { backend: string } }>(display).result.backend,
@@ -1869,6 +1871,7 @@ describe("crucible MCP tools", () => {
       "drag:1,2,3,4,middle",
       "key:Ctrl+L",
       "type:C:\\Temp:1",
+      "type:P@ssw0rd!:none",
     ]);
   });
 

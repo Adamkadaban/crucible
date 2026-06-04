@@ -81,6 +81,11 @@ export const BOOTSTRAP_TOOLS: readonly CrucibleToolDefinition[] = [
   { name: "vm_key_press", description: "Send a QEMU sendkey name or chord to the VM display." },
   { name: "vm_type_text", description: "Type supported literal text into the VM display." },
   {
+    name: "vm_paste_text",
+    description:
+      "Paste text such as a password into the focused VM control using VM keyboard input.",
+  },
+  {
     name: "network_status",
     description: "Report configured VM network mode and live-switch capability.",
   },
@@ -293,6 +298,8 @@ const VmTypeTextInput = z
   })
   .strict();
 type VmTypeTextInputType = z.infer<typeof VmTypeTextInput>;
+const VmPasteTextInput = VmTypeTextInput;
+type VmPasteTextInputType = z.infer<typeof VmPasteTextInput>;
 const NetworkStatusInput = z.object({}).strict();
 const NetworkSetModeInput = z.object({ mode: z.enum(["isolated", "nat", "capture"]) }).strict();
 type NetworkSetModeInputType = z.infer<typeof NetworkSetModeInput>;
@@ -990,6 +997,21 @@ function registerVmTools(
       inputSchema: VmTypeTextInput.shape,
     },
     (input: VmTypeTextInputType) => {
+      if (vm?.typeText === undefined) {
+        return unsupported("VM adapter does not support text input");
+      }
+      return wrapInput(() => vm.typeText!(input.text, input.delayMs));
+    },
+  );
+  server.registerTool(
+    "vm_paste_text",
+    {
+      title: "Paste VM text",
+      description:
+        "Paste text such as a password into the focused VM control using VM keyboard input. This does not require host/guest clipboard sharing.",
+      inputSchema: VmPasteTextInput.shape,
+    },
+    (input: VmPasteTextInputType) => {
       if (vm?.typeText === undefined) {
         return unsupported("VM adapter does not support text input");
       }

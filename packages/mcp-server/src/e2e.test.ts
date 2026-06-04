@@ -229,6 +229,7 @@ describe("Crucible MCP protocol E2E", () => {
       });
       await client.callTool({ name: "vm_key_press", arguments: { key: "ctrl-l" } });
       await client.callTool({ name: "vm_type_text", arguments: { text: "echo e2e_+\r\n" } });
+      await client.callTool({ name: "vm_paste_text", arguments: { text: "P@ssw0rd!" } });
       const screenshot = parsePayload<{ ok: boolean; result: { sizeBytes: number } }>(
         (await client.callTool({
           name: "vm_screenshot",

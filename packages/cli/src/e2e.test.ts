@@ -244,6 +244,12 @@ describe("Crucible CLI E2E smoke", () => {
       guestClientFactory: () => Promise.resolve(e2eGuestClient("surface guest\n")),
       processRunner: e2eProcessRunner(`${root}\n`),
       skipBootKeyNudge: true,
+      qmpClientFactory: () => ({
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: <T>() =>
+          Promise.resolve({ id: "surface", returnValue: undefined as T, events: [] }),
+        close: () => undefined,
+      }),
     };
     const provisionRuntime = {
       ...baseRuntime,
@@ -306,6 +312,10 @@ describe("Crucible CLI E2E smoke", () => {
         args: ["vm", "credentials"],
         expectExitCode: 1,
         expectStdout: undefined,
+      },
+      "vm:paste": {
+        args: ["vm", "paste", "--text", "P@ssw0rd!"],
+        expectStdout: /pasted text into the focused VM window/,
       },
       "vm:view": {
         args: ["vm", "view", "--dry-run"],

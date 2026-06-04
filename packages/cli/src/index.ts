@@ -156,10 +156,13 @@ type CliRuntime = {
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
   readonly vmViewBridgeStarter?: VmViewBridgeStarter;
-  readonly qmpClientFactory?: () => CliQmpClient;
+  readonly qmpClientFactory?: () => CliQmpSession;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
+  readonly stdinText?: string;
 };
+
+const MAX_VM_PASTE_TEXT_LENGTH = 4_096;
 
 type VmViewBridgeStarter = (
   bridgeCommand: readonly string[],
@@ -169,16 +172,6 @@ type VmViewBridgeStarter = (
   | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
   | { readonly ok: false; readonly error: string }
 >;
-
-type CliQmpClient = {
-  readonly connect: () => Promise<unknown>;
-  readonly execute: (
-    command: string,
-    args?: Readonly<Record<string, unknown>>,
-    options?: Readonly<Record<string, unknown>>,
-  ) => Promise<unknown>;
-  readonly close: () => void;
-};
 
 type VmViewArgs = {
   readonly dryRun: boolean;
@@ -398,6 +391,8 @@ export async function runCrucibleCli(
       return runVmStatusCommand(rest, runtime);
     case "vm:credentials":
       return runVmCredentialsCommand(rest, runtime);
+    case "vm:paste":
+      return runVmPasteCommand(rest, runtime);
     case "vm:view":
       return runVmViewCommand(rest, runtime);
     case "vm:logs":
@@ -545,6 +540,108 @@ async function runVmStatusCommand(
     stdout: renderVmStatus(await getLifecycleManager(runtime).status()),
     stderr: "",
   };
+}
+
+async function runVmPasteCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  let text: string | undefined;
+  let fromStdin = false;
+  let delayMs: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case "--text": {
+        const value = args[index + 1];
+        if (value === undefined)
+          return { exitCode: 2, stdout: "", stderr: "--text requires a value" };
+        text = value;
+        index += 1;
+        break;
+      }
+      case "--stdin":
+        fromStdin = true;
+        break;
+      case "--delay-ms": {
+        const value = args[index + 1];
+        if (value === undefined)
+          return { exitCode: 2, stdout: "", stderr: "--delay-ms requires a value" };
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 5_000) {
+          return {
+            exitCode: 2,
+            stdout: "",
+            stderr: "--delay-ms must be an integer from 0 to 5000",
+          };
+        }
+        delayMs = parsed;
+        index += 1;
+        break;
+      }
+      default:
+        return { exitCode: 2, stdout: "", stderr: `Unknown vm:paste option: ${arg}` };
+    }
+  }
+  if ((text === undefined && !fromStdin) || (text !== undefined && fromStdin)) {
+    return { exitCode: 2, stdout: "", stderr: "Use exactly one of --text or --stdin" };
+  }
+  let pasteText: string;
+  try {
+    pasteText = fromStdin ? await readCliStdin(runtime) : (text as string);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (pasteText.length < 1 || pasteText.length > MAX_VM_PASTE_TEXT_LENGTH) {
+    return { exitCode: 2, stdout: "", stderr: "paste text must be 1 to 4096 characters" };
+  }
+  const adapter = buildMcpVmAdapter(getRuntimeConfig(runtime), runtime.qmpClientFactory);
+  await adapter.typeText(pasteText, delayMs);
+  return { exitCode: 0, stdout: "pasted text into the focused VM window", stderr: "" };
+}
+
+async function readCliStdin(runtime: CliRuntime): Promise<string> {
+  if (runtime.stdinText !== undefined) return runtime.stdinText;
+  if (process.stdin.isTTY) {
+    throw new CrucibleError(
+      "CONFIG_INVALID",
+      'vm paste --stdin requires piped stdin; use `printf %s "$VM_PASSWORD" | crucible vm paste --stdin` to avoid echoing secrets in an interactive terminal',
+    );
+  }
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let totalLength = 0;
+    let finished = false;
+    const fail = (error: Error) => {
+      if (finished) return;
+      finished = true;
+      process.stdin.pause();
+      reject(error);
+    };
+    process.stdin.on("data", (chunk: Buffer | string) => {
+      if (finished) return;
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      totalLength += buffer.length;
+      if (totalLength > MAX_VM_PASTE_TEXT_LENGTH) {
+        finished = true;
+        process.stdin.pause();
+        resolve("x".repeat(MAX_VM_PASTE_TEXT_LENGTH + 1));
+        return;
+      }
+      chunks.push(buffer);
+    });
+    process.stdin.once("error", fail);
+    process.stdin.once("end", () => {
+      if (finished) return;
+      finished = true;
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    process.stdin.resume();
+  });
 }
 
 async function runVmViewCommand(
@@ -3923,6 +4020,14 @@ const COMMANDS: readonly CommandDefinition[] = [
     group: "vm",
     summary: "Print generated Windows account usernames and passwords.",
     usage: ["crucible vm credentials"],
+  },
+  {
+    canonical: "vm:paste",
+    preferred: "vm paste",
+    group: "vm",
+    summary: "Paste text into the focused VM window via QMP keyboard input.",
+    usage: ["crucible vm paste (--text value|--stdin) [--delay-ms 0]"],
+    examples: ['printf %s "$VM_PASSWORD" | crucible vm paste --stdin'],
   },
   {
     canonical: "vm:view",
