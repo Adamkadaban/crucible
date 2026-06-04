@@ -2304,7 +2304,7 @@ describe("crucible CLI bootstrap", () => {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "none" } } }),
       qmpClientFactory: () => ({
         connect: () => Promise.resolve({ version: {}, capabilities: [] }),
-        execute: () => Promise.resolve({ id: "test", returnValue: {}, events: [] }),
+        execute: <T>() => Promise.resolve({ id: "test", returnValue: undefined as T, events: [] }),
         close: () => undefined,
       }),
       processRunner: {

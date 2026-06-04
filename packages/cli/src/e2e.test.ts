@@ -245,8 +245,9 @@ describe("Crucible CLI E2E smoke", () => {
       processRunner: e2eProcessRunner(`${root}\n`),
       skipBootKeyNudge: true,
       qmpClientFactory: () => ({
-        connect: () => Promise.resolve(undefined),
-        execute: () => Promise.resolve({}),
+        connect: () => Promise.resolve({ version: {}, capabilities: [] }),
+        execute: <T>() =>
+          Promise.resolve({ id: "surface", returnValue: undefined as T, events: [] }),
         close: () => undefined,
       }),
     };

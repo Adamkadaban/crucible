@@ -156,7 +156,7 @@ type CliRuntime = {
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
   readonly vmViewBridgeStarter?: VmViewBridgeStarter;
-  readonly qmpClientFactory?: () => CliQmpClient;
+  readonly qmpClientFactory?: () => CliQmpSession;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
   readonly stdinText?: string;
@@ -170,16 +170,6 @@ type VmViewBridgeStarter = (
   | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
   | { readonly ok: false; readonly error: string }
 >;
-
-type CliQmpClient = {
-  readonly connect: () => Promise<unknown>;
-  readonly execute: (
-    command: string,
-    args?: Readonly<Record<string, unknown>>,
-    options?: Readonly<Record<string, unknown>>,
-  ) => Promise<unknown>;
-  readonly close: () => void;
-};
 
 type VmViewArgs = {
   readonly dryRun: boolean;
@@ -595,10 +585,7 @@ async function runVmPasteCommand(
     return { exitCode: 2, stdout: "", stderr: "Use exactly one of --text or --stdin" };
   }
   const pasteText = fromStdin ? await readCliStdin(runtime) : (text as string);
-  const adapter = buildMcpVmAdapter(
-    getRuntimeConfig(runtime),
-    runtime.qmpClientFactory as (() => CliQmpSession) | undefined,
-  );
+  const adapter = buildMcpVmAdapter(getRuntimeConfig(runtime), runtime.qmpClientFactory);
   const result = await adapter.typeText(pasteText, delayMs);
   return {
     exitCode: 0,
