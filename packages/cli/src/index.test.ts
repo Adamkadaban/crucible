@@ -2369,6 +2369,16 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("rejects oversized VM paste text", async () => {
+    const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      stdinText: "x".repeat(4_097),
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("1 to 4096 characters");
+  });
+
   it("prints missing VM logs before the VM has started", async () => {
     const root = await createTempDir("crucible-cli-");
     const config = parseCrucibleConfig({

@@ -594,6 +594,9 @@ async function runVmPasteCommand(
       stderr: error instanceof Error ? error.message : String(error),
     };
   }
+  if (pasteText.length < 1 || pasteText.length > 4_096) {
+    return { exitCode: 2, stdout: "", stderr: "paste text must be 1 to 4096 characters" };
+  }
   const adapter = buildMcpVmAdapter(getRuntimeConfig(runtime), runtime.qmpClientFactory);
   const result = await adapter.typeText(pasteText, delayMs);
   return {
