@@ -584,7 +584,16 @@ async function runVmPasteCommand(
   if ((text === undefined && !fromStdin) || (text !== undefined && fromStdin)) {
     return { exitCode: 2, stdout: "", stderr: "Use exactly one of --text or --stdin" };
   }
-  const pasteText = fromStdin ? await readCliStdin(runtime) : (text as string);
+  let pasteText: string;
+  try {
+    pasteText = fromStdin ? await readCliStdin(runtime) : (text as string);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: error instanceof Error ? error.message : String(error),
+    };
+  }
   const adapter = buildMcpVmAdapter(getRuntimeConfig(runtime), runtime.qmpClientFactory);
   const result = await adapter.typeText(pasteText, delayMs);
   return {
@@ -596,6 +605,12 @@ async function runVmPasteCommand(
 
 async function readCliStdin(runtime: CliRuntime): Promise<string> {
   if (runtime.stdinText !== undefined) return runtime.stdinText;
+  if (process.stdin.isTTY) {
+    throw new CrucibleError(
+      "CONFIG_INVALID",
+      'vm paste --stdin requires piped stdin; use `printf %s "$VM_PASSWORD" | crucible vm paste --stdin` to avoid echoing secrets in an interactive terminal',
+    );
+  }
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     process.stdin.on("data", (chunk: Buffer | string) => {
