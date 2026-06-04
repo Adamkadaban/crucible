@@ -162,6 +162,8 @@ type CliRuntime = {
   readonly stdinText?: string;
 };
 
+const MAX_VM_PASTE_TEXT_LENGTH = 4_096;
+
 type VmViewBridgeStarter = (
   bridgeCommand: readonly string[],
   host: string,
@@ -594,16 +596,12 @@ async function runVmPasteCommand(
       stderr: error instanceof Error ? error.message : String(error),
     };
   }
-  if (pasteText.length < 1 || pasteText.length > 4_096) {
+  if (pasteText.length < 1 || pasteText.length > MAX_VM_PASTE_TEXT_LENGTH) {
     return { exitCode: 2, stdout: "", stderr: "paste text must be 1 to 4096 characters" };
   }
   const adapter = buildMcpVmAdapter(getRuntimeConfig(runtime), runtime.qmpClientFactory);
-  const result = await adapter.typeText(pasteText, delayMs);
-  return {
-    exitCode: 0,
-    stdout: `pasted ${result.textLength ?? pasteText.length} character(s) into the focused VM window`,
-    stderr: "",
-  };
+  await adapter.typeText(pasteText, delayMs);
+  return { exitCode: 0, stdout: "pasted text into the focused VM window", stderr: "" };
 }
 
 async function readCliStdin(runtime: CliRuntime): Promise<string> {
@@ -616,11 +614,32 @@ async function readCliStdin(runtime: CliRuntime): Promise<string> {
   }
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let totalLength = 0;
+    let finished = false;
+    const fail = (error: Error) => {
+      if (finished) return;
+      finished = true;
+      process.stdin.pause();
+      reject(error);
+    };
     process.stdin.on("data", (chunk: Buffer | string) => {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+      if (finished) return;
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      totalLength += buffer.length;
+      if (totalLength > MAX_VM_PASTE_TEXT_LENGTH) {
+        finished = true;
+        process.stdin.pause();
+        resolve("x".repeat(MAX_VM_PASTE_TEXT_LENGTH + 1));
+        return;
+      }
+      chunks.push(buffer);
     });
-    process.stdin.once("error", reject);
-    process.stdin.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    process.stdin.once("error", fail);
+    process.stdin.once("end", () => {
+      if (finished) return;
+      finished = true;
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
     process.stdin.resume();
   });
 }

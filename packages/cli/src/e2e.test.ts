@@ -315,7 +315,7 @@ describe("Crucible CLI E2E smoke", () => {
       },
       "vm:paste": {
         args: ["vm", "paste", "--text", "P@ssw0rd!"],
-        expectStdout: /pasted 9 character\(s\)/,
+        expectStdout: /pasted text into the focused VM window/,
       },
       "vm:view": {
         args: ["vm", "view", "--dry-run"],

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer, type Server } from "node:net";
 import { spawnSync } from "node:child_process";
+import { Readable } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -2347,7 +2348,7 @@ describe("crucible CLI bootstrap", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("pasted 9 character(s)");
+    expect(result.stdout).toContain("pasted text into the focused VM window");
     expect(commands).toContain("sendkey shift-2");
   });
 
@@ -2377,6 +2378,25 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("1 to 4096 characters");
+  });
+
+  it("stops reading piped VM paste stdin after the size cap", async () => {
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+    const stdin = Readable.from([Buffer.alloc(4_097)]);
+    Object.defineProperty(stdin, "isTTY", { configurable: true, value: false });
+    Object.defineProperty(process, "stdin", { configurable: true, value: stdin });
+    try {
+      const result = await runCrucibleCli(["vm", "paste", "--stdin"], {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("1 to 4096 characters");
+    } finally {
+      if (stdinDescriptor !== undefined) {
+        Object.defineProperty(process, "stdin", stdinDescriptor);
+      }
+    }
   });
 
   it("prints missing VM logs before the VM has started", async () => {
