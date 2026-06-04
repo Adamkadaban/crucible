@@ -159,6 +159,7 @@ type CliRuntime = {
   readonly qmpClientFactory?: () => CliQmpClient;
   readonly skipBootKeyNudge?: boolean;
   readonly progress?: ProvisionProgressReporter;
+  readonly stdinText?: string;
 };
 
 type VmViewBridgeStarter = (
@@ -398,6 +399,8 @@ export async function runCrucibleCli(
       return runVmStatusCommand(rest, runtime);
     case "vm:credentials":
       return runVmCredentialsCommand(rest, runtime);
+    case "vm:paste":
+      return runVmPasteCommand(rest, runtime);
     case "vm:view":
       return runVmViewCommand(rest, runtime);
     case "vm:logs":
@@ -545,6 +548,76 @@ async function runVmStatusCommand(
     stdout: renderVmStatus(await getLifecycleManager(runtime).status()),
     stderr: "",
   };
+}
+
+async function runVmPasteCommand(
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CommandResult> {
+  let text: string | undefined;
+  let fromStdin = false;
+  let delayMs: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    switch (arg) {
+      case "--text": {
+        const value = args[index + 1];
+        if (value === undefined)
+          return { exitCode: 2, stdout: "", stderr: "--text requires a value" };
+        text = value;
+        index += 1;
+        break;
+      }
+      case "--stdin":
+        fromStdin = true;
+        break;
+      case "--delay-ms": {
+        const value = args[index + 1];
+        if (value === undefined)
+          return { exitCode: 2, stdout: "", stderr: "--delay-ms requires a value" };
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 5_000) {
+          return {
+            exitCode: 2,
+            stdout: "",
+            stderr: "--delay-ms must be an integer from 0 to 5000",
+          };
+        }
+        delayMs = parsed;
+        index += 1;
+        break;
+      }
+      default:
+        return { exitCode: 2, stdout: "", stderr: `Unknown vm:paste option: ${arg}` };
+    }
+  }
+  if ((text === undefined && !fromStdin) || (text !== undefined && fromStdin)) {
+    return { exitCode: 2, stdout: "", stderr: "Use exactly one of --text or --stdin" };
+  }
+  const pasteText = fromStdin ? await readCliStdin(runtime) : (text as string);
+  const adapter = buildMcpVmAdapter(
+    getRuntimeConfig(runtime),
+    runtime.qmpClientFactory as (() => CliQmpSession) | undefined,
+  );
+  const result = await adapter.typeText(pasteText, delayMs);
+  return {
+    exitCode: 0,
+    stdout: `pasted ${result.textLength ?? pasteText.length} character(s) into the focused VM window`,
+    stderr: "",
+  };
+}
+
+async function readCliStdin(runtime: CliRuntime): Promise<string> {
+  if (runtime.stdinText !== undefined) return runtime.stdinText;
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    process.stdin.on("data", (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    process.stdin.once("error", reject);
+    process.stdin.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    process.stdin.resume();
+  });
 }
 
 async function runVmViewCommand(
@@ -3923,6 +3996,14 @@ const COMMANDS: readonly CommandDefinition[] = [
     group: "vm",
     summary: "Print generated Windows account usernames and passwords.",
     usage: ["crucible vm credentials"],
+  },
+  {
+    canonical: "vm:paste",
+    preferred: "vm paste",
+    group: "vm",
+    summary: "Paste text into the focused VM window via QMP keyboard input.",
+    usage: ["crucible vm paste (--text value|--stdin) [--delay-ms 0]"],
+    examples: ['printf %s "$VM_PASSWORD" | crucible vm paste --stdin'],
   },
   {
     canonical: "vm:view",
