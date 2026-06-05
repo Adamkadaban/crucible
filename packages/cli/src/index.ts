@@ -745,25 +745,19 @@ async function validateVmViewDependencies(
 }
 
 function formatMissingVmViewDependency(executable: string, purpose: string): string {
-  return `${executable} is required for the ${purpose} used by \`crucible vm view\` but was not found in PATH. Install ${executable} or run \`crucible doctor\` for host prerequisite guidance.`;
+  return `${executable} is required for the ${purpose} used by \`crucible vm view\` but was not found as an executable on PATH. Install ${executable} or run \`crucible doctor\` for host prerequisite guidance.`;
 }
 
 async function commandExists(executable: string): Promise<boolean> {
-  return (
-    await Promise.all(
-      (process.env.PATH ?? "")
-        .split(":")
-        .filter(Boolean)
-        .map(async (entry) => {
-          try {
-            await access(join(entry, executable), constants.X_OK);
-            return true;
-          } catch {
-            return false;
-          }
-        }),
-    )
-  ).some(Boolean);
+  for (const entry of (process.env.PATH ?? "").split(":").filter(Boolean)) {
+    try {
+      await access(join(entry, executable), constants.X_OK);
+      return true;
+    } catch {
+      // Keep looking; the file may be absent or non-executable in this PATH entry.
+    }
+  }
+  return false;
 }
 
 async function runVmCredentialsCommand(

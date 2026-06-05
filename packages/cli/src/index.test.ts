@@ -2325,8 +2325,22 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("socat is required");
     expect(result.stderr).toContain("VNC bridge");
+    expect(result.stderr).toContain("not found as an executable on PATH");
     expect(result.stderr).toContain("crucible doctor");
     expect(processCommands).toEqual([]);
+  });
+
+  it("reports non-executable vm view dependencies as unavailable", async () => {
+    const binDir = await createTempDir("crucible-view-path-");
+    await writeFile(path.join(binDir, "socat"), "#!/bin/sh\nexit 0\n", "utf8");
+    vi.stubEnv("PATH", binDir);
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("socat is required");
+    expect(result.stderr).toContain("not found as an executable on PATH");
   });
 
   it("finds vm view dependencies on PATH before launching", async () => {
@@ -2461,6 +2475,43 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("1 to 4096 characters");
+  });
+
+  it("rejects malformed VM paste options", async () => {
+    for (const [args, message] of [
+      [["vm", "paste", "--text"], "--text requires a value"],
+      [["vm", "paste", "--delay-ms"], "--delay-ms requires a value"],
+      [
+        ["vm", "paste", "--delay-ms", "5001", "--text", "x"],
+        "--delay-ms must be an integer from 0 to 5000",
+      ],
+      [["vm", "paste", "--bogus"], "Unknown vm:paste option: --bogus"],
+      [["vm", "paste", "--text", "x", "--stdin"], "Use exactly one of --text or --stdin"],
+      [["vm", "paste"], "Use exactly one of --text or --stdin"],
+    ] as const) {
+      const result = await runCrucibleCli(args, {
+        config: parseCrucibleConfig({ vm: { name: "test-win" } }),
+      });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(message);
+    }
+  });
+
+  it("rejects malformed VM lifecycle options", async () => {
+    for (const [args, message] of [
+      [["vm", "create"], "vm:create currently supports --dry-run only"],
+      [["vm", "create", "--force"], "vm:create currently supports --dry-run only"],
+      [["vm", "start", "--bogus"], "Unknown vm:start option: --bogus"],
+      [["vm", "stop", "--bogus"], "Unknown vm:stop option: --bogus"],
+      [["vm", "stop", "--kill", "--bogus"], "Unknown vm:stop option: --bogus"],
+      [["vm", "status", "--bogus"], "Unknown vm:status option: --bogus"],
+    ] as const) {
+      const result = await runCrucibleCli(args, defaultRuntime);
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(message);
+    }
   });
 
   it("stops reading piped VM paste stdin after the size cap", async () => {
