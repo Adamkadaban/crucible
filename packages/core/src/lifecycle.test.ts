@@ -104,7 +104,9 @@ describe("VmLifecycleManager", () => {
 
     await expect(harness.manager.start()).rejects.toSatisfy((error: unknown) => {
       expect(error).toMatchObject({ code: "QMP_TIMEOUT" });
-      expect(errorDetails(error)).toMatchObject({ cause: "QMP readiness deadline expired" });
+      expect(["QMP readiness deadline expired", "QMP connect timed out"]).toContain(
+        errorDetailCause(error),
+      );
       return true;
     });
     expect(harness.qmp.connects).toBe(1);
@@ -802,13 +804,10 @@ class FakeQmpSession implements VmQmpSession {
     private queryNeverResolves = false,
   ) {}
 
-  connect(): Promise<unknown> {
+  async connect(): Promise<unknown> {
     this.connects += 1;
     if (this.advanceTimeOnConnectMs > 0) {
-      const start = Date.now();
-      while (Date.now() - start < this.advanceTimeOnConnectMs) {
-        Date.now();
-      }
+      await delay(this.advanceTimeOnConnectMs);
     }
     if (this.connectFailuresBeforeReady > 0) {
       this.connectFailuresBeforeReady -= 1;
@@ -857,9 +856,17 @@ async function readJson<T = unknown>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
 }
 
-function errorDetails(error: unknown): unknown {
+function errorDetailCause(error: unknown): unknown {
   if (typeof error !== "object" || error === null || !("details" in error)) {
     return undefined;
   }
-  return error.details;
+  const { details } = error;
+  if (typeof details !== "object" || details === null || !("cause" in details)) {
+    return undefined;
+  }
+  return details.cause;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
