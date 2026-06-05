@@ -222,11 +222,19 @@ export class VmLifecycleManager {
           timeoutMs: this.#startReadyTimeoutMs,
         });
       }
+      const connectTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
+      if (connectTimeoutMs <= 0) {
+        lastError ??= new CrucibleError("QMP_TIMEOUT", "QMP readiness deadline expired");
+        break;
+      }
       const qmp = this.#qmpClientFactory(this.paths.qmpSocket, this.#config.qmp.timeoutMs);
       try {
-        const connectTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
         await withTimeout(qmp.connect(), connectTimeoutMs, "QMP connect timed out");
         const queryTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
+        if (queryTimeoutMs <= 0) {
+          lastError = new CrucibleError("QMP_TIMEOUT", "QMP readiness deadline expired");
+          break;
+        }
         await withTimeout(
           qmp.execute("query-status", undefined, { timeoutMs: queryTimeoutMs }),
           queryTimeoutMs,

@@ -99,6 +99,17 @@ describe("VmLifecycleManager", () => {
     }
   });
 
+  it("does not attempt QMP operations once the readiness deadline expires", async () => {
+    const harness = await createLifecycleHarness({ qmpAdvanceTimeOnConnectMs: 5 });
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "QMP_TIMEOUT",
+      details: expect.objectContaining({ cause: "QMP readiness deadline expired" }),
+    });
+    expect(harness.qmp.connects).toBe(1);
+    expect(harness.qmp.commands).toEqual([]);
+  });
+
   it("reports process failure if the VM exits before QMP readiness timeout", async () => {
     const harness = await createLifecycleHarness({ qmpQueryNeverResolves: true });
     harness.qmp.beforeNeverResolve = () => harness.processes.delete(4242);
@@ -680,6 +691,7 @@ describe("VmLifecycleManager", () => {
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
   readonly qmpConnectFailuresBeforeReady?: number;
+  readonly qmpAdvanceTimeOnConnectMs?: number;
   readonly qmpQueryNeverResolves?: boolean;
   readonly spawnError?: Error;
   readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
@@ -721,6 +733,7 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
   const qmp = new FakeQmpSession(
     options.qmpConnectError,
     options.qmpConnectFailuresBeforeReady ?? 0,
+    options.qmpAdvanceTimeOnConnectMs ?? 0,
     options.qmpQueryNeverResolves ?? false,
   );
   const qmpClientFactory: VmQmpClientFactory = () => qmp;
@@ -784,11 +797,16 @@ class FakeQmpSession implements VmQmpSession {
   constructor(
     public connectError?: Error,
     private connectFailuresBeforeReady = 0,
+    private advanceTimeOnConnectMs = 0,
     private queryNeverResolves = false,
   ) {}
 
   connect(): Promise<unknown> {
     this.connects += 1;
+    if (this.advanceTimeOnConnectMs > 0) {
+      const start = Date.now();
+      while (Date.now() - start < this.advanceTimeOnConnectMs) {}
+    }
     if (this.connectFailuresBeforeReady > 0) {
       this.connectFailuresBeforeReady -= 1;
       return Promise.reject(new Error("qmp not ready"));
