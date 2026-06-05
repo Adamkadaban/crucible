@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { closeSync, openSync, realpathSync } from "node:fs";
+import { closeSync, constants, openSync, realpathSync } from "node:fs";
 import {
+  access,
   copyFile,
   mkdir,
   mkdtemp,
@@ -155,6 +156,7 @@ type CliRuntime = {
   readonly snapshotManager?: CliSnapshotManager;
   readonly guestClientFactory?: () => Promise<CliGuestHealthClient>;
   readonly processRunner?: ProcessRunner;
+  readonly commandResolver?: CommandResolver;
   readonly vmViewBridgeStarter?: VmViewBridgeStarter;
   readonly qmpClientFactory?: () => CliQmpSession;
   readonly skipBootKeyNudge?: boolean;
@@ -172,6 +174,8 @@ type VmViewBridgeStarter = (
   | { readonly ok: true; readonly bridge: { readonly stop: () => void } }
   | { readonly ok: false; readonly error: string }
 >;
+
+type CommandResolver = (executable: string) => boolean | Promise<boolean>;
 
 type VmViewArgs = {
   readonly dryRun: boolean;
@@ -685,6 +689,15 @@ async function runVmViewCommand(
     };
   }
 
+  const dependencyError = await validateVmViewDependencies(
+    bridgeCommand,
+    viewerCommand,
+    runtime.commandResolver ?? commandExists,
+  );
+  if (dependencyError !== undefined) {
+    return { exitCode: 1, stdout: lines.join("\n"), stderr: dependencyError };
+  }
+
   const bridgeResult = await (runtime.vmViewBridgeStarter ?? startVmViewBridge)(
     bridgeCommand,
     parsed.args.host,
@@ -713,6 +726,44 @@ async function runVmViewCommand(
   }
 
   return { exitCode: 0, stdout: [...lines, "viewer: launched"].join("\n"), stderr: "" };
+}
+
+async function validateVmViewDependencies(
+  bridgeCommand: readonly string[],
+  viewerCommand: readonly string[],
+  resolveCommand: CommandResolver,
+): Promise<string | undefined> {
+  const dependencies: ReadonlyArray<readonly [string, string]> = [
+    [bridgeCommand[0] ?? "socat", "VNC bridge"],
+    [viewerCommand[0] ?? "remote-viewer", "VNC viewer"],
+  ];
+  for (const [executable, purpose] of dependencies) {
+    if (!(await resolveCommand(executable)))
+      return formatMissingVmViewDependency(executable, purpose);
+  }
+  return undefined;
+}
+
+function formatMissingVmViewDependency(executable: string, purpose: string): string {
+  const guidance =
+    purpose === "VNC viewer"
+      ? "Install remote-viewer or vncviewer, or pass --viewer for the one available on this host."
+      : `Install ${executable} or run \`crucible doctor\` for host prerequisite guidance.`;
+  return `${executable} is required for the ${purpose} used by \`crucible vm view\` but was not found as an executable on PATH. ${guidance}`;
+}
+
+async function commandExists(executable: string): Promise<boolean> {
+  for (const entry of (process.env.PATH ?? "").split(":").filter(Boolean)) {
+    try {
+      const candidate = join(entry, executable);
+      if (!(await fsStat(candidate)).isFile()) continue;
+      await access(candidate, constants.X_OK);
+      return true;
+    } catch {
+      // Keep looking; the file may be absent or non-executable in this PATH entry.
+    }
+  }
+  return false;
 }
 
 async function runVmCredentialsCommand(
