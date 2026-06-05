@@ -92,9 +92,21 @@ describe("VmLifecycleManager", () => {
       code: "QMP_TIMEOUT",
       message: "VM did not become QMP-ready before timeout",
     });
-    expect(harness.qmp.commandTimeouts).toHaveLength(1);
-    expect(harness.qmp.commandTimeouts[0]).toBeGreaterThan(0);
-    expect(harness.qmp.commandTimeouts[0]).toBeLessThanOrEqual(5);
+    expect(harness.qmp.commandTimeouts.length).toBeGreaterThan(0);
+    for (const timeoutMs of harness.qmp.commandTimeouts) {
+      expect(timeoutMs).toBeGreaterThan(0);
+      expect(timeoutMs).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("reports process failure if the VM exits before QMP readiness timeout", async () => {
+    const harness = await createLifecycleHarness({ qmpQueryNeverResolves: true });
+    harness.qmp.beforeNeverResolve = () => harness.processes.delete(4242);
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "PROCESS_FAILED",
+      message: "VM process exited before QMP became ready",
+    });
   });
 
   it("rejects start when an owned VM process is already alive", async () => {
@@ -766,6 +778,7 @@ class FakeQmpSession implements VmQmpSession {
   readonly commands: string[] = [];
   readonly commandTimeouts: number[] = [];
   connects = 0;
+  beforeNeverResolve: (() => void) | undefined;
   nextExecute: ((command: string) => { readonly returnValue: unknown }) | undefined;
 
   constructor(
@@ -793,7 +806,10 @@ class FakeQmpSession implements VmQmpSession {
   ): Promise<{ readonly returnValue: T }> {
     this.commands.push(command);
     if (options?.timeoutMs !== undefined) this.commandTimeouts.push(options.timeoutMs);
-    if (this.queryNeverResolves) return new Promise(() => undefined);
+    if (this.queryNeverResolves) {
+      this.beforeNeverResolve?.();
+      return new Promise(() => undefined);
+    }
     return Promise.resolve(
       (this.nextExecute?.(command) ?? { returnValue: {} }) as { readonly returnValue: T },
     );

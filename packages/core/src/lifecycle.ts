@@ -240,6 +240,12 @@ export class VmLifecycleManager {
       }
       await sleep(Math.min(this.#pollIntervalMs, Math.max(0, deadline - Date.now())));
     }
+    if (!this.#processController.isAlive(pid)) {
+      throw new CrucibleError("PROCESS_FAILED", "VM process exited before QMP became ready", {
+        pid,
+        timeoutMs: this.#startReadyTimeoutMs,
+      });
+    }
     throw new CrucibleError("QMP_TIMEOUT", "VM did not become QMP-ready before timeout", {
       pid,
       timeoutMs: this.#startReadyTimeoutMs,
