@@ -2103,6 +2103,7 @@ describe("crucible CLI bootstrap", () => {
       ["vm", "view", "--viewer", "vncviewer", "--display", String(display)],
       {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        commandResolver: () => true,
         vmViewBridgeStarter(command) {
           bridgeCommands.push(command.join(" "));
           return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
@@ -2155,6 +2156,7 @@ describe("crucible CLI bootstrap", () => {
     {
       const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        commandResolver: () => true,
         vmViewBridgeStarter() {
           return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
         },
@@ -2170,6 +2172,24 @@ describe("crucible CLI bootstrap", () => {
     }
   });
 
+  it("reports missing vm view viewer dependencies before starting the bridge", async () => {
+    const bridgeCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view", "--viewer", "vncviewer"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      commandResolver: (executable) => executable === "socat",
+      vmViewBridgeStarter(command) {
+        bridgeCommands.push(command.join(" "));
+        return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("vncviewer is required");
+    expect(result.stderr).toContain("VNC viewer");
+    expect(result.stderr).toContain("crucible doctor");
+    expect(bridgeCommands).toEqual([]);
+  });
+
   it("reports vm view viewer command failures", async () => {
     const { server, display } = await listenOnLoopbackDisplay();
     await closeServer(server);
@@ -2177,6 +2197,7 @@ describe("crucible CLI bootstrap", () => {
     {
       const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        commandResolver: () => true,
         vmViewBridgeStarter() {
           return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
         },
@@ -2207,6 +2228,7 @@ describe("crucible CLI bootstrap", () => {
     {
       const result = await runCrucibleCli(["vm", "view", "--display", String(display)], {
         config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+        commandResolver: () => true,
         vmViewBridgeStarter() {
           return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
         },
@@ -2246,6 +2268,7 @@ describe("crucible CLI bootstrap", () => {
     const processCommands: string[] = [];
     const result = await runCrucibleCli(["vm", "view"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      commandResolver: () => true,
       vmViewBridgeStarter() {
         return Promise.resolve({ ok: false, error: "socat failed" });
       },
@@ -2271,7 +2294,7 @@ describe("crucible CLI bootstrap", () => {
     expect(processCommands).toEqual([]);
   });
 
-  it("reports missing socat for vm view bridge startup", async () => {
+  it("reports missing socat for vm view before bridge startup", async () => {
     const emptyPath = await createTempDir("crucible-empty-path-");
     vi.stubEnv("PATH", emptyPath);
     const processCommands: string[] = [];
@@ -2295,6 +2318,7 @@ describe("crucible CLI bootstrap", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("socat is required");
+    expect(result.stderr).toContain("VNC bridge");
     expect(result.stderr).toContain("crucible doctor");
     expect(processCommands).toEqual([]);
   });
