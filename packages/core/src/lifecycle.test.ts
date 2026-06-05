@@ -102,9 +102,10 @@ describe("VmLifecycleManager", () => {
   it("does not attempt QMP operations once the readiness deadline expires", async () => {
     const harness = await createLifecycleHarness({ qmpAdvanceTimeOnConnectMs: 5 });
 
-    await expect(harness.manager.start()).rejects.toMatchObject({
-      code: "QMP_TIMEOUT",
-      details: expect.objectContaining({ cause: "QMP readiness deadline expired" }),
+    await expect(harness.manager.start()).rejects.toSatisfy((error: unknown) => {
+      expect(error).toMatchObject({ code: "QMP_TIMEOUT" });
+      expect(errorDetails(error)).toMatchObject({ cause: "QMP readiness deadline expired" });
+      return true;
     });
     expect(harness.qmp.connects).toBe(1);
     expect(harness.qmp.commands).toEqual([]);
@@ -805,7 +806,9 @@ class FakeQmpSession implements VmQmpSession {
     this.connects += 1;
     if (this.advanceTimeOnConnectMs > 0) {
       const start = Date.now();
-      while (Date.now() - start < this.advanceTimeOnConnectMs) {}
+      while (Date.now() - start < this.advanceTimeOnConnectMs) {
+        Date.now();
+      }
     }
     if (this.connectFailuresBeforeReady > 0) {
       this.connectFailuresBeforeReady -= 1;
@@ -852,4 +855,11 @@ async function mkdirFor(filePath: string): Promise<void> {
 
 async function readJson<T = unknown>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+function errorDetails(error: unknown): unknown {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return undefined;
+  }
+  return error.details;
 }
