@@ -751,7 +751,9 @@ function formatMissingVmViewDependency(executable: string, purpose: string): str
 async function commandExists(executable: string): Promise<boolean> {
   for (const entry of (process.env.PATH ?? "").split(":").filter(Boolean)) {
     try {
-      await access(join(entry, executable), constants.X_OK);
+      const candidate = join(entry, executable);
+      if (!(await fsStat(candidate)).isFile()) continue;
+      await access(candidate, constants.X_OK);
       return true;
     } catch {
       // Keep looking; the file may be absent or non-executable in this PATH entry.

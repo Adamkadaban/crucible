@@ -1,5 +1,4 @@
-import { chmod } from "node:fs/promises";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createServer, type Server } from "node:net";
@@ -2333,6 +2332,19 @@ describe("crucible CLI bootstrap", () => {
   it("reports non-executable vm view dependencies as unavailable", async () => {
     const binDir = await createTempDir("crucible-view-path-");
     await writeFile(path.join(binDir, "socat"), "#!/bin/sh\nexit 0\n", "utf8");
+    vi.stubEnv("PATH", binDir);
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("socat is required");
+    expect(result.stderr).toContain("not found as an executable on PATH");
+  });
+
+  it("does not treat PATH directories as vm view executables", async () => {
+    const binDir = await createTempDir("crucible-view-path-");
+    await mkdir(path.join(binDir, "socat"));
     vi.stubEnv("PATH", binDir);
     const result = await runCrucibleCli(["vm", "view"], {
       config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
