@@ -38,8 +38,8 @@ async function createTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-async function writeExecutable(filePath: string): Promise<void> {
-  await writeFile(filePath, "#!/bin/sh\nexit 0\n", "utf8");
+async function writeExecutable(filePath: string, content = "#!/bin/sh\nexit 0\n"): Promise<void> {
+  await writeFile(filePath, content, "utf8");
   await chmod(filePath, 0o755);
 }
 
@@ -2387,6 +2387,25 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(0);
     expect(bridgeCommands).toHaveLength(1);
     expect(processCommands).toEqual(["remote-viewer"]);
+  });
+
+  it("launches the PATH viewer when no process runner is injected", async () => {
+    const binDir = await createTempDir("crucible-view-path-");
+    await writeExecutable(path.join(binDir, "socat"));
+    await writeExecutable(path.join(binDir, "remote-viewer"), "#!/bin/sh\n/bin/sleep 2\n");
+    vi.stubEnv("PATH", binDir);
+    const bridgeCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      vmViewBridgeStarter(command) {
+        bridgeCommands.push(command.join(" "));
+        return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("viewer: launched");
+    expect(bridgeCommands).toHaveLength(1);
   });
 
   it("reports missing vm view viewer from PATH before starting the bridge", async () => {
