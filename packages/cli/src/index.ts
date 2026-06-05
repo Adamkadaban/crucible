@@ -733,13 +733,13 @@ async function validateVmViewDependencies(
   viewerCommand: readonly string[],
   resolveCommand: CommandResolver,
 ): Promise<string | undefined> {
-  const bridgeExecutable = bridgeCommand[0] ?? "socat";
-  if (!(await resolveCommand(bridgeExecutable))) {
-    return formatMissingVmViewDependency(bridgeExecutable, "VNC bridge");
-  }
-  const viewerExecutable = viewerCommand[0] ?? "remote-viewer";
-  if (!(await resolveCommand(viewerExecutable))) {
-    return formatMissingVmViewDependency(viewerExecutable, "VNC viewer");
+  const dependencies: ReadonlyArray<readonly [string, string]> = [
+    [bridgeCommand[0] ?? "socat", "VNC bridge"],
+    [viewerCommand[0] ?? "remote-viewer", "VNC viewer"],
+  ];
+  for (const [executable, purpose] of dependencies) {
+    if (!(await resolveCommand(executable)))
+      return formatMissingVmViewDependency(executable, purpose);
   }
   return undefined;
 }
@@ -749,23 +749,21 @@ function formatMissingVmViewDependency(executable: string, purpose: string): str
 }
 
 async function commandExists(executable: string): Promise<boolean> {
-  if (executable.includes("/")) {
-    return pathIsExecutable(executable);
-  }
-  const pathEntries = (process.env.PATH ?? "").split(":").filter(Boolean);
-  for (const entry of pathEntries) {
-    if (await pathIsExecutable(join(entry, executable))) return true;
-  }
-  return false;
-}
-
-async function pathIsExecutable(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  return (
+    await Promise.all(
+      (process.env.PATH ?? "")
+        .split(":")
+        .filter(Boolean)
+        .map(async (entry) => {
+          try {
+            await access(join(entry, executable), constants.X_OK);
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+    )
+  ).some(Boolean);
 }
 
 async function runVmCredentialsCommand(

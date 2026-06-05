@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -36,6 +37,11 @@ async function createTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
+}
+
+async function writeExecutable(filePath: string): Promise<void> {
+  await writeFile(filePath, "#!/bin/sh\nexit 0\n", "utf8");
+  await chmod(filePath, 0o755);
 }
 
 async function listenOnLoopbackDisplay(): Promise<{
@@ -2321,6 +2327,59 @@ describe("crucible CLI bootstrap", () => {
     expect(result.stderr).toContain("VNC bridge");
     expect(result.stderr).toContain("crucible doctor");
     expect(processCommands).toEqual([]);
+  });
+
+  it("finds vm view dependencies on PATH before launching", async () => {
+    const binDir = await createTempDir("crucible-view-path-");
+    await writeExecutable(path.join(binDir, "socat"));
+    await writeExecutable(path.join(binDir, "remote-viewer"));
+    vi.stubEnv("PATH", binDir);
+    const bridgeCommands: string[] = [];
+    const processCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      vmViewBridgeStarter(command) {
+        bridgeCommands.push(command.join(" "));
+        return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
+      },
+      processRunner: {
+        run(command) {
+          processCommands.push(command.executable);
+          return Promise.resolve({
+            command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            durationMs: 1,
+            timedOut: false,
+            signal: null,
+          });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(bridgeCommands).toHaveLength(1);
+    expect(processCommands).toEqual(["remote-viewer"]);
+  });
+
+  it("reports missing vm view viewer from PATH before starting the bridge", async () => {
+    const binDir = await createTempDir("crucible-view-path-");
+    await writeExecutable(path.join(binDir, "socat"));
+    vi.stubEnv("PATH", binDir);
+    const bridgeCommands: string[] = [];
+    const result = await runCrucibleCli(["vm", "view"], {
+      config: parseCrucibleConfig({ vm: { name: "test-win", display: { mode: "vnc" } } }),
+      vmViewBridgeStarter(command) {
+        bridgeCommands.push(command.join(" "));
+        return Promise.resolve({ ok: true, bridge: { stop: () => undefined } });
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("remote-viewer is required");
+    expect(result.stderr).toContain("VNC viewer");
+    expect(bridgeCommands).toEqual([]);
   });
 
   it("rejects vm view when the VM was started without VNC display support", async () => {
