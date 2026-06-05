@@ -62,6 +62,29 @@ describe("VmLifecycleManager", () => {
     );
   });
 
+  it("waits for QMP readiness before start returns", async () => {
+    const harness = await createLifecycleHarness({ qmpConnectFailuresBeforeReady: 2 });
+
+    const result = await harness.manager.start();
+
+    expect(result.status.qmpAvailable).toBe(true);
+    expect(harness.qmp.connects).toBeGreaterThanOrEqual(3);
+    expect(harness.qmp.commands).toContain("query-status");
+  });
+
+  it("fails start when QMP does not become ready", async () => {
+    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "QMP_TIMEOUT",
+      message: "VM did not become QMP-ready before timeout",
+    });
+    await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
+      state: "running",
+      pid: 4242,
+    });
+  });
+
   it("rejects start when an owned VM process is already alive", async () => {
     const harness = await createLifecycleHarness();
     await harness.manager.start();
@@ -125,8 +148,9 @@ describe("VmLifecycleManager", () => {
   });
 
   it("falls back to SIGTERM then SIGKILL when QMP is unavailable and timeout expires", async () => {
-    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+    const harness = await createLifecycleHarness();
     await harness.manager.start();
+    harness.qmp.connectError = new Error("no qmp");
 
     const result = await harness.manager.stop();
 
@@ -144,9 +168,10 @@ describe("VmLifecycleManager", () => {
   });
 
   it("does not mark stopped when SIGKILL fails to terminate the VM", async () => {
-    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+    const harness = await createLifecycleHarness();
     harness.deleteOnKill = false;
     await harness.manager.start();
+    harness.qmp.connectError = new Error("no qmp");
 
     await expect(harness.manager.stop()).rejects.toMatchObject({
       code: "PROCESS_TIMEOUT",
@@ -385,21 +410,23 @@ describe("VmLifecycleManager", () => {
       "utf8",
     );
     const spawnRequests: VmSpawnRequest[] = [];
+    const processes = new Set<number>();
     const manager = new VmLifecycleManager({
       config,
       plan,
       spawner: {
         spawn(request) {
           spawnRequests.push(request);
+          processes.add(4242);
           return Promise.resolve({ pid: 4242 });
         },
       },
       processController: {
-        isAlive: () => false,
+        isAlive: (pid) => processes.has(pid),
         signal: () => undefined,
         waitForExit: () => Promise.resolve(true),
       },
-      qmpClientFactory: () => new FakeQmpSession(new Error("not used")),
+      qmpClientFactory: () => new FakeQmpSession(),
     });
 
     await manager.start();
@@ -566,6 +593,7 @@ describe("VmLifecycleManager", () => {
     const plan = buildQemuCommandPlan({ config });
     const processes = new Set<number>();
     const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
+    const qmp = new FakeQmpSession();
     const manager = new VmLifecycleManager({
       config,
       plan,
@@ -585,13 +613,14 @@ describe("VmLifecycleManager", () => {
         },
         waitForExit: (pid) => Promise.resolve(!processes.has(pid)),
       },
-      qmpClientFactory: () => new FakeQmpSession(new Error("no qmp")),
+      qmpClientFactory: () => qmp,
       stopTimeoutMs: 1,
       killTimeoutMs: 1,
       pollIntervalMs: 1,
     });
 
     await manager.start();
+    qmp.connectError = new Error("no qmp");
     const result = await manager.stop();
 
     expect(result.killedAfterTimeout).toBe(false);
@@ -626,6 +655,7 @@ describe("VmLifecycleManager", () => {
 
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
+  readonly qmpConnectFailuresBeforeReady?: number;
   readonly spawnError?: Error;
   readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
   readonly configInput?: {
@@ -663,7 +693,10 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
   const spawnRequests: VmSpawnRequest[] = [];
   const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
   const harnessState = { deleteOnKill: true };
-  const qmp = new FakeQmpSession(options.qmpConnectError);
+  const qmp = new FakeQmpSession(
+    options.qmpConnectError,
+    options.qmpConnectFailuresBeforeReady ?? 0,
+  );
   const qmpClientFactory: VmQmpClientFactory = () => qmp;
   const processController: VmProcessController = {
     isAlive: (pid) => processes.has(pid),
@@ -693,6 +726,7 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
     stopTimeoutMs: 1,
     killTimeoutMs: 1,
     pollIntervalMs: 1,
+    startReadyTimeoutMs: 5,
     now: () => new Date("2026-05-27T00:00:00.000Z"),
   });
 
@@ -716,11 +750,20 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
 
 class FakeQmpSession implements VmQmpSession {
   readonly commands: string[] = [];
+  connects = 0;
   nextExecute: ((command: string) => { readonly returnValue: unknown }) | undefined;
 
-  constructor(public connectError?: Error) {}
+  constructor(
+    public connectError?: Error,
+    private connectFailuresBeforeReady = 0,
+  ) {}
 
   connect(): Promise<unknown> {
+    this.connects += 1;
+    if (this.connectFailuresBeforeReady > 0) {
+      this.connectFailuresBeforeReady -= 1;
+      return Promise.reject(new Error("qmp not ready"));
+    }
     if (this.connectError !== undefined) {
       return Promise.reject(this.connectError);
     }
