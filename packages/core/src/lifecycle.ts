@@ -214,7 +214,7 @@ export class VmLifecycleManager {
 
   async #waitForQmpReady(pid: number): Promise<void> {
     const deadline = Date.now() + this.#startReadyTimeoutMs;
-    let lastError: unknown;
+    let lastError: unknown = new CrucibleError("QMP_TIMEOUT", "QMP readiness deadline expired");
     while (Date.now() <= deadline) {
       if (!this.#processController.isAlive(pid)) {
         throw new CrucibleError("PROCESS_FAILED", "VM process exited before QMP became ready", {
