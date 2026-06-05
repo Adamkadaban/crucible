@@ -28,6 +28,7 @@ const liveRoot =
   process.env.CRUCIBLE_E2E_LIVE_ROOT ?? path.join(homedir(), ".config", "crucible-live-e2e");
 const liveConfigPath = path.join(liveRoot, "config.json");
 const liveVmName = "crucible-live-e2e";
+const liveGuestCommandTimeoutMs = 120_000;
 
 type ToolCallText = { content: ReadonlyArray<{ type: string; text: string }> };
 type ToolEnvelope<Result = unknown> =
@@ -130,7 +131,7 @@ async function prepareLiveE2eConfig(operatorConfig: CrucibleConfig): Promise<Cru
       randomizeInstallTimes: true,
     },
     qmp: { socketPath: path.join(artifactsDirectory, "qmp.sock"), timeoutMs: 10_000 },
-    qga: { socketPath: path.join(artifactsDirectory, "qga.sock"), timeoutMs: 60_000 },
+    qga: { socketPath: path.join(artifactsDirectory, "qga.sock"), timeoutMs: liveGuestCommandTimeoutMs },
     artifacts: {
       directory: artifactsDirectory,
       manifestPath: path.join(artifactsDirectory, "manifest.json"),
@@ -157,7 +158,7 @@ async function resetLiveE2eRoot(operatorConfig: CrucibleConfig): Promise<void> {
         secretsDirectory: path.join(liveRoot, "artifacts", "secrets"),
       },
       qmp: { socketPath: path.join(liveRoot, "artifacts", "qmp.sock"), timeoutMs: 10_000 },
-      qga: { socketPath: path.join(liveRoot, "artifacts", "qga.sock"), timeoutMs: 60_000 },
+      qga: { socketPath: path.join(liveRoot, "artifacts", "qga.sock"), timeoutMs: liveGuestCommandTimeoutMs },
     }),
     configPath: liveConfigPath,
   }).catch(() => undefined);
@@ -304,7 +305,7 @@ function decode(result: GuestAgentExecResult): string {
 async function expectGuestCommand(
   guest: GuestAgentClient,
   script: string,
-  timeoutMs = 60_000,
+  timeoutMs = liveGuestCommandTimeoutMs,
 ): Promise<string> {
   const result = await guest.exec({
     executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",

@@ -86,7 +86,10 @@ describe("VmLifecycleManager", () => {
   });
 
   it("bounds QMP readiness attempts by the remaining startup deadline", async () => {
-    const harness = await createLifecycleHarness({ qmpQueryNeverResolves: true });
+    const harness = await createLifecycleHarness({
+      qmpQueryNeverResolves: true,
+      startReadyTimeoutMs: 5,
+    });
 
     await expect(harness.manager.start()).rejects.toMatchObject({
       code: "QMP_TIMEOUT",
@@ -100,7 +103,10 @@ describe("VmLifecycleManager", () => {
   });
 
   it("does not attempt QMP operations once the readiness deadline expires", async () => {
-    const harness = await createLifecycleHarness({ qmpAdvanceTimeOnConnectMs: 5 });
+    const harness = await createLifecycleHarness({
+      qmpAdvanceTimeOnConnectMs: 10,
+      startReadyTimeoutMs: 5,
+    });
 
     await expect(harness.manager.start()).rejects.toSatisfy((error: unknown) => {
       expect(error).toMatchObject({ code: "QMP_TIMEOUT" });
@@ -696,6 +702,7 @@ type HarnessOptions = {
   readonly qmpConnectFailuresBeforeReady?: number;
   readonly qmpAdvanceTimeOnConnectMs?: number;
   readonly qmpQueryNeverResolves?: boolean;
+  readonly startReadyTimeoutMs?: number;
   readonly spawnError?: Error;
   readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
   readonly configInput?: {
@@ -768,7 +775,7 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
     stopTimeoutMs: 1,
     killTimeoutMs: 1,
     pollIntervalMs: 1,
-    startReadyTimeoutMs: 5,
+    startReadyTimeoutMs: options.startReadyTimeoutMs ?? 100,
     now: () => new Date("2026-05-27T00:00:00.000Z"),
   });
 
