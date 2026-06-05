@@ -62,6 +62,67 @@ describe("VmLifecycleManager", () => {
     );
   });
 
+  it("waits for QMP readiness before start returns", async () => {
+    const harness = await createLifecycleHarness({ qmpConnectFailuresBeforeReady: 2 });
+
+    const result = await harness.manager.start();
+
+    expect(result.status.qmpAvailable).toBe(true);
+    expect(harness.qmp.connects).toBeGreaterThanOrEqual(3);
+    expect(harness.qmp.commands).toContain("query-status");
+  });
+
+  it("fails start when QMP does not become ready", async () => {
+    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "QMP_TIMEOUT",
+      message: "VM did not become QMP-ready before timeout",
+    });
+    await expect(readJson(harness.paths.stateManifest)).resolves.toMatchObject({
+      state: "running",
+      pid: 4242,
+    });
+  });
+
+  it("bounds QMP readiness attempts by the remaining startup deadline", async () => {
+    const harness = await createLifecycleHarness({ qmpQueryNeverResolves: true });
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "QMP_TIMEOUT",
+      message: "VM did not become QMP-ready before timeout",
+    });
+    expect(harness.qmp.commandTimeouts.length).toBeGreaterThan(0);
+    for (const timeoutMs of harness.qmp.commandTimeouts) {
+      expect(timeoutMs).toBeGreaterThan(0);
+      expect(timeoutMs).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("does not attempt QMP operations once the readiness deadline expires", async () => {
+    const harness = await createLifecycleHarness({ qmpAdvanceTimeOnConnectMs: 5 });
+
+    await expect(harness.manager.start()).rejects.toSatisfy((error: unknown) => {
+      expect(error).toMatchObject({ code: "QMP_TIMEOUT" });
+      expect(["QMP readiness deadline expired", "QMP connect timed out"]).toContain(
+        errorDetailCause(error),
+      );
+      return true;
+    });
+    expect(harness.qmp.connects).toBe(1);
+    expect(harness.qmp.commands).toEqual([]);
+  });
+
+  it("reports process failure if the VM exits before QMP readiness timeout", async () => {
+    const harness = await createLifecycleHarness({ qmpQueryNeverResolves: true });
+    harness.qmp.beforeNeverResolve = () => harness.processes.delete(4242);
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "PROCESS_FAILED",
+      message: "VM process exited before QMP became ready",
+    });
+  });
+
   it("rejects start when an owned VM process is already alive", async () => {
     const harness = await createLifecycleHarness();
     await harness.manager.start();
@@ -125,8 +186,9 @@ describe("VmLifecycleManager", () => {
   });
 
   it("falls back to SIGTERM then SIGKILL when QMP is unavailable and timeout expires", async () => {
-    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+    const harness = await createLifecycleHarness();
     await harness.manager.start();
+    harness.qmp.connectError = new Error("no qmp");
 
     const result = await harness.manager.stop();
 
@@ -144,9 +206,10 @@ describe("VmLifecycleManager", () => {
   });
 
   it("does not mark stopped when SIGKILL fails to terminate the VM", async () => {
-    const harness = await createLifecycleHarness({ qmpConnectError: new Error("no qmp") });
+    const harness = await createLifecycleHarness();
     harness.deleteOnKill = false;
     await harness.manager.start();
+    harness.qmp.connectError = new Error("no qmp");
 
     await expect(harness.manager.stop()).rejects.toMatchObject({
       code: "PROCESS_TIMEOUT",
@@ -385,21 +448,23 @@ describe("VmLifecycleManager", () => {
       "utf8",
     );
     const spawnRequests: VmSpawnRequest[] = [];
+    const processes = new Set<number>();
     const manager = new VmLifecycleManager({
       config,
       plan,
       spawner: {
         spawn(request) {
           spawnRequests.push(request);
+          processes.add(4242);
           return Promise.resolve({ pid: 4242 });
         },
       },
       processController: {
-        isAlive: () => false,
+        isAlive: (pid) => processes.has(pid),
         signal: () => undefined,
         waitForExit: () => Promise.resolve(true),
       },
-      qmpClientFactory: () => new FakeQmpSession(new Error("not used")),
+      qmpClientFactory: () => new FakeQmpSession(),
     });
 
     await manager.start();
@@ -566,6 +631,7 @@ describe("VmLifecycleManager", () => {
     const plan = buildQemuCommandPlan({ config });
     const processes = new Set<number>();
     const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
+    const qmp = new FakeQmpSession();
     const manager = new VmLifecycleManager({
       config,
       plan,
@@ -585,13 +651,14 @@ describe("VmLifecycleManager", () => {
         },
         waitForExit: (pid) => Promise.resolve(!processes.has(pid)),
       },
-      qmpClientFactory: () => new FakeQmpSession(new Error("no qmp")),
+      qmpClientFactory: () => qmp,
       stopTimeoutMs: 1,
       killTimeoutMs: 1,
       pollIntervalMs: 1,
     });
 
     await manager.start();
+    qmp.connectError = new Error("no qmp");
     const result = await manager.stop();
 
     expect(result.killedAfterTimeout).toBe(false);
@@ -626,6 +693,9 @@ describe("VmLifecycleManager", () => {
 
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
+  readonly qmpConnectFailuresBeforeReady?: number;
+  readonly qmpAdvanceTimeOnConnectMs?: number;
+  readonly qmpQueryNeverResolves?: boolean;
   readonly spawnError?: Error;
   readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
   readonly configInput?: {
@@ -663,7 +733,12 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
   const spawnRequests: VmSpawnRequest[] = [];
   const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
   const harnessState = { deleteOnKill: true };
-  const qmp = new FakeQmpSession(options.qmpConnectError);
+  const qmp = new FakeQmpSession(
+    options.qmpConnectError,
+    options.qmpConnectFailuresBeforeReady ?? 0,
+    options.qmpAdvanceTimeOnConnectMs ?? 0,
+    options.qmpQueryNeverResolves ?? false,
+  );
   const qmpClientFactory: VmQmpClientFactory = () => qmp;
   const processController: VmProcessController = {
     isAlive: (pid) => processes.has(pid),
@@ -693,6 +768,7 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
     stopTimeoutMs: 1,
     killTimeoutMs: 1,
     pollIntervalMs: 1,
+    startReadyTimeoutMs: 5,
     now: () => new Date("2026-05-27T00:00:00.000Z"),
   });
 
@@ -716,19 +792,44 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
 
 class FakeQmpSession implements VmQmpSession {
   readonly commands: string[] = [];
+  readonly commandTimeouts: number[] = [];
+  connects = 0;
+  beforeNeverResolve: (() => void) | undefined;
   nextExecute: ((command: string) => { readonly returnValue: unknown }) | undefined;
 
-  constructor(public connectError?: Error) {}
+  constructor(
+    public connectError?: Error,
+    private connectFailuresBeforeReady = 0,
+    private advanceTimeOnConnectMs = 0,
+    private queryNeverResolves = false,
+  ) {}
 
-  connect(): Promise<unknown> {
+  async connect(): Promise<unknown> {
+    this.connects += 1;
+    if (this.advanceTimeOnConnectMs > 0) {
+      await delay(this.advanceTimeOnConnectMs);
+    }
+    if (this.connectFailuresBeforeReady > 0) {
+      this.connectFailuresBeforeReady -= 1;
+      return Promise.reject(new Error("qmp not ready"));
+    }
     if (this.connectError !== undefined) {
       return Promise.reject(this.connectError);
     }
     return Promise.resolve({});
   }
 
-  execute<T = unknown>(command: string): Promise<{ readonly returnValue: T }> {
+  execute<T = unknown>(
+    command: string,
+    _args?: Readonly<Record<string, unknown>>,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<{ readonly returnValue: T }> {
     this.commands.push(command);
+    if (options?.timeoutMs !== undefined) this.commandTimeouts.push(options.timeoutMs);
+    if (this.queryNeverResolves) {
+      this.beforeNeverResolve?.();
+      return new Promise(() => undefined);
+    }
     return Promise.resolve(
       (this.nextExecute?.(command) ?? { returnValue: {} }) as { readonly returnValue: T },
     );
@@ -753,4 +854,19 @@ async function mkdirFor(filePath: string): Promise<void> {
 
 async function readJson<T = unknown>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+function errorDetailCause(error: unknown): unknown {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return undefined;
+  }
+  const { details } = error;
+  if (typeof details !== "object" || details === null || !("cause" in details)) {
+    return undefined;
+  }
+  return details.cause;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }

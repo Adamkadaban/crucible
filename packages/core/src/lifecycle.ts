@@ -16,6 +16,7 @@ import { buildQemuCommandPlan, type QemuCommandPlan } from "./qemu.js";
 const DEFAULT_STOP_TIMEOUT_MS = 10_000;
 const DEFAULT_KILL_TIMEOUT_MS = 2_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
+const DEFAULT_START_READY_TIMEOUT_MS = 10_000;
 
 export type VmLifecycleState = "stopped" | "starting" | "running" | "stopping" | "poweredOff";
 
@@ -130,6 +131,7 @@ export type VmLifecycleManagerOptions = {
   readonly stopTimeoutMs?: number;
   readonly killTimeoutMs?: number;
   readonly pollIntervalMs?: number;
+  readonly startReadyTimeoutMs?: number;
 };
 
 export class VmLifecycleManager {
@@ -142,6 +144,7 @@ export class VmLifecycleManager {
   readonly #stopTimeoutMs: number;
   readonly #killTimeoutMs: number;
   readonly #pollIntervalMs: number;
+  readonly #startReadyTimeoutMs: number;
 
   constructor(options: VmLifecycleManagerOptions = {}) {
     this.#config = options.config ?? defaultCrucibleConfig;
@@ -153,6 +156,7 @@ export class VmLifecycleManager {
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
     this.#killTimeoutMs = options.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.#startReadyTimeoutMs = options.startReadyTimeoutMs ?? DEFAULT_START_READY_TIMEOUT_MS;
   }
 
   get paths(): VmLifecyclePaths {
@@ -203,8 +207,58 @@ export class VmLifecycleManager {
         previousQemu: qemuToStart,
       }),
     );
+    await this.#waitForQmpReady(spawned.pid);
 
     return { pid: spawned.pid, status: await this.status() };
+  }
+
+  async #waitForQmpReady(pid: number): Promise<void> {
+    const deadline = Date.now() + this.#startReadyTimeoutMs;
+    let lastError: unknown = new CrucibleError("QMP_TIMEOUT", "QMP readiness deadline expired");
+    while (Date.now() <= deadline) {
+      if (!this.#processController.isAlive(pid)) {
+        throw new CrucibleError("PROCESS_FAILED", "VM process exited before QMP became ready", {
+          pid,
+          timeoutMs: this.#startReadyTimeoutMs,
+        });
+      }
+      const connectTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
+      if (connectTimeoutMs <= 0) {
+        lastError ??= new CrucibleError("QMP_TIMEOUT", "QMP readiness deadline expired");
+        break;
+      }
+      const qmp = this.#qmpClientFactory(this.paths.qmpSocket, this.#config.qmp.timeoutMs);
+      try {
+        await withTimeout(qmp.connect(), connectTimeoutMs, "QMP connect timed out");
+        const queryTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
+        if (queryTimeoutMs <= 0) {
+          lastError = new CrucibleError("QMP_TIMEOUT", "QMP readiness deadline expired");
+          break;
+        }
+        await withTimeout(
+          qmp.execute("query-status", undefined, { timeoutMs: queryTimeoutMs }),
+          queryTimeoutMs,
+          "QMP query-status timed out",
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+      } finally {
+        qmp.close();
+      }
+      await sleep(Math.min(this.#pollIntervalMs, Math.max(0, deadline - Date.now())));
+    }
+    if (!this.#processController.isAlive(pid)) {
+      throw new CrucibleError("PROCESS_FAILED", "VM process exited before QMP became ready", {
+        pid,
+        timeoutMs: this.#startReadyTimeoutMs,
+      });
+    }
+    throw new CrucibleError("QMP_TIMEOUT", "VM did not become QMP-ready before timeout", {
+      pid,
+      timeoutMs: this.#startReadyTimeoutMs,
+      cause: lastError instanceof Error ? lastError.message : String(lastError),
+    });
   }
 
   async #qemuPlanForStart(
@@ -799,6 +853,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
       clearTimeout(timeout);
     }
   }
+}
+
+function remainingMs(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
 }
 
 async function sleep(ms: number): Promise<void> {
