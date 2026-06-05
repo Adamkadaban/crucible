@@ -2191,7 +2191,8 @@ describe("crucible CLI bootstrap", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("vncviewer is required");
     expect(result.stderr).toContain("VNC viewer");
-    expect(result.stderr).toContain("crucible doctor");
+    expect(result.stderr).toContain("Install remote-viewer or vncviewer");
+    expect(result.stderr).not.toContain("crucible doctor");
     expect(bridgeCommands).toEqual([]);
   });
 

@@ -745,7 +745,11 @@ async function validateVmViewDependencies(
 }
 
 function formatMissingVmViewDependency(executable: string, purpose: string): string {
-  return `${executable} is required for the ${purpose} used by \`crucible vm view\` but was not found as an executable on PATH. Install ${executable} or run \`crucible doctor\` for host prerequisite guidance.`;
+  const guidance =
+    purpose === "VNC viewer"
+      ? "Install remote-viewer or vncviewer, or pass --viewer for the one available on this host."
+      : `Install ${executable} or run \`crucible doctor\` for host prerequisite guidance.`;
+  return `${executable} is required for the ${purpose} used by \`crucible vm view\` but was not found as an executable on PATH. ${guidance}`;
 }
 
 async function commandExists(executable: string): Promise<boolean> {
