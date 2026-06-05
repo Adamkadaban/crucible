@@ -85,6 +85,18 @@ describe("VmLifecycleManager", () => {
     });
   });
 
+  it("bounds QMP readiness attempts by the remaining startup deadline", async () => {
+    const harness = await createLifecycleHarness({ qmpQueryNeverResolves: true });
+
+    await expect(harness.manager.start()).rejects.toMatchObject({
+      code: "QMP_TIMEOUT",
+      message: "VM did not become QMP-ready before timeout",
+    });
+    expect(harness.qmp.commandTimeouts).toHaveLength(1);
+    expect(harness.qmp.commandTimeouts[0]).toBeGreaterThan(0);
+    expect(harness.qmp.commandTimeouts[0]).toBeLessThanOrEqual(5);
+  });
+
   it("rejects start when an owned VM process is already alive", async () => {
     const harness = await createLifecycleHarness();
     await harness.manager.start();
@@ -656,6 +668,7 @@ describe("VmLifecycleManager", () => {
 type HarnessOptions = {
   readonly qmpConnectError?: Error;
   readonly qmpConnectFailuresBeforeReady?: number;
+  readonly qmpQueryNeverResolves?: boolean;
   readonly spawnError?: Error;
   readonly plan?: Parameters<typeof buildQemuCommandPlan>[0];
   readonly configInput?: {
@@ -696,6 +709,7 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
   const qmp = new FakeQmpSession(
     options.qmpConnectError,
     options.qmpConnectFailuresBeforeReady ?? 0,
+    options.qmpQueryNeverResolves ?? false,
   );
   const qmpClientFactory: VmQmpClientFactory = () => qmp;
   const processController: VmProcessController = {
@@ -750,12 +764,14 @@ async function createLifecycleHarness(options: HarnessOptions = {}) {
 
 class FakeQmpSession implements VmQmpSession {
   readonly commands: string[] = [];
+  readonly commandTimeouts: number[] = [];
   connects = 0;
   nextExecute: ((command: string) => { readonly returnValue: unknown }) | undefined;
 
   constructor(
     public connectError?: Error,
     private connectFailuresBeforeReady = 0,
+    private queryNeverResolves = false,
   ) {}
 
   connect(): Promise<unknown> {
@@ -770,8 +786,14 @@ class FakeQmpSession implements VmQmpSession {
     return Promise.resolve({});
   }
 
-  execute<T = unknown>(command: string): Promise<{ readonly returnValue: T }> {
+  execute<T = unknown>(
+    command: string,
+    _args?: Readonly<Record<string, unknown>>,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<{ readonly returnValue: T }> {
     this.commands.push(command);
+    if (options?.timeoutMs !== undefined) this.commandTimeouts.push(options.timeoutMs);
+    if (this.queryNeverResolves) return new Promise(() => undefined);
     return Promise.resolve(
       (this.nextExecute?.(command) ?? { returnValue: {} }) as { readonly returnValue: T },
     );

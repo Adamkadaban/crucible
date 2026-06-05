@@ -224,10 +224,12 @@ export class VmLifecycleManager {
       }
       const qmp = this.#qmpClientFactory(this.paths.qmpSocket, this.#config.qmp.timeoutMs);
       try {
-        await withTimeout(qmp.connect(), this.#config.qmp.timeoutMs, "QMP connect timed out");
+        const connectTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
+        await withTimeout(qmp.connect(), connectTimeoutMs, "QMP connect timed out");
+        const queryTimeoutMs = Math.min(this.#config.qmp.timeoutMs, remainingMs(deadline));
         await withTimeout(
-          qmp.execute("query-status", undefined, { timeoutMs: this.#config.qmp.timeoutMs }),
-          this.#config.qmp.timeoutMs,
+          qmp.execute("query-status", undefined, { timeoutMs: queryTimeoutMs }),
+          queryTimeoutMs,
           "QMP query-status timed out",
         );
         return;
@@ -837,6 +839,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
       clearTimeout(timeout);
     }
   }
+}
+
+function remainingMs(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
 }
 
 async function sleep(ms: number): Promise<void> {
