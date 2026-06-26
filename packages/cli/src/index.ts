@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { closeSync, constants, openSync, realpathSync } from "node:fs";
+import { accessSync, closeSync, constants, openSync, realpathSync } from "node:fs";
 import {
   access,
   copyFile,
@@ -423,7 +423,8 @@ export async function runCrucibleCli(
       const wantsStdio = rest.includes("--stdio");
       if (wantsStdio) {
         const config = getRuntimeConfig(runtime);
-        const guestClientFactory = buildEnvGuestClientFactory();
+        const guestClientFactory =
+          buildEnvGuestClientFactory() ?? buildMcpGuestClientFactory(config);
         await runStdioMcpServer({
           config,
           configPath: getCrucibleConfigPath(runtime.configPath),
@@ -441,9 +442,9 @@ export async function runCrucibleCli(
           ...BOOTSTRAP_TOOLS.map(formatTool),
           "",
           "Run `crucible mcp --stdio` to expose the tools over stdio for an MCP client.",
-          "Set CRUCIBLE_GUEST_BASE_URL + CRUCIBLE_GUEST_CA_PATH +",
-          "CRUCIBLE_GUEST_CERT_PATH + CRUCIBLE_GUEST_KEY_PATH to wire the guest tools",
-          "to a live Crucible guest agent.",
+          "Guest tools auto-discover the guest agent connection from the config file",
+          "(~/.config/crucible/config.json). Override with CRUCIBLE_GUEST_BASE_URL +",
+          "CRUCIBLE_GUEST_CA_PATH + CRUCIBLE_GUEST_CERT_PATH + CRUCIBLE_GUEST_KEY_PATH.",
         ].join("\n"),
         stderr: "",
       };
@@ -3923,6 +3924,38 @@ function buildEnvGuestClientFactory():
       caPath,
       clientCertificatePath: certPath,
       clientPrivateKeyPath: keyPath,
+    }),
+  );
+}
+
+export function buildMcpGuestClientFactory(
+  config: CrucibleConfig,
+): (() => Promise<import("@crucible/core").GuestAgentClient>) | undefined {
+  const mtlsDirectory = resolvePath(config.artifacts.secretsDirectory, config.vm.name, "mtls");
+  const caPath = resolvePath(mtlsDirectory, "ca.cert.pem");
+  const clientCertificatePath = resolvePath(mtlsDirectory, "host-client.cert.pem");
+  const clientPrivateKeyPath = resolvePath(mtlsDirectory, "host-client.key.pem");
+
+  // Return undefined when mTLS files are absent so the MCP server emits the
+  // expected "guest client is not configured" error instead of a raw ENOENT.
+  try {
+    accessSync(caPath, constants.R_OK);
+    accessSync(clientCertificatePath, constants.R_OK);
+    accessSync(clientPrivateKeyPath, constants.R_OK);
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+      return undefined;
+    }
+    throw err;
+  }
+
+  return cacheGuestClientFactory(() =>
+    buildGuestAgentClientFromFiles({
+      baseUrl: `https://127.0.0.1:${config.network.controlPort}`,
+      caPath,
+      clientCertificatePath,
+      clientPrivateKeyPath,
+      timeoutMs: 60_000,
     }),
   );
 }
