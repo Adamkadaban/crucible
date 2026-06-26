@@ -131,7 +131,10 @@ async function prepareLiveE2eConfig(operatorConfig: CrucibleConfig): Promise<Cru
       randomizeInstallTimes: true,
     },
     qmp: { socketPath: path.join(artifactsDirectory, "qmp.sock"), timeoutMs: 10_000 },
-    qga: { socketPath: path.join(artifactsDirectory, "qga.sock"), timeoutMs: liveGuestCommandTimeoutMs },
+    qga: {
+      socketPath: path.join(artifactsDirectory, "qga.sock"),
+      timeoutMs: liveGuestCommandTimeoutMs,
+    },
     artifacts: {
       directory: artifactsDirectory,
       manifestPath: path.join(artifactsDirectory, "manifest.json"),
@@ -158,7 +161,10 @@ async function resetLiveE2eRoot(operatorConfig: CrucibleConfig): Promise<void> {
         secretsDirectory: path.join(liveRoot, "artifacts", "secrets"),
       },
       qmp: { socketPath: path.join(liveRoot, "artifacts", "qmp.sock"), timeoutMs: 10_000 },
-      qga: { socketPath: path.join(liveRoot, "artifacts", "qga.sock"), timeoutMs: liveGuestCommandTimeoutMs },
+      qga: {
+        socketPath: path.join(liveRoot, "artifacts", "qga.sock"),
+        timeoutMs: liveGuestCommandTimeoutMs,
+      },
     }),
     configPath: liveConfigPath,
   }).catch(() => undefined);

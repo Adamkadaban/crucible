@@ -423,7 +423,8 @@ export async function runCrucibleCli(
       const wantsStdio = rest.includes("--stdio");
       if (wantsStdio) {
         const config = getRuntimeConfig(runtime);
-        const guestClientFactory = buildEnvGuestClientFactory();
+        const guestClientFactory =
+          buildEnvGuestClientFactory() ?? buildMcpGuestClientFactory(config);
         await runStdioMcpServer({
           config,
           configPath: getCrucibleConfigPath(runtime.configPath),
@@ -3923,6 +3924,21 @@ function buildEnvGuestClientFactory():
       caPath,
       clientCertificatePath: certPath,
       clientPrivateKeyPath: keyPath,
+    }),
+  );
+}
+
+function buildMcpGuestClientFactory(
+  config: CrucibleConfig,
+): (() => Promise<import("@crucible/core").GuestAgentClient>) | undefined {
+  const mtlsDirectory = resolvePath(config.artifacts.secretsDirectory, config.vm.name, "mtls");
+  return cacheGuestClientFactory(() =>
+    buildGuestAgentClientFromFiles({
+      baseUrl: `https://127.0.0.1:${config.network.controlPort}`,
+      caPath: resolvePath(mtlsDirectory, "ca.cert.pem"),
+      clientCertificatePath: resolvePath(mtlsDirectory, "host-client.cert.pem"),
+      clientPrivateKeyPath: resolvePath(mtlsDirectory, "host-client.key.pem"),
+      timeoutMs: 60_000,
     }),
   );
 }
