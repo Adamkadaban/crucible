@@ -18,6 +18,7 @@ import {
 
 import {
   buildMcpVmAdapter,
+  buildMcpGuestClientFactory,
   normalizeVmTextInput,
   qemuKeyForTextInput,
   runCrucibleCli,
@@ -3790,5 +3791,36 @@ describe("additional CLI coverage", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("debug session:");
+  });
+});
+
+describe("buildMcpGuestClientFactory", () => {
+  it("returns undefined when mTLS directory does not exist", () => {
+    const config = parseCrucibleConfig({
+      vm: { name: "nonexistent-vm" },
+      artifacts: { secretsDirectory: "/tmp/crucible-test-no-such-dir" },
+      network: { controlPort: 8443 },
+    });
+    const factory = buildMcpGuestClientFactory(config);
+    expect(factory).toBeUndefined();
+  });
+
+  it("returns a factory when mTLS files exist", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "crucible-mcp-test-"));
+    tempDirs.push(dir);
+    const mtlsDir = path.join(dir, "test-vm", "mtls");
+    await mkdir(mtlsDir, { recursive: true });
+    await writeFile(path.join(mtlsDir, "ca.cert.pem"), "fake-ca");
+    await writeFile(path.join(mtlsDir, "host-client.cert.pem"), "fake-cert");
+    await writeFile(path.join(mtlsDir, "host-client.key.pem"), "fake-key");
+
+    const config = parseCrucibleConfig({
+      vm: { name: "test-vm" },
+      artifacts: { secretsDirectory: dir },
+      network: { controlPort: 9999 },
+    });
+    const factory = buildMcpGuestClientFactory(config);
+    expect(factory).toBeDefined();
+    expect(typeof factory).toBe("function");
   });
 });

@@ -3928,7 +3928,7 @@ function buildEnvGuestClientFactory():
   );
 }
 
-function buildMcpGuestClientFactory(
+export function buildMcpGuestClientFactory(
   config: CrucibleConfig,
 ): (() => Promise<import("@crucible/core").GuestAgentClient>) | undefined {
   const mtlsDirectory = resolvePath(config.artifacts.secretsDirectory, config.vm.name, "mtls");
