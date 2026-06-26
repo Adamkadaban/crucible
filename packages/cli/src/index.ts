@@ -3939,11 +3939,14 @@ function buildMcpGuestClientFactory(
   // Return undefined when mTLS files are absent so the MCP server emits the
   // expected "guest client is not configured" error instead of a raw ENOENT.
   try {
-    accessSync(caPath);
-    accessSync(clientCertificatePath);
-    accessSync(clientPrivateKeyPath);
-  } catch {
-    return undefined;
+    accessSync(caPath, constants.R_OK);
+    accessSync(clientCertificatePath, constants.R_OK);
+    accessSync(clientPrivateKeyPath, constants.R_OK);
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+      return undefined;
+    }
+    throw err;
   }
 
   return cacheGuestClientFactory(() =>
